@@ -1,10 +1,5 @@
-# SpinSense
-Integrate your analogue record player into your digital life. This tool uses audio recognition and MQTT to create a media player entity for Home Assistant to show the song currently spinning on your turntable. 
-
 💿 SpinSense
-Analogue Soul. Digital Brain.
-
-SpinSense is a vibecoded bridge between your turntable and your smart home. It listens to the music in your room, identifies the track spinning on your platter, and broadcasts the metadata to Home Assistant via MQTT—turning your vintage setup into a fully integrated Media Player entity.
+Integrate your analogue record player into your digital life. This tool uses audio recognition and MQTT to create a media player entity for Home Assistant to show the song currently spinning on your turntable. 
 
 ✨ Features
 Automatic ID: Powered by songrec (Shazam-compatible) for high-accuracy track recognition.
