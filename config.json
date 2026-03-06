@@ -4,10 +4,10 @@
     "Engine_Status": "stopped"
   },
   "Hardware": {
-    "Mic_Device": "default"
+    "Mic_Device": "BlackHole 2ch"
   },
   "Audio": {
-    "Volume_Threshold": 0.05,
+    "Volume_Threshold": 0.015,
     "Song_Sample_Length": 10.0,
     "New_Song_Silence_Interval": 2.0,
     "Stopped_Silence_Interval": 5.0

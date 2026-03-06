@@ -72,4 +72,65 @@ document.addEventListener("DOMContentLoaded", () => {
             }, 100);
         })
         .catch(err => console.error("❌ Failed to load config:", err));
+
+        // --- 4. Save Configuration ---
+    const btnSave = document.getElementById('btn-save-config');
+    btnSave.addEventListener('click', async (e) => {
+        e.preventDefault(); // Prevents the page from refreshing
+        btnSave.textContent = "Saving...";
+
+        try {
+            // 1. Fetch the current config so we don't overwrite hidden variables
+            const res = await fetch('/api/config');
+            const config = await res.json();
+
+            // 2. Update it with values from our UI
+            config.Hardware.Mic_Device = document.getElementById('mic-device').value;
+            config.Audio.Volume_Threshold = parseFloat(document.getElementById('vol-threshold').value);
+            config.Audio.Song_Sample_Length = parseFloat(document.getElementById('sample-len').value);
+            config.MQTT.Broker.Host = document.getElementById('mqtt-host').value;
+            config.MQTT.Broker.Port = parseInt(document.getElementById('mqtt-port').value);
+
+            // 3. POST the updated config back to the server
+            const saveRes = await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+            });
+
+            if (saveRes.ok) {
+                btnSave.textContent = "Saved!";
+                btnSave.classList.replace("primary", "success"); // Turns button green
+                
+                // Reset button after 2 seconds
+                setTimeout(() => {
+                    btnSave.textContent = "Save Settings";
+                    btnSave.classList.replace("success", "primary");
+                }, 2000);
+            }
+        } catch (err) {
+            console.error("❌ Failed to save config:", err);
+            btnSave.textContent = "Error!";
+            btnSave.classList.replace("primary", "danger");
+        }
+    });
+
+    // --- 5. Engine Controls ---
+    const badge = document.getElementById('engine-status-badge');
+
+    document.getElementById('btn-start').addEventListener('click', async () => {
+        const res = await fetch('/api/engine/start', { method: 'POST' });
+        if (res.ok) {
+            badge.textContent = "Engine: Active";
+            badge.className = "badge active"; // Turns badge green
+        }
+    });
+
+    document.getElementById('btn-stop').addEventListener('click', async () => {
+        const res = await fetch('/api/engine/stop', { method: 'POST' });
+        if (res.ok) {
+            badge.textContent = "Engine: Stopped";
+            badge.className = "badge stopped"; // Turns badge grey
+        }
+    });
 });

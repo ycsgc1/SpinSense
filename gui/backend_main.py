@@ -43,6 +43,26 @@ def update_config(new_config: dict):
         raise HTTPException(status_code=400, detail="Invalid config format.")
     return {"status": "success"}
 
+@app.post("/api/engine/start")
+def start_engine():
+    """Sets Auto_Start to true and updates Engine Status."""
+    config = load_config()
+    config["System"]["Auto_Start"] = True
+    config["System"]["Engine_Status"] = "active"
+    save_config(config)
+    # Note: In the final integration, this will also send a wake-up signal via UDS
+    return {"status": "success", "message": "Engine started"}
+
+@app.post("/api/engine/stop")
+def stop_engine():
+    """Sets Auto_Start to false and updates Engine Status."""
+    config = load_config()
+    config["System"]["Auto_Start"] = False
+    config["System"]["Engine_Status"] = "stopped"
+    save_config(config)
+    # Note: In the final integration, this will also send a halt signal via UDS
+    return {"status": "success", "message": "Engine stopped"}
+
 @app.get("/api/devices")
 def list_devices():
     return {"devices": get_audio_devices()}
