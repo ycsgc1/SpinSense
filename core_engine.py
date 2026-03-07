@@ -3,6 +3,8 @@ import json
 import os
 import io
 import wave
+import urllib.parse
+import aiohttp
 import numpy as np
 import sounddevice as sd
 import paho.mqtt.client as mqtt
@@ -13,22 +15,19 @@ CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
 with open(CONFIG_PATH, 'r') as f:
     config = json.load(f)
 
-# Extract config vars
 THRESHOLD = config.get('Audio', {}).get('Volume_Threshold', 0.015)
 SILENCE_LIMIT = config.get('Audio', {}).get('Song_Sample_Length', 10) 
 SAMPLE_LEN = config.get('Audio', {}).get('Song_Sample_Length', 10)
 
-# Determine Microphone Device
 MIC_DEVICE = config.get('Audio', {}).get('Input_Device', None)
 if MIC_DEVICE == "" or MIC_DEVICE == "default":
-    MIC_DEVICE = None # None tells sounddevice to use the system default
+    MIC_DEVICE = None 
 
 MQTT_HOST = config.get('MQTT', {}).get('Broker', {}).get('Host', '192.168.1.100')
 MQTT_USER = config.get('MQTT', {}).get('Broker', {}).get('User', 'vinylrecord')
 MQTT_PASS = config.get('MQTT', {}).get('Broker', {}).get('Password', '')
 MQTT_PORT = config.get('MQTT', {}).get('Broker', {}).get('Port', 1883)
 
-# --- Dynamically Build Topics ---
 BASE_TOPIC = "home/vinyl"
 TOPIC_STATE = f"{BASE_TOPIC}/state"
 TOPIC_TITLE = f"{BASE_TOPIC}/title"
@@ -37,13 +36,12 @@ TOPIC_ARTART = f"{BASE_TOPIC}/album_art"
 LEGACY_TOPIC = f"{BASE_TOPIC}/now_playing"
 DISCOVERY_TOPIC = "homeassistant/media_player/vinyl_pi/config"
 
-# --- 2. MQTT Setup (Smart Connection) ---
+# --- 2. MQTT Setup ---
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 if MQTT_USER and MQTT_PASS:
     mqtt_client.username_pw_set(MQTT_USER, MQTT_PASS)
 
 MQTT_ENABLED = False
-
 print(f"Attempting to connect to MQTT at {MQTT_HOST}...")
 try:
     mqtt_client.connect(MQTT_HOST, MQTT_PORT, 3) 
@@ -51,11 +49,9 @@ try:
     MQTT_ENABLED = True
     print("✅ MQTT Connected!")
 except Exception as e:
-    print(f"⚠️ MQTT Connection failed: {e}")
     print("⚠️ Running in OFFLINE TESTING MODE (MQTT messages will print to console).")
 
 def announce_to_ha():
-    """Publishes the Home Assistant Discovery Payload."""
     payload = {
         "name": "Vinyl Record Player",
         "unique_id": "vinyl_pi_record_player",
@@ -68,59 +64,60 @@ def announce_to_ha():
     }
     if MQTT_ENABLED:
         mqtt_client.publish(DISCOVERY_TOPIC, json.dumps(payload), retain=True)
-    else:
-        print("[MOCK MQTT] Announced device to Home Assistant.")
 
 def publish_state(status, artist="", title="", album="", art_url=""):
-    """Publishes state or mocks it if offline."""
     if MQTT_ENABLED:
         mqtt_client.publish(TOPIC_STATE, status, retain=True)
         mqtt_client.publish(TOPIC_TITLE, title, retain=True)
         mqtt_client.publish(TOPIC_ARTIST, artist, retain=True)
         mqtt_client.publish(TOPIC_ARTART, art_url, retain=True)
-
-        payload = json.dumps({
-                        "type": "live_status",
-                        "payload": {
-                            "rms_level": vol,
-                            "engine_active": True,
-                            "status_msg": "Playing" if state["in_song"] else "Listening",
-                            "track": {
-                                "title": state["title"],
-                                "artist": state["artist"],
-                                "art_url": state["art_url"]
-                            }
-                        }
-                    }) + "\n"
+        payload = json.dumps({"status": status, "artist": artist, "title": title, "album": album, "art_url": art_url})
         mqtt_client.publish(LEGACY_TOPIC, payload, retain=True)
     else:
-        print(f"[MOCK MQTT] Published State -> Status: {status.upper()} | Track: {artist} - {title}")
+        print(f"[MOCK MQTT] Published State -> Status: {status.upper()} | {artist} - {title}")
 
-# --- 3. Shazam & Audio Logic ---
+# --- 3. Shazam, iTunes, & Audio Logic ---
 shazam = Shazam()
 state = {
     "in_song": False,
     "last_song": "",
     "artist": "",
     "title": "",
+    "album": "",
     "art_url": "",
     "silence_counter": 0,
     "current_rms": 0.0
 }
 
-async def recognize_audio():
-    """Records audio, wraps it in a WAV header, and identifies it via Shazam."""
-    print(f"\n[!] Music detected. Recording {SAMPLE_LEN}s for identification...")
+async def fetch_itunes_metadata(artist, title):
+    """Hits the iTunes API to get the high-res art and album name."""
+    query = urllib.parse.quote_plus(f"{artist} {title}")
+    url = f"https://itunes.apple.com/search?term={query}&entity=song&limit=1"
     
-    # Record as int16 with the selected device
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json(content_type=None)
+                    if data.get("resultCount", 0) > 0:
+                        result = data["results"][0]
+                        album = result.get("collectionName", "")
+                        # Swap 100x100 for 1000x1000 for crisp artwork
+                        art_url = result.get("artworkUrl100", "").replace("100x100bb", "1000x1000bb")
+                        return album, art_url
+    except Exception as e:
+        print(f"⚠️ iTunes API error: {e}")
+    return None, None
+
+async def recognize_audio():
+    print(f"\n[!] Music detected. Recording {SAMPLE_LEN}s for identification...")
     recording = sd.rec(int(SAMPLE_LEN * 48000), samplerate=48000, channels=1, dtype='int16', device=MIC_DEVICE)
     sd.wait() 
     
-    # Wrap the raw bytes in an in-memory WAV file
     wav_io = io.BytesIO()
     with wave.open(wav_io, 'wb') as wf:
         wf.setnchannels(1)
-        wf.setsampwidth(2) # 2 bytes for int16
+        wf.setsampwidth(2)
         wf.setframerate(48000)
         wf.writeframes(recording.tobytes())
     
@@ -132,22 +129,27 @@ async def recognize_audio():
         title = track.get('title', 'Unknown Title')
         artist = track.get('subtitle', 'Unknown Artist')
         
-        art_url = track.get('images', {}).get('coverarthq', track.get('images', {}).get('coverart', ''))
+        print("[!] Fetching high-res metadata from iTunes...")
+        album, art_url = await fetch_itunes_metadata(artist, title)
         
-        album = "Unknown Album"
-        for section in track.get('sections', []):
-            if section.get('type') == 'SONG':
-                for meta in section.get('metadata', []):
-                    if meta.get('title') == 'Album':
-                        album = meta.get('text')
-        
+        # Fallbacks just in case iTunes draws a blank
+        if not art_url:
+            art_url = track.get('images', {}).get('coverarthq', track.get('images', {}).get('coverart', ''))
+        if not album:
+            album = "Unknown Album"
+            
         result_str = f"{artist} - {title}"
+        
+        # Update the state dictionary so the socket picks it up immediately
         state["artist"] = artist
         state["title"] = title
+        state["album"] = album
         state["art_url"] = art_url
         
         if result_str != state["last_song"]:
-            print(f"🎵 NEW TRACK: {result_str} (Album: {album})")
+            print(f"🎵 NEW TRACK: {result_str}")
+            print(f"💿 Album:     {album}")
+            print(f"🖼️  Art URL:   {art_url}")
             publish_state("stopped")
             await asyncio.sleep(0.5)
             publish_state("playing", artist, title, album, art_url)
@@ -163,11 +165,8 @@ async def recognize_audio():
     state["silence_counter"] = 0
 
 async def audio_monitor_loop():
-    """Continuous loop monitoring microphone RMS."""
     announce_to_ha()
-    mic_name = MIC_DEVICE if MIC_DEVICE else "System Default"
     print(f"--- VINYL SCROBBLER ALPHA ACTIVE ---")
-    print(f"--- Mic: {mic_name} | Threshold: {THRESHOLD} ---")
     
     def audio_callback(indata, frames, time, status):
         rms = np.sqrt(np.mean(indata**2))
@@ -181,28 +180,26 @@ async def audio_monitor_loop():
             try:
                 if os.path.exists('/tmp/spinsense.sock'):
                     reader, writer = await asyncio.open_unix_connection('/tmp/spinsense.sock')
-                    
-                    # Build the exact payload the frontend expects
                     payload = json.dumps({
                         "type": "live_status",
                         "payload": {
-                            "rms_level": state["current_rms"],
+                            "rms_level": vol,
                             "engine_active": True,
                             "status_msg": "Playing" if state["in_song"] else "Listening",
                             "track": {
                                 "title": state.get("title", ""),
                                 "artist": state.get("artist", ""),
+                                "album": state.get("album", ""),
                                 "art_url": state.get("art_url", "")
                             }
                         }
                     }) + "\n"
-                    
                     writer.write(payload.encode())
                     await writer.drain()
                     writer.close()
                     await writer.wait_closed()
             except Exception:
-                pass
+                pass 
             
             if vol > THRESHOLD:
                 if not state["in_song"] or state["silence_counter"] > 0:
@@ -221,8 +218,12 @@ async def audio_monitor_loop():
                         publish_state("stopped")
                         state["in_song"] = False
                         state["last_song"] = ""
+                        state["artist"] = ""
+                        state["title"] = ""
+                        state["album"] = ""
+                        state["art_url"] = ""
                         state["silence_counter"] = 0
-                        state["artist"] = ""; state["title"] = ""; state["art_url"] = ""
+                        
             await asyncio.sleep(1)
 
 if __name__ == "__main__":

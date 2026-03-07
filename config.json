@@ -4,11 +4,11 @@
     "Engine_Status": "stopped"
   },
   "Hardware": {
-    "Mic_Device": "undefined"
+    "Mic_Device": "MacBook Pro Microphone"
   },
   "Audio": {
-    "Volume_Threshold": 0.02,
-    "Song_Sample_Length": 10.0,
+    "Volume_Threshold": 0.015,
+    "Song_Sample_Length": 5.0,
     "New_Song_Silence_Interval": 2.0,
     "Stopped_Silence_Interval": 5.0
   },
