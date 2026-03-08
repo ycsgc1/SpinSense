@@ -1,12 +1,19 @@
 services:
   spinsense:
     build:
-      context: .              # This tells Docker to look at the main folder for files
-      dockerfile: docker/Dockerfile  # This tells Docker where the instructions are
+      context: .
+      dockerfile: docker/Dockerfile
     container_name: spinsense_engine
     restart: unless-stopped
-    devices:
-      - "/dev/snd:/dev/snd"   # Critical for the Pi's audio hardware
+    
+    # --- COMMENTED OUT FOR MAC TESTING ---
+    # devices:
+    #  - "/dev/snd:/dev/snd"
+    
     volumes:
       - ./config.json:/app/config.json
-    network_mode: "host"
+    #  - /tmp:/tmp
+      
+    # Map Mac port 3313 to Container port 8000
+    ports:
+      - "3313:8000"

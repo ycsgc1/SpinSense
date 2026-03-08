@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     alsa-utils \
     libsndfile1 \
     gcc \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements from the main folder
