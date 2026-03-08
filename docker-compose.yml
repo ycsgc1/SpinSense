@@ -1,0 +1,12 @@
+services:
+  spinsense:
+    build:
+      context: .              # This tells Docker to look at the main folder for files
+      dockerfile: docker/Dockerfile  # This tells Docker where the instructions are
+    container_name: spinsense_engine
+    restart: unless-stopped
+    devices:
+      - "/dev/snd:/dev/snd"   # Critical for the Pi's audio hardware
+    volumes:
+      - ./config.json:/app/config.json
+    network_mode: "host"
