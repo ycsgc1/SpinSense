@@ -20,5 +20,5 @@ services:
       - /tmp:/tmp
       
     # Map Mac port 3313 to Container port 8000
-    ports:
-      - "3313:8000"
+   # ports:
+    #  - "3313:8000"
