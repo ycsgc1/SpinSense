@@ -10,6 +10,12 @@ services:
     devices:
      - "/dev/snd:/dev/snd"
     
+    group_add:
+      - audio-
+  
+    ipc: host
+
+    
     volumes:
       - ./config.json:/app/config.json
       - /tmp:/tmp
