@@ -56,24 +56,22 @@ except Exception as e:
     print("⚠️ Running in OFFLINE TESTING MODE (MQTT messages will print to console).")
 
 def announce_to_ha():
+    # Strictly matching the HACS MQTT Media Player integration requirements.
+    # Notice we removed unique_id, payload_play, etc., as they break this specific integration.
     payload = {
         "name": "Vinyl Record Player",
-        "unique_id": "SpinSense",  # Crucial for HA to register the entity
-        "device_class": "speaker",
         "state_state_topic": TOPIC_STATE,
         "state_title_topic": TOPIC_TITLE,
         "state_artist_topic": TOPIC_ARTIST,
         "state_album_topic": TOPIC_ALBUM,
-        "state_albumart_topic": TOPIC_ARTART,
-        "payload_play": "playing",
-        "payload_stop": "stopped",
-        "payload_idle": "idle"
+        "state_albumart_topic": TOPIC_ARTART
     }
     if MQTT_ENABLED:
         mqtt_client.publish(DISCOVERY_TOPIC, json.dumps(payload), retain=True)
-        print("📡 Sent HACS Auto-Discovery Payload (with unique_id).")
+        print("📡 Sent HACS Auto-Discovery Payload.")
 
 def publish_state(status, artist="", title="", album="", art_url="", art_base64=""):
+    # Status should strictly be "playing", "paused", "idle", "off", or "stopped"
     if MQTT_ENABLED:
         mqtt_client.publish(TOPIC_STATE, status, retain=True)
         mqtt_client.publish(TOPIC_TITLE, title, retain=True)
@@ -86,7 +84,7 @@ def publish_state(status, artist="", title="", album="", art_url="", art_base64=
         else:
             mqtt_client.publish(TOPIC_ARTART, "", retain=True)
             
-        # Retain the legacy JSON payload for your Web GUI / original sensors
+        # Retain the legacy JSON payload for your Web GUI
         payload = json.dumps({"status": status, "artist": artist, "title": title, "album": album, "art_url": art_url})
         mqtt_client.publish(LEGACY_TOPIC, payload, retain=True)
         print(f"📡 Published State -> Status: {status.upper()} | {artist} - {title}")
