@@ -1,116 +1,42 @@
-:root {
-    --bg-base: #121212;
-    --bg-card: #1e1e1e;
-    --text-main: #e0e0e0;
-    --text-muted: #a0a0a0;
-    --accent: #bb86fc;
-    --danger: #cf6679;
-    --success: #03dac6;
+/* SpinSense — utilities Tailwind can't express cleanly. */
+
+/* Glass panels: translucent surface tinted card with a subtle inner highlight. */
+.glass-panel {
+    background-color: rgba(32, 31, 33, 0.45);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-body {
-    font-family: system-ui, -apple-system, sans-serif;
-    background-color: var(--bg-base);
-    color: var(--text-main);
-    margin: 0;
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+/* Vinyl rotation. dashboard.js toggles `.spin-slow` based on whether a track
+   title is currently identified. */
+.spin-slow {
+    animation: spin 8s linear infinite;
+}
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
 }
 
-header {
-    width: 100%;
-    max-width: 800px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-}
+/* Engine-status pill. shell.js sets data-state to one of:
+   idle | listening | playing | disconnected. */
+.engine-pill            { transition: color 0.2s ease, background-color 0.2s ease; }
+.engine-pill .engine-pill-dot { transition: background-color 0.2s ease, box-shadow 0.2s ease; }
 
-.card {
-    background: var(--bg-card);
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 20px;
-    width: 100%;
-    max-width: 800px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-}
+.engine-pill[data-state="idle"]              { color: #cfc2d6; }
+.engine-pill[data-state="idle"] .engine-pill-dot         { background: #cfc2d6; }
 
-/* Volume Meter */
-.meter-bg {
-    background: #333;
-    height: 20px;
-    border-radius: 10px;
-    overflow: hidden;
-    margin: 10px 0;
-}
+.engine-pill[data-state="listening"]         { color: #fcd34d; }
+.engine-pill[data-state="listening"] .engine-pill-dot    { background: #fcd34d; box-shadow: 0 0 6px rgba(252, 211, 77, 0.6); }
 
-.meter-fill {
-    height: 100%;
-    background: var(--accent);
-    width: 0%;
-    /* This makes the 5fps updates look fluid */
-    transition: width 0.2s linear; 
-}
+.engine-pill[data-state="playing"]           { color: #4edea3; }
+.engine-pill[data-state="playing"] .engine-pill-dot      { background: #4edea3; box-shadow: 0 0 8px rgba(78, 222, 163, 0.7); animation: pulse 2s ease-in-out infinite; }
 
-/* Now Playing */
-.now-playing {
-    display: flex;
-    gap: 20px;
-    margin-top: 20px;
-}
+.engine-pill[data-state="disconnected"]      { color: #ffb4ab; }
+.engine-pill[data-state="disconnected"] .engine-pill-dot { background: #ffb4ab; box-shadow: 0 0 6px rgba(255, 180, 171, 0.6); }
 
-#album-art {
-    width: 120px;
-    height: 120px;
-    background: #333;
-    border-radius: 4px;
-    object-fit: cover;
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
 }
-
-/* Forms & Buttons */
-.grid-form {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-}
-
-fieldset {
-    border: 1px solid #444;
-    border-radius: 6px;
-    padding: 15px;
-}
-
-input, select {
-    width: 100%;
-    padding: 8px;
-    margin-top: 5px;
-    margin-bottom: 15px;
-    background: #2c2c2c;
-    border: 1px solid #444;
-    color: white;
-    border-radius: 4px;
-    box-sizing: border-box;
-}
-
-.btn {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: bold;
-}
-
-.btn.primary { background: var(--accent); color: #000; }
-.btn.success { background: var(--success); color: #000; }
-.btn.danger { background: var(--danger); color: #000; }
-
-.badge {
-    padding: 4px 8px;
-    border-radius: 12px;
-    font-size: 0.8em;
-}
-.badge.stopped { background: #555; }
-.badge.active { background: var(--success); color: #000; }
