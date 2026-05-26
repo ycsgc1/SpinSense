@@ -1,0 +1,355 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Settings - SpinSense</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "tertiary": "#ffb3ad",
+                      "surface-variant": "#353437",
+                      "error-container": "#93000a",
+                      "on-tertiary": "#68000a",
+                      "surface-tint": "#ddb7ff",
+                      "secondary-fixed": "#6ffbbe",
+                      "outline": "#988d9f",
+                      "on-secondary-fixed": "#002113",
+                      "secondary": "#4edea3",
+                      "surface-container-highest": "#353437",
+                      "primary-fixed": "#f0dbff",
+                      "on-primary-fixed": "#2c0051",
+                      "tertiary-container": "#ff5451",
+                      "surface-container-high": "#2a2a2c",
+                      "error": "#ffb4ab",
+                      "inverse-surface": "#e5e1e4",
+                      "on-tertiary-container": "#5c0008",
+                      "on-tertiary-fixed-variant": "#930013",
+                      "surface-bright": "#39393b",
+                      "surface-container-low": "#1b1b1d",
+                      "inverse-primary": "#842bd2",
+                      "primary-container": "#b76dff",
+                      "outline-variant": "#4d4354",
+                      "on-primary-fixed-variant": "#6900b3",
+                      "on-primary": "#490080",
+                      "on-background": "#e5e1e4",
+                      "on-error-container": "#ffdad6",
+                      "surface-container-lowest": "#0e0e10",
+                      "primary": "#ddb7ff",
+                      "inverse-on-surface": "#303032",
+                      "background": "#131315",
+                      "primary-fixed-dim": "#ddb7ff",
+                      "on-secondary-fixed-variant": "#005236",
+                      "tertiary-fixed-dim": "#ffb3ad",
+                      "on-primary-container": "#400071",
+                      "on-secondary-container": "#00311f",
+                      "on-surface-variant": "#cfc2d6",
+                      "on-secondary": "#003824",
+                      "on-error": "#690005",
+                      "secondary-container": "#00a572",
+                      "on-surface": "#e5e1e4",
+                      "surface-dim": "#131315",
+                      "surface-container": "#201f21",
+                      "on-tertiary-fixed": "#410004",
+                      "tertiary-fixed": "#ffdad7",
+                      "secondary-fixed-dim": "#4edea3",
+                      "surface": "#131315"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "sm": "16px",
+                      "base": "4px",
+                      "gutter": "24px",
+                      "margin-mobile": "16px",
+                      "xs": "8px",
+                      "md": "24px",
+                      "xl": "64px",
+                      "margin-desktop": "48px",
+                      "lg": "40px"
+              },
+              "fontFamily": {
+                      "body-sm": ["Inter"],
+                      "body-lg": ["Inter"],
+                      "headline-md": ["Outfit"],
+                      "label-md": ["Inter"],
+                      "headline-lg-mobile": ["Outfit"],
+                      "label-sm": ["Inter"],
+                      "headline-lg": ["Outfit"],
+                      "body-md": ["Inter"],
+                      "headline-xl": ["Outfit"]
+              },
+              "fontSize": {
+                      "body-sm": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                      "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
+                      "headline-md": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                      "label-md": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                      "headline-lg-mobile": ["28px", {"lineHeight": "36px", "fontWeight": "600"}],
+                      "label-sm": ["11px", {"lineHeight": "14px", "fontWeight": "500"}],
+                      "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                      "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                      "headline-xl": ["48px", {"lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700"}]
+              }
+            }
+          }
+        }
+    </script>
+<style>
+        .glass-panel {
+            background: rgba(32, 31, 33, 0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            border-left: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+        }
+        .glow-hover:hover {
+            box-shadow: 0 0 20px rgba(221, 183, 255, 0.15);
+        }
+        .groove-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #ddb7ff;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(221, 183, 255, 0.5);
+            transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .groove-slider::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+        .groove-slider::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: #353437;
+            border-radius: 9999px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        /* Custom Scrollbar for dark theme */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #131315; }
+        ::-webkit-scrollbar-thumb { background: #353437; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4d4354; }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md min-h-screen antialiased selection:bg-primary-container selection:text-on-primary-container flex">
+<!-- TopNavBar (Mobile Only) -->
+<nav class="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile h-20 bg-surface/10 backdrop-blur-[20px] border-b border-white/10 shadow-[0_0_40px_-15px_rgba(221,183,255,0.15)] md:hidden">
+<div class="font-headline-md text-headline-md text-primary tracking-tight">SpinSense</div>
+<div class="flex gap-4">
+<button class="text-on-surface-variant hover:text-primary transition-colors duration-200 scale-95 active:scale-90 transition-transform">
+<span class="material-symbols-outlined">settings</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-colors duration-200 scale-95 active:scale-90 transition-transform">
+<span class="material-symbols-outlined">history</span>
+</button>
+</div>
+</nav>
+<!-- SideNavBar (Desktop) -->
+<nav class="hidden md:flex flex-col fixed left-0 top-0 h-full py-md px-sm bg-surface/30 backdrop-blur-[20px] border-r border-white/10 shadow-xl docked left-0 h-full w-64 z-40">
+<div class="mb-12 px-4 pt-4 flex flex-col gap-2">
+<div class="w-12 h-12 rounded-full overflow-hidden mb-2 border border-white/10">
+<img alt="User Profile" class="w-full h-full object-cover" data-alt="A macro shot of a sleek, dark metallic record player needle resting on a pristine vinyl groove, bathed in subtle neon purple and deep indigo studio lighting. The image captures the high-fidelity, premium 'Midnight Studio' aesthetic, focusing on precise engineering and glossy textures against a deep obsidian background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuB7frgeFyCPCkHhpW3aoB9qsTAnHdGH_AuKuO9B-Cl6BqcHoFA1D_TUQ9dseoGWvzDO-VJ43wpbBUfxL8R2axGTgFhvFDE-N70byoqKq8HaFYNxvvYMjAF4BHho4rF2YcF1eCxuRo6DSmi7UcO-Hl2hGy_Z53MWAL_UJjJqQFDHB9kKVfjAIUzBvaidXoutTJMOR1qgX4v_PsFGYTEpK77JxdfLvdaKU9RGfWu8wyv4Y1hA6MMyPlS5tV1Hwooy_IC1wWlxNEi9c_Mq">
+</div>
+<h2 class="font-headline-md text-headline-md text-primary">SpinSense</h2>
+<p class="font-label-md text-label-md text-on-surface-variant">Hi-Fi Scrobbler</p>
+</div>
+<ul class="flex flex-col gap-2 flex-grow">
+<li>
+<a class="flex items-center gap-4 px-4 py-3 text-on-surface-variant hover:bg-white/5 transition-all cubic-bezier(0.4, 0, 0.2, 1) rounded-xl" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="font-label-md text-label-md">Dashboard</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-4 px-4 py-3 text-on-surface-variant hover:bg-white/5 transition-all cubic-bezier(0.4, 0, 0.2, 1) rounded-xl" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="font-label-md text-label-md">History</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-4 px-4 py-3 text-primary bg-primary-container/20 rounded-xl transition-all cubic-bezier(0.4, 0, 0.2, 1)" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">settings</span>
+<span class="font-label-md text-label-md">Settings</span>
+</a>
+</li>
+</ul>
+<div class="mt-auto px-4 pb-4">
+<button class="w-full py-3 px-4 bg-primary text-on-primary font-label-md text-label-md rounded-lg hover:shadow-[0_0_15px_rgba(221,183,255,0.4)] transition-all flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">play_arrow</span>
+                Start Listening
+            </button>
+</div>
+</nav>
+<!-- Main Content Canvas -->
+<main class="flex-grow pt-24 pb-24 md:pt-12 md:pb-12 px-margin-mobile md:px-margin-desktop md:ml-64 max-w-[1440px] mx-auto w-full">
+<header class="mb-12">
+<h1 class="font-headline-xl text-headline-xl text-primary mb-2">Settings</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant">Configure your Hi-Fi scrobbling engine.</p>
+</header>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
+<!-- Left Column: General & Hardware -->
+<div class="lg:col-span-7 flex flex-col gap-lg">
+<!-- General & History -->
+<section class="glass-panel rounded-xl p-md glow-hover transition-all duration-300">
+<div class="flex items-center gap-3 mb-6 border-b border-white/5 pb-4">
+<span class="material-symbols-outlined text-primary">manage_history</span>
+<h2 class="font-headline-md text-headline-md text-on-surface">General &amp; History</h2>
+</div>
+<div class="space-y-6">
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+<div>
+<label class="font-label-md text-label-md text-on-surface block mb-1">History Retention</label>
+<p class="font-body-sm text-body-sm text-on-surface-variant">How long to keep your listening logs.</p>
+</div>
+<div class="relative min-w-[160px]">
+<select class="w-full bg-surface-container-high border border-outline-variant text-on-surface font-body-sm text-body-sm rounded-lg px-4 py-2.5 focus:border-primary focus:ring-1 focus:ring-primary appearance-none outline-none cursor-pointer">
+<option value="30">30 days</option>
+<option value="90">90 days</option>
+<option value="forever">Forever</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none">expand_more</span>
+</div>
+</div>
+<div class="pt-4 border-t border-white/5 flex flex-col sm:flex-row items-center justify-between gap-4">
+<div>
+<p class="font-label-md text-label-md text-on-surface mb-1">Re-run Initial Setup</p>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Calibrate your turntable connection again.</p>
+</div>
+<button class="px-6 py-2 border border-outline-variant rounded-lg font-label-md text-label-md text-on-surface hover:border-primary hover:text-primary transition-colors bg-surface-container-low/50">
+                                Relaunch Setup Wizard
+                            </button>
+</div>
+</div>
+</section>
+<!-- Hardware Configuration -->
+<section class="glass-panel rounded-xl p-md glow-hover transition-all duration-300">
+<div class="flex items-center gap-3 mb-6 border-b border-white/5 pb-4">
+<span class="material-symbols-outlined text-primary">speaker</span>
+<h2 class="font-headline-md text-headline-md text-on-surface">Hardware Configuration</h2>
+</div>
+<div class="space-y-8">
+<div>
+<label class="font-label-md text-label-md text-on-surface block mb-2">Audio Input Device</label>
+<div class="relative">
+<select class="w-full bg-surface-container-high border border-outline-variant text-on-surface font-body-sm text-body-sm rounded-lg px-4 py-3 focus:border-primary focus:ring-1 focus:ring-primary appearance-none outline-none cursor-pointer">
+<option>Focusrite Scarlett 2i2 USB</option>
+<option>Built-in Line In</option>
+<option>Behringer UCA202</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none">expand_more</span>
+</div>
+</div>
+<div>
+<div class="flex justify-between items-end mb-4">
+<div>
+<label class="font-label-md text-label-md text-on-surface block mb-1">Song Sample Length</label>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Duration captured for fingerprinting.</p>
+</div>
+<span class="font-headline-md text-headline-md text-primary" id="sample-val">7s</span>
+</div>
+<input class="w-full groove-slider h-2 bg-surface-variant rounded-lg appearance-none cursor-pointer" max="10" min="5" oninput="document.getElementById('sample-val').innerText = this.value + 's'" step="1" type="range" value="7">
+<div class="flex justify-between mt-2 font-label-sm text-label-sm text-on-surface-variant">
+<span>5s (Faster)</span>
+<span>10s (More Accurate)</span>
+</div>
+</div>
+</div>
+</section>
+</div>
+<!-- Right Column: Audio Engine & MQTT -->
+<div class="lg:col-span-5 flex flex-col gap-lg">
+<!-- Audio Engine Thresholds -->
+<section class="glass-panel rounded-xl p-md glow-hover transition-all duration-300">
+<div class="flex items-center gap-3 mb-6 border-b border-white/5 pb-4">
+<span class="material-symbols-outlined text-primary">graphic_eq</span>
+<h2 class="font-headline-md text-headline-md text-on-surface">Audio Engine</h2>
+</div>
+<div class="space-y-8">
+<div>
+<div class="flex justify-between items-end mb-4">
+<div>
+<label class="font-label-md text-label-md text-on-surface block mb-1">Volume Threshold</label>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Level to trigger recording.</p>
+</div>
+<div class="bg-surface-container px-3 py-1 rounded border border-outline-variant">
+<span class="font-label-md text-label-md text-primary font-mono" id="vol-val">0.0150</span>
+</div>
+</div>
+<input class="w-full groove-slider h-2 bg-surface-variant rounded-lg appearance-none cursor-pointer" max="0.1000" min="0.0001" oninput="document.getElementById('vol-val').innerText = parseFloat(this.value).toFixed(4)" step="0.0001" type="range" value="0.0150">
+</div>
+<div>
+<label class="font-label-md text-label-md text-on-surface block mb-2">Silence Interval Limit (Seconds)</label>
+<input class="w-full bg-surface-container-high border border-outline-variant text-on-surface font-body-sm text-body-sm rounded-lg px-4 py-2.5 focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-colors" type="number" value="12">
+</div>
+</div>
+</section>
+<!-- MQTT Broker Settings -->
+<section class="glass-panel rounded-xl p-md glow-hover transition-all duration-300 relative overflow-hidden">
+<div class="absolute top-0 right-0 w-32 h-32 bg-secondary/10 blur-[40px] rounded-full pointer-events-none -mt-10 -mr-10"></div>
+<div class="flex items-center gap-3 mb-6 border-b border-white/5 pb-4">
+<span class="material-symbols-outlined text-secondary">dns</span>
+<h2 class="font-headline-md text-headline-md text-on-surface">MQTT Broker</h2>
+</div>
+<div class="space-y-4">
+<div class="grid grid-cols-2 gap-4">
+<div class="col-span-2 sm:col-span-1">
+<label class="font-label-md text-label-md text-on-surface block mb-1">Host Address</label>
+<input class="w-full bg-surface-container-high border border-outline-variant text-on-surface font-body-sm text-body-sm rounded-lg px-4 py-2.5 focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-colors" placeholder="192.168.1.100" type="text">
+</div>
+<div class="col-span-2 sm:col-span-1">
+<label class="font-label-md text-label-md text-on-surface block mb-1">Port</label>
+<input class="w-full bg-surface-container-high border border-outline-variant text-on-surface font-body-sm text-body-sm rounded-lg px-4 py-2.5 focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-colors" type="number" value="1883">
+</div>
+</div>
+<div>
+<label class="font-label-md text-label-md text-on-surface block mb-1">Username</label>
+<input class="w-full bg-surface-container-high border border-outline-variant text-on-surface font-body-sm text-body-sm rounded-lg px-4 py-2.5 focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-colors" placeholder="mqtt_user" type="text">
+</div>
+<div>
+<label class="font-label-md text-label-md text-on-surface block mb-1">Password</label>
+<input class="w-full bg-surface-container-high border border-outline-variant text-on-surface font-body-sm text-body-sm rounded-lg px-4 py-2.5 focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-colors" placeholder="••••••••" type="password">
+</div>
+</div>
+</section>
+<!-- Action Bar -->
+<div class="flex justify-end gap-4 mt-4 pt-4 border-t border-white/10">
+<button class="px-6 py-2.5 rounded-lg font-label-md text-label-md border border-error text-error hover:bg-error/10 transition-colors">
+                        Reset Defaults
+                    </button>
+<button class="px-6 py-2.5 rounded-lg font-label-md text-label-md bg-secondary-container text-on-secondary-container hover:shadow-[0_0_15px_rgba(0,165,114,0.4)] transition-all">
+                        Save Changes
+                    </button>
+</div>
+</div>
+</div>
+</main>
+<!-- BottomNavBar (Mobile Only) -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-16 md:hidden px-4 bg-surface/40 backdrop-blur-[20px] border-t border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.3)] docked full-width bottom-0 rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary/80 active:scale-95 transition-transform duration-200" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="font-label-sm text-label-sm">Dashboard</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:text-primary/80 active:scale-95 transition-transform duration-200" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="font-label-sm text-label-sm">History</span>
+</a>
+<a class="flex flex-col items-center justify-center text-primary hover:text-primary/80 active:scale-95 transition-transform duration-200" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">settings</span>
+<span class="font-label-sm text-label-sm">Settings</span>
+</a>
+</nav>
+</body></html>
