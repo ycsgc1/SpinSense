@@ -15,8 +15,10 @@ services:
 
     network_mode: host
 
+    environment:
+      - SPINSENSE_DATA_DIR=/app/data
     volumes:
-      - ./config.json:/app/config.json
+      - ./data:/app/data
       - /tmp:/tmp
       
     # Map Mac port 3313 to Container port 8000

@@ -2,8 +2,9 @@ import json
 import os
 from pydantic import BaseModel
 
-# Path points to the root directory, one level up from /gui/
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+# Resolve config folder dynamically using the environment variable SPINSENSE_DATA_DIR
+DATA_DIR = os.environ.get('SPINSENSE_DATA_DIR', os.path.join(os.path.dirname(__file__), '..'))
+CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 
 # --- Pydantic Models for Strict Type Validation ---
 class SystemConfig(BaseModel):
@@ -72,6 +73,7 @@ def save_config(data: dict) -> bool:
     """Validates and saves a dictionary to config.json."""
     try:
         validated = SpinSenseConfig(**data)
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         with open(CONFIG_PATH, 'w') as f:
             json.dump(validated.dict(), f, indent=2)
         return True

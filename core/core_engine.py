@@ -12,12 +12,52 @@ import base64
 from shazamio import Shazam
 
 # --- 1. Load Configuration ---
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+DATA_DIR = os.environ.get('SPINSENSE_DATA_DIR', os.path.join(os.path.dirname(__file__), '..'))
+CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
+
+if not os.path.exists(CONFIG_PATH):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    default_config = {
+        "System": {
+            "Auto_Start": False,
+            "Engine_Status": "stopped"
+        },
+        "Hardware": {
+            "Mic_Device": "default"
+        },
+        "Audio": {
+            "Volume_Threshold": 0.015,
+            "Song_Sample_Length": 5.0,
+            "New_Song_Silence_Interval": 2.0,
+            "Stopped_Silence_Interval": 5.0
+        },
+        "MQTT": {
+            "Broker": {
+                "Host": "192.168.1.100",
+                "Port": 1883,
+                "User": "vinylrecord",
+                "Password": ""
+            },
+            "Discovery": {
+                "Enabled": True,
+                "Discovery_Topic": "homeassistant/media_player/spinsense/config"
+            },
+            "Topics": {
+                "State": "home/vinyl/state",
+                "Title": "home/vinyl/title",
+                "Artist": "home/vinyl/artist",
+                "Album_Art": "home/vinyl/album_art"
+            }
+        }
+    }
+    with open(CONFIG_PATH, 'w') as f:
+        json.dump(default_config, f, indent=2)
+
 with open(CONFIG_PATH, 'r') as f:
     config = json.load(f)
 
 THRESHOLD = config.get('Audio', {}).get('Volume_Threshold', 0.015)
-SILENCE_LIMIT = config.get('Audio', {}).get('Song_Sample_Length', 10) 
+SILENCE_LIMIT = config.get('Audio', {}).get('Stopped_Silence_Interval', 10) 
 SAMPLE_LEN = config.get('Audio', {}).get('Song_Sample_Length', 10)
 
 MIC_DEVICE = config.get('Audio', {}).get('Input_Device', None)
@@ -44,16 +84,21 @@ if MQTT_USER and MQTT_PASS:
     mqtt_client.username_pw_set(MQTT_USER, MQTT_PASS)
 
 MQTT_ENABLED = False
-print(f"Attempting to connect to MQTT at {MQTT_HOST}:{MQTT_PORT}...")
-try:
-    # Set to 60 for stable, long-term connection
-    mqtt_client.connect(MQTT_HOST, MQTT_PORT, 60) 
-    mqtt_client.loop_start()
-    MQTT_ENABLED = True
-    print("✅ MQTT Connected!")
-except Exception as e:
-    print(f"⚠️ MQTT Connection Failed: {e}")
-    print("⚠️ Running in OFFLINE TESTING MODE (MQTT messages will print to console).")
+
+async def connect_mqtt_loop():
+    global MQTT_ENABLED
+    print(f"Starting background MQTT connection task to {MQTT_HOST}:{MQTT_PORT}...")
+    while not MQTT_ENABLED:
+        try:
+            # Connect is blocking, run in a separate thread to keep asyncio loop running
+            await asyncio.to_thread(mqtt_client.connect, MQTT_HOST, MQTT_PORT, 60)
+            mqtt_client.loop_start()
+            MQTT_ENABLED = True
+            print("✅ MQTT Connected!")
+            announce_to_ha()
+        except Exception as e:
+            print(f"⚠️ MQTT Connection Failed: {e}. Retrying in 10s...")
+            await asyncio.sleep(10)
 
 def announce_to_ha():
     # Strictly matching the HACS MQTT Media Player integration requirements.
@@ -141,7 +186,7 @@ async def fetch_image_base64(url):
 async def recognize_audio():
     print(f"\n[!] Music detected. Recording {SAMPLE_LEN}s for identification...")
     recording = sd.rec(int(SAMPLE_LEN * 48000), samplerate=48000, channels=1, dtype='int16', device=MIC_DEVICE)
-    sd.wait() 
+    await asyncio.to_thread(sd.wait) 
     
     wav_io = io.BytesIO()
     with wave.open(wav_io, 'wb') as wf:
@@ -200,7 +245,7 @@ async def recognize_audio():
     state["silence_counter"] = 0
 
 async def audio_monitor_loop():
-    announce_to_ha()
+    asyncio.create_task(connect_mqtt_loop())
     print(f"--- VINYL SCROBBLER ALPHA ACTIVE ---")
     
     def audio_callback(indata, frames, time, status):
