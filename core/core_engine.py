@@ -12,7 +12,7 @@ import base64
 from shazamio import Shazam
 
 # --- 1. Load Configuration ---
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
 with open(CONFIG_PATH, 'r') as f:
     config = json.load(f)
 

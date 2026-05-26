@@ -8,30 +8,7 @@ from fastapi.templating import Jinja2Templates
 import sounddevice as sd
 
 from config_manager import load_config, save_config
-
-# This set holds all connected web browsers
-active_websockets = set()
-
-async def uds_server_callback(reader, writer):
-    """Reads socket data from Core Engine and broadcasts to WebSockets."""
-    try:
-        data = await reader.readline()
-        if data:
-            payload = data.decode('utf-8')
-            # Broadcast this payload to every open browser tab
-            dead_sockets = set()
-            for ws in active_websockets:
-                try:
-                    await ws.send_text(payload)
-                except Exception:
-                    dead_sockets.add(ws)
-            # Clean up disconnected browsers
-            active_websockets.difference_update(dead_sockets)
-    except Exception as e:
-        print(f"Socket read error: {e}")
-    finally:
-        writer.close()
-        await writer.wait_closed()
+from ipc_manager import manager, handle_uds_client
 
 async def start_uds_listener():
     """Starts the Unix Domain Socket server."""
@@ -39,7 +16,7 @@ async def start_uds_listener():
     if os.path.exists(socket_path):
         os.remove(socket_path)
         
-    server = await asyncio.start_unix_server(uds_server_callback, path=socket_path)
+    server = await asyncio.start_unix_server(handle_uds_client, path=socket_path)
     print(f"🎧 Now listening for Core Engine on {socket_path}")
     
     async with server:
@@ -109,11 +86,10 @@ def stop_engine():
 @app.websocket("/ws/live-status")
 async def websocket_endpoint(websocket: WebSocket):
     """Handles real-time WebSocket connection from the browser."""
-    await websocket.accept()
-    active_websockets.add(websocket)
+    await manager.connect(websocket)
     try:
         while True:
             # Keep the connection alive
             await websocket.receive_text()
     except WebSocketDisconnect:
-        active_websockets.remove(websocket)
+        manager.disconnect(websocket)

@@ -6,7 +6,7 @@ rm -f /tmp/spinsense.sock
 
 echo "🚀 Starting SpinSense Core Engine (Background)..."
 # Run the engine from the root folder
-python3 core_engine.py &
+python3 core/core_engine.py &
 
 echo "🚀 Starting SpinSense Web GUI (Foreground)..."
 # Move into the GUI folder so FastAPI can find the static/template folders

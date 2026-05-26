@@ -141,4 +141,4 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize everything on page load
     loadConfigAndDevices();
-});f
+});
