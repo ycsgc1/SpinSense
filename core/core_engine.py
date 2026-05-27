@@ -60,9 +60,9 @@ THRESHOLD = config.get('Audio', {}).get('Volume_Threshold', 0.015)
 SILENCE_LIMIT = config.get('Audio', {}).get('Stopped_Silence_Interval', 10) 
 SAMPLE_LEN = config.get('Audio', {}).get('Song_Sample_Length', 10)
 
-MIC_DEVICE = config.get('Audio', {}).get('Input_Device', None)
+MIC_DEVICE = config.get('Hardware', {}).get('Mic_Device', None)
 if MIC_DEVICE == "" or MIC_DEVICE == "default":
-    MIC_DEVICE = None 
+    MIC_DEVICE = None
 
 MQTT_HOST = config.get('MQTT', {}).get('Broker', {}).get('Host', '192.168.1.100')
 MQTT_USER = config.get('MQTT', {}).get('Broker', {}).get('User', 'vinylrecord')
