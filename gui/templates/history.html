@@ -3,11 +3,32 @@
 {% block title %}SpinSense — History{% endblock %}
 
 {% block content %}
-<div class="flex flex-col items-center justify-center text-center min-h-[60vh] gap-md">
-  <span class="material-symbols-outlined text-primary" style="font-size: 64px;">history</span>
-  <h2 class="font-headline text-headline-lg text-on-background">History</h2>
-  <p class="text-body-md text-on-surface-variant max-w-md">
-    A full, searchable play history is coming in the next phase. For now, the Dashboard's Recent card shows your latest plays.
-  </p>
+<div class="max-w-3xl mx-auto flex flex-col gap-lg">
+
+  <header class="flex items-baseline justify-between">
+    <div>
+      <h2 class="font-headline text-headline-lg text-on-background">History</h2>
+      <p class="text-body-sm text-on-surface-variant mt-1">Every track we've identified.</p>
+    </div>
+    <span id="history-total" class="text-label-md text-on-surface-variant uppercase tracking-widest tabular-nums">&nbsp;</span>
+  </header>
+
+  <div id="history-list" class="flex flex-col gap-md"></div>
+
+  <div id="history-empty" class="hidden glass-panel rounded-xl p-lg text-center flex flex-col items-center gap-xs">
+    <span class="material-symbols-outlined text-on-surface-variant" style="font-size: 48px;">album</span>
+    <p class="font-headline text-headline-md text-on-background">No plays yet</p>
+    <p class="text-body-sm text-on-surface-variant max-w-sm">
+      Start spinning records and identified tracks will show up here.
+    </p>
+  </div>
+
+  <div id="history-sentinel" class="h-px"></div>
+
+  <div id="history-status" class="text-center text-body-sm text-on-surface-variant py-md" aria-live="polite"></div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/history.js"></script>
 {% endblock %}

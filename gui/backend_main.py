@@ -120,6 +120,13 @@ async def get_recent(limit: int = 10):
     return {"plays": rows}
 
 
+@app.get("/api/plays")
+async def get_plays(limit: int = 50, offset: int = 0):
+    rows = await asyncio.to_thread(play_history.recent_plays, limit, offset)
+    total = await asyncio.to_thread(play_history.count_plays)
+    return {"plays": rows, "total": total}
+
+
 # --- WebSocket ---
 
 @app.websocket("/ws/live-status")
