@@ -1,5 +1,6 @@
 import json
 import os
+from typing import Literal
 from pydantic import BaseModel
 
 # Resolve config folder dynamically using the environment variable SPINSENSE_DATA_DIR
@@ -10,6 +11,7 @@ CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 class SystemConfig(BaseModel):
     Auto_Start: bool = False
     Engine_Status: str = "stopped"
+    Setup_Wizard_State: Literal["pending", "skipped", "completed"] = "pending"
 
 class HardwareConfig(BaseModel):
     Mic_Device: str = "default"

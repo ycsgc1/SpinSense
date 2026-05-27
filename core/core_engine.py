@@ -11,64 +11,103 @@ import paho.mqtt.client as mqtt
 import base64
 from shazamio import Shazam
 
-# --- 1. Load Configuration ---
+# --- 1. Paths + config bootstrap ---
 DATA_DIR = os.environ.get('SPINSENSE_DATA_DIR', os.path.join(os.path.dirname(__file__), '..'))
 CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 
-if not os.path.exists(CONFIG_PATH):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    default_config = {
-        "System": {
-            "Auto_Start": False,
-            "Engine_Status": "stopped"
+DEFAULT_CONFIG = {
+    "System": {
+        "Auto_Start": False,
+        "Engine_Status": "stopped",
+        "Setup_Wizard_State": "pending",
+    },
+    "Hardware": {
+        "Mic_Device": "default",
+    },
+    "Audio": {
+        "Volume_Threshold": 0.015,
+        "Song_Sample_Length": 5.0,
+        "New_Song_Silence_Interval": 2.0,
+        "Stopped_Silence_Interval": 5.0,
+    },
+    "MQTT": {
+        "Broker": {
+            "Host": "192.168.1.100",
+            "Port": 1883,
+            "User": "vinylrecord",
+            "Password": "",
         },
-        "Hardware": {
-            "Mic_Device": "default"
+        "Discovery": {
+            "Enabled": True,
+            "Discovery_Topic": "homeassistant/media_player/spinsense/config",
         },
-        "Audio": {
-            "Volume_Threshold": 0.015,
-            "Song_Sample_Length": 5.0,
-            "New_Song_Silence_Interval": 2.0,
-            "Stopped_Silence_Interval": 5.0
+        "Topics": {
+            "State": "home/vinyl/state",
+            "Title": "home/vinyl/title",
+            "Artist": "home/vinyl/artist",
+            "Album_Art": "home/vinyl/album_art",
         },
-        "MQTT": {
-            "Broker": {
-                "Host": "192.168.1.100",
-                "Port": 1883,
-                "User": "vinylrecord",
-                "Password": ""
-            },
-            "Discovery": {
-                "Enabled": True,
-                "Discovery_Topic": "homeassistant/media_player/spinsense/config"
-            },
-            "Topics": {
-                "State": "home/vinyl/state",
-                "Title": "home/vinyl/title",
-                "Artist": "home/vinyl/artist",
-                "Album_Art": "home/vinyl/album_art"
-            }
-        }
-    }
-    with open(CONFIG_PATH, 'w') as f:
-        json.dump(default_config, f, indent=2)
+    },
+}
 
-with open(CONFIG_PATH, 'r') as f:
-    config = json.load(f)
 
-THRESHOLD = config.get('Audio', {}).get('Volume_Threshold', 0.015)
-SILENCE_LIMIT = config.get('Audio', {}).get('Stopped_Silence_Interval', 10) 
-SAMPLE_LEN = config.get('Audio', {}).get('Song_Sample_Length', 10)
+def _load_config():
+    """Read config.json, or write defaults if missing. Returns the dict."""
+    if not os.path.exists(CONFIG_PATH):
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(CONFIG_PATH, 'w') as f:
+            json.dump(DEFAULT_CONFIG, f, indent=2)
+        return json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy
+    with open(CONFIG_PATH, 'r') as f:
+        return json.load(f)
 
-MIC_DEVICE = config.get('Hardware', {}).get('Mic_Device', None)
-if MIC_DEVICE == "" or MIC_DEVICE == "default":
-    MIC_DEVICE = None
 
-MQTT_HOST = config.get('MQTT', {}).get('Broker', {}).get('Host', '192.168.1.100')
-MQTT_USER = config.get('MQTT', {}).get('Broker', {}).get('User', 'vinylrecord')
-MQTT_PASS = config.get('MQTT', {}).get('Broker', {}).get('Password', '')
-MQTT_PORT = config.get('MQTT', {}).get('Broker', {}).get('Port', 1883)
+def _normalize_mic(cfg):
+    v = cfg.get('Hardware', {}).get('Mic_Device', None)
+    if v in ("", "default", None):
+        return None
+    return v
 
+
+# Mutable mirror of the parts of config that the engine actually reads. The
+# file watcher re-populates this dict on every config.json change; the audio
+# loop, recognize_audio(), and the MQTT connect loop read from it on every
+# iteration so changes take effect without a restart.
+runtime = {
+    "threshold": 0.015,
+    "sample_len": 5.0,
+    "new_song_silence": 2.0,
+    "stopped_silence": 5.0,
+    "mic_device": None,
+    "mqtt_host": "192.168.1.100",
+    "mqtt_port": 1883,
+    "mqtt_user": "",
+    "mqtt_pass": "",
+}
+
+
+def _populate_runtime(cfg):
+    runtime["threshold"]        = cfg.get('Audio', {}).get('Volume_Threshold', 0.015)
+    runtime["sample_len"]       = cfg.get('Audio', {}).get('Song_Sample_Length', 5.0)
+    runtime["new_song_silence"] = cfg.get('Audio', {}).get('New_Song_Silence_Interval', 2.0)
+    runtime["stopped_silence"]  = cfg.get('Audio', {}).get('Stopped_Silence_Interval', 5.0)
+    runtime["mic_device"]       = _normalize_mic(cfg)
+    runtime["mqtt_host"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Host', '192.168.1.100')
+    runtime["mqtt_port"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Port', 1883)
+    runtime["mqtt_user"]        = cfg.get('MQTT', {}).get('Broker', {}).get('User', '')
+    runtime["mqtt_pass"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Password', '')
+
+
+_initial_cfg = _load_config()
+_populate_runtime(_initial_cfg)
+try:
+    _config_mtime = os.path.getmtime(CONFIG_PATH)
+except OSError:
+    _config_mtime = None
+
+# MQTT topics + discovery topic remain hardcoded — the corresponding config
+# fields aren't read by the engine. Tracked as a future cleanup; not in scope
+# for this pass.
 BASE_TOPIC = "home/vinyl"
 TOPIC_STATE = f"{BASE_TOPIC}/state"
 TOPIC_TITLE = f"{BASE_TOPIC}/title"
@@ -80,18 +119,32 @@ DISCOVERY_TOPIC = "homeassistant/media_player/spinsense/config"
 
 # --- 2. MQTT Setup ---
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-if MQTT_USER and MQTT_PASS:
-    mqtt_client.username_pw_set(MQTT_USER, MQTT_PASS)
-
 MQTT_ENABLED = False
 
+# Cross-task signal: the config watcher sets this when the mic device changes
+# so the audio loop tears down + rebuilds the InputStream on its next pass.
+mic_change_event = asyncio.Event()
+
+# Single-flight handle on the connect loop so a broker change doesn't spawn
+# parallel connect attempts on the same paho Client.
+_mqtt_task: asyncio.Task | None = None
+
+
 async def connect_mqtt_loop():
+    """Initial connect + retries. Re-entered by _reconnect_mqtt() whenever the
+    config watcher detects a broker change."""
     global MQTT_ENABLED
-    print(f"Starting background MQTT connection task to {MQTT_HOST}:{MQTT_PORT}...")
+    if runtime["mqtt_user"] and runtime["mqtt_pass"]:
+        mqtt_client.username_pw_set(runtime["mqtt_user"], runtime["mqtt_pass"])
+    print(f"📡 MQTT connecting to {runtime['mqtt_host']}:{runtime['mqtt_port']}...")
     while not MQTT_ENABLED:
         try:
-            # Connect is blocking, run in a separate thread to keep asyncio loop running
-            await asyncio.to_thread(mqtt_client.connect, MQTT_HOST, MQTT_PORT, 60)
+            await asyncio.to_thread(
+                mqtt_client.connect,
+                runtime["mqtt_host"],
+                runtime["mqtt_port"],
+                60,
+            )
             mqtt_client.loop_start()
             MQTT_ENABLED = True
             print("✅ MQTT Connected!")
@@ -100,41 +153,61 @@ async def connect_mqtt_loop():
             print(f"⚠️ MQTT Connection Failed: {e}. Retrying in 10s...")
             await asyncio.sleep(10)
 
+
+async def _reconnect_mqtt():
+    """Tear down the current MQTT client connection and re-enter the connect
+    loop with the new broker fields. Safe to call when no connection exists."""
+    global MQTT_ENABLED, _mqtt_task
+    print("📡 MQTT broker changed, reconnecting…")
+    if _mqtt_task and not _mqtt_task.done():
+        _mqtt_task.cancel()
+        try:
+            await _mqtt_task
+        except (asyncio.CancelledError, Exception):
+            pass
+    try:
+        if MQTT_ENABLED:
+            await asyncio.to_thread(mqtt_client.loop_stop)
+            await asyncio.to_thread(mqtt_client.disconnect)
+    except Exception as e:
+        print(f"⚠️ MQTT disconnect failed (continuing): {e}")
+    MQTT_ENABLED = False
+    _mqtt_task = asyncio.create_task(connect_mqtt_loop())
+
+
 def announce_to_ha():
-    # Strictly matching the HACS MQTT Media Player integration requirements.
-    # Notice we removed unique_id, payload_play, etc., as they break this specific integration.
     payload = {
         "name": "Vinyl Record Player",
         "state_state_topic": TOPIC_STATE,
         "state_title_topic": TOPIC_TITLE,
         "state_artist_topic": TOPIC_ARTIST,
         "state_album_topic": TOPIC_ALBUM,
-        "state_albumart_topic": TOPIC_ARTART
+        "state_albumart_topic": TOPIC_ARTART,
     }
     if MQTT_ENABLED:
         mqtt_client.publish(DISCOVERY_TOPIC, json.dumps(payload), retain=True)
         print("📡 Sent HACS Auto-Discovery Payload.")
 
+
 def publish_state(status, artist="", title="", album="", art_url="", art_base64=""):
-    # Status should strictly be "playing", "paused", "idle", "off", or "stopped"
     if MQTT_ENABLED:
         mqtt_client.publish(TOPIC_STATE, status, retain=True)
         mqtt_client.publish(TOPIC_TITLE, title, retain=True)
         mqtt_client.publish(TOPIC_ARTIST, artist, retain=True)
         mqtt_client.publish(TOPIC_ALBUM, album, retain=True)
-        
-        # Publish base64 image data if available, otherwise clear it
         if art_base64:
             mqtt_client.publish(TOPIC_ARTART, art_base64, retain=True)
         else:
             mqtt_client.publish(TOPIC_ARTART, "", retain=True)
-            
-        # Retain the legacy JSON payload for your Web GUI
-        payload = json.dumps({"status": status, "artist": artist, "title": title, "album": album, "art_url": art_url})
+        payload = json.dumps({
+            "status": status, "artist": artist, "title": title,
+            "album": album, "art_url": art_url,
+        })
         mqtt_client.publish(LEGACY_TOPIC, payload, retain=True)
         print(f"📡 Published State -> Status: {status.upper()} | {artist} - {title}")
     else:
         print(f"[MOCK MQTT] Published State -> Status: {status.upper()} | {artist} - {title}")
+
 
 # --- 3. Shazam, iTunes, & Audio Logic ---
 shazam = Shazam()
@@ -146,14 +219,13 @@ state = {
     "album": "",
     "art_url": "",
     "silence_counter": 0,
-    "current_rms": 0.0
+    "current_rms": 0.0,
 }
 
+
 async def fetch_itunes_metadata(artist, title):
-    """Hits the iTunes API to get the high-res art and album name."""
     query = urllib.parse.quote_plus(f"{artist} {title}")
     url = f"https://itunes.apple.com/search?term={query}&entity=song&limit=1"
-    
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -162,15 +234,14 @@ async def fetch_itunes_metadata(artist, title):
                     if data.get("resultCount", 0) > 0:
                         result = data["results"][0]
                         album = result.get("collectionName", "")
-                        # Swap 100x100 for 1000x1000 for crisp artwork
                         art_url = result.get("artworkUrl100", "").replace("100x100bb", "1000x1000bb")
                         return album, art_url
     except Exception as e:
         print(f"⚠️ iTunes API error: {e}")
     return None, None
 
+
 async def fetch_image_base64(url):
-    """Downloads the image URL and converts it to a base64 string for HA."""
     if not url:
         return ""
     try:
@@ -183,49 +254,48 @@ async def fetch_image_base64(url):
         print(f"⚠️ Failed to encode album art to base64: {e}")
     return ""
 
+
 async def recognize_audio():
-    print(f"\n[!] Music detected. Recording {SAMPLE_LEN}s for identification...")
-    recording = sd.rec(int(SAMPLE_LEN * 48000), samplerate=48000, channels=1, dtype='int16', device=MIC_DEVICE)
-    await asyncio.to_thread(sd.wait) 
-    
+    sample_len = runtime["sample_len"]
+    mic = runtime["mic_device"]
+    print(f"\n[!] Music detected. Recording {sample_len}s for identification...")
+    recording = sd.rec(int(sample_len * 48000), samplerate=48000, channels=1, dtype='int16', device=mic)
+    await asyncio.to_thread(sd.wait)
+
     wav_io = io.BytesIO()
     with wave.open(wav_io, 'wb') as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(48000)
         wf.writeframes(recording.tobytes())
-    
+
     print("[!] Analyzing with Shazam...")
     out = await shazam.recognize(wav_io.getvalue())
-    
+
     if 'track' in out:
         track = out['track']
         title = track.get('title', 'Unknown Title')
         artist = track.get('subtitle', 'Unknown Artist')
-        
+
         print("[!] Fetching high-res metadata from iTunes...")
         album, art_url = await fetch_itunes_metadata(artist, title)
-        
-        # Fallbacks just in case iTunes draws a blank
         if not art_url:
             art_url = track.get('images', {}).get('coverarthq', track.get('images', {}).get('coverart', ''))
         if not album:
             album = "Unknown Album"
 
-        # Download and encode the image for Home Assistant
         art_base64 = ""
         if art_url:
             print("[!] Encoding album art to Base64 for Home Assistant...")
             art_base64 = await fetch_image_base64(art_url)
-            
+
         result_str = f"{artist} - {title}"
-        
-        # Update the state dictionary so the socket picks it up immediately
+
         state["artist"] = artist
         state["title"] = title
         state["album"] = album
         state["art_url"] = art_url
-        
+
         if result_str != state["last_song"]:
             print(f"🎵 NEW TRACK: {result_str}")
             print(f"💿 Album:     {album}")
@@ -237,28 +307,55 @@ async def recognize_audio():
         else:
             print(f"      (Confirmed same track: {state['last_song']})")
             publish_state("playing", artist, title, album, art_url, art_base64)
-            
+
         state["in_song"] = True
     else:
         print("❌ Could not identify track.")
-        
+
     state["silence_counter"] = 0
 
+
+def _open_input_stream(callback):
+    """Open and start a sounddevice InputStream against the current mic. Pulled
+    out of audio_monitor_loop() so the same code handles fresh startup, the
+    post-recognition relock, and the mic-changed rebuild."""
+    stream = sd.InputStream(
+        samplerate=48000, channels=1, callback=callback, device=runtime["mic_device"],
+    )
+    stream.start()
+    return stream
+
+
 async def audio_monitor_loop():
-    asyncio.create_task(connect_mqtt_loop())
-    print(f"--- VINYL SCROBBLER ALPHA ACTIVE ---")
-    
+    global _mqtt_task
+    _mqtt_task = asyncio.create_task(connect_mqtt_loop())
+    asyncio.create_task(config_watch_loop())
+    print("--- VINYL SCROBBLER ALPHA ACTIVE ---")
+
     def audio_callback(indata, frames, time, status):
-        rms = np.sqrt(np.mean(indata**2))
+        rms = np.sqrt(np.mean(indata ** 2))
         state["current_rms"] = float(rms)
 
-    # Instantiate and start the stream manually (no 'with' block)
-    stream = sd.InputStream(samplerate=48000, channels=1, callback=audio_callback, device=MIC_DEVICE)
-    stream.start()
-    
+    stream = _open_input_stream(audio_callback)
+
     while True:
+        # Honor a mic-device change before we evaluate this iteration's volume.
+        if mic_change_event.is_set():
+            try:
+                stream.stop()
+                stream.close()
+            except Exception as e:
+                print(f"⚠️ Failed to close audio stream: {e}")
+            try:
+                stream = _open_input_stream(audio_callback)
+                print(f"🎤 Mic device now {runtime['mic_device']!r}, stream restarted")
+            except Exception as e:
+                print(f"⚠️ Failed to open new audio stream: {e}")
+            mic_change_event.clear()
+            state["current_rms"] = 0.0
+
         vol = state["current_rms"]
-        
+
         try:
             if os.path.exists('/tmp/spinsense.sock'):
                 reader, writer = await asyncio.open_unix_connection('/tmp/spinsense.sock')
@@ -272,41 +369,32 @@ async def audio_monitor_loop():
                             "title": state.get("title", ""),
                             "artist": state.get("artist", ""),
                             "album": state.get("album", ""),
-                            "art_url": state.get("art_url", "")
-                        }
-                    }
+                            "art_url": state.get("art_url", ""),
+                        },
+                    },
                 }) + "\n"
                 writer.write(payload.encode())
                 await writer.drain()
                 writer.close()
                 await writer.wait_closed()
         except Exception:
-            pass 
-        
-        if vol > THRESHOLD:
+            pass
+
+        if vol > runtime["threshold"]:
             if not state["in_song"] or state["silence_counter"] > 0:
-                # 1. Stop AND close the stream to release the ALSA lock
                 stream.stop()
                 stream.close()
-                
-                # 2. Record using Shazam
                 await recognize_audio()
-                
-                # 3. Re-grab the hardware lock and restart listening
-                stream = sd.InputStream(samplerate=48000, channels=1, callback=audio_callback, device=MIC_DEVICE)
-                stream.start()
-                
-                # Reset RMS so we don't instantly trigger a false positive right after returning
-                state["current_rms"] = 0.0 
+                stream = _open_input_stream(audio_callback)
+                state["current_rms"] = 0.0
             else:
                 print(".", end="", flush=True)
         else:
             if state["in_song"]:
                 state["silence_counter"] += 1
                 print("s", end="", flush=True)
-                
-                if state["silence_counter"] >= SILENCE_LIMIT:
-                    print(f"\n[ STOPPED ] {SILENCE_LIMIT}s silence limit reached.")
+                if state["silence_counter"] >= runtime["stopped_silence"]:
+                    print(f"\n[ STOPPED ] {runtime['stopped_silence']}s silence limit reached.")
                     publish_state("stopped")
                     state["in_song"] = False
                     state["last_song"] = ""
@@ -315,8 +403,62 @@ async def audio_monitor_loop():
                     state["album"] = ""
                     state["art_url"] = ""
                     state["silence_counter"] = 0
-                    
+
         await asyncio.sleep(1)
+
+
+# --- 4. Live config reload ---
+async def config_watch_loop():
+    """Poll CONFIG_PATH mtime every 2s. When it changes, re-read the file and
+    dispatch handlers based on which categories actually differ."""
+    global _config_mtime
+    while True:
+        await asyncio.sleep(2)
+        try:
+            m = os.path.getmtime(CONFIG_PATH)
+        except OSError:
+            continue
+        if m == _config_mtime:
+            continue
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                new_cfg = json.load(f)
+        except Exception as e:
+            print(f"⚠️ Config reload failed: {e}")
+            continue
+        _apply_config_diff(new_cfg)
+        _config_mtime = m
+
+
+def _apply_config_diff(new_cfg):
+    """Re-populate the runtime dict and dispatch side-effects per category."""
+    old_mic = runtime["mic_device"]
+    old_mqtt = (
+        runtime["mqtt_host"], runtime["mqtt_port"],
+        runtime["mqtt_user"], runtime["mqtt_pass"],
+    )
+
+    _populate_runtime(new_cfg)
+
+    new_mic = runtime["mic_device"]
+    new_mqtt = (
+        runtime["mqtt_host"], runtime["mqtt_port"],
+        runtime["mqtt_user"], runtime["mqtt_pass"],
+    )
+
+    print(
+        f"⚙️ Config reloaded — threshold={runtime['threshold']:.4f}, "
+        f"sample={runtime['sample_len']}s, "
+        f"stopped_silence={runtime['stopped_silence']}s"
+    )
+
+    if old_mic != new_mic:
+        print(f"🎤 Mic device change queued: {old_mic!r} → {new_mic!r}")
+        mic_change_event.set()
+
+    if old_mqtt != new_mqtt:
+        asyncio.create_task(_reconnect_mqtt())
+
 
 if __name__ == "__main__":
     try:
