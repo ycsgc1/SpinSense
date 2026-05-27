@@ -2,6 +2,22 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [0.3.0.0] - 2026-05-27
+
+### Added
+- Setup Wizard at `/setup` — five-step guided onboarding (Welcome, Mic, Threshold calibration with live RMS preview, MQTT, Done). State persisted in `System.Setup_Wizard_State`. Auto-redirects from any page when state is `"pending"`. X-button dismiss leaves state as `"pending"` so the wizard returns on the next page load; "Skip setup" link sets state to `"skipped"` and stops the auto-redirect for good; "Save and finish" sets `"completed"`. A "Re-run setup wizard" link in Settings opens the wizard regardless of state.
+- `GET /api/setup-state` returning `{"state": "..."}`.
+- `POST /api/mqtt/test` — opens a short-lived paho client with a 3.5s timeout, returns `{"ok": true|false, "detail": "..."}`. The wizard's MQTT step pops an error modal with "Try again" / "Skip MQTT" on failure; Settings shows the result inline next to the new "Test connection" button.
+- Three new tests covering `Setup_Wizard_State` defaults + literal validation.
+
+### Changed
+- **Engine: full Tier 3 hot-reload.** `core_engine.py` watches `config.json` mtime every 2s; on change it re-reads the file and dispatches by category. Audio thresholds update in place. MQTT broker changes cancel the in-flight connect task and reconnect with the new fields. Mic device changes raise `mic_change_event`; the audio loop tears down the `sd.InputStream` and rebuilds against the new device. **No container restart needed for any config change.**
+- Settings page: dropped the "Restart required" banner. Save toast reads "Saved and applied" on success.
+- FastAPI middleware gates `/`, `/history`, `/settings` (and any future non-API page) behind the wizard when `Setup_Wizard_State == "pending"`. `/api/*`, `/static/*`, `/art/*`, `/ws/*`, and `/setup` itself always pass through.
+
+### Notes
+- `MQTT.Discovery.Discovery_Topic` and `MQTT.Topics.*` are still hardcoded in the engine. Out of scope this pass; the Wizard and Settings continue to hide those fields.
+
 ## [0.2.0.0] - 2026-05-27
 
 ### Added

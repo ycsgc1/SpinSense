@@ -76,6 +76,26 @@ class ConfigRoundTripTest(unittest.TestCase):
             on_disk = json.load(f)
         self.assertEqual(on_disk, config_manager.get_default_config())
 
+    def test_setup_wizard_state_defaults_pending(self):
+        defaults = config_manager.get_default_config()
+        self.assertEqual(defaults["System"]["Setup_Wizard_State"], "pending")
+
+    def test_setup_wizard_state_accepts_legal_values(self):
+        for value in ("pending", "skipped", "completed"):
+            cfg = config_manager.get_default_config()
+            cfg["System"]["Setup_Wizard_State"] = value
+            self.assertTrue(
+                config_manager.save_config(cfg),
+                f"expected '{value}' to validate",
+            )
+            loaded = config_manager.load_config()
+            self.assertEqual(loaded["System"]["Setup_Wizard_State"], value)
+
+    def test_setup_wizard_state_rejects_unknown(self):
+        cfg = config_manager.get_default_config()
+        cfg["System"]["Setup_Wizard_State"] = "abandoned"
+        self.assertFalse(config_manager.save_config(cfg))
+
 
 if __name__ == "__main__":
     unittest.main()

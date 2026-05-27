@@ -2,15 +2,20 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+import paho.mqtt.client as mqtt
 from pydantic import ValidationError
 import sounddevice as sd
 
 import play_history
 from config_manager import SpinSenseConfig, load_config, save_config
 from ipc_manager import ART_DIR, manager, handle_uds_client
+
+# Paths that the setup-wizard redirect must let through. Everything outside
+# this list is gated when Setup_Wizard_State == "pending".
+_SETUP_ALLOWED_PREFIXES = ("/setup", "/api/", "/static/", "/art/", "/ws/")
 
 
 async def start_uds_listener():
@@ -35,6 +40,24 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def setup_wizard_gate(request: Request, call_next):
+    """Redirect to /setup whenever Setup_Wizard_State is "pending" and the
+    user is hitting a normal page route. API + static + the wizard itself are
+    always allowed through."""
+    path = request.url.path
+    if not any(path.startswith(p) for p in _SETUP_ALLOWED_PREFIXES):
+        try:
+            cfg = load_config()
+            state = cfg.get("System", {}).get("Setup_Wizard_State", "pending")
+        except Exception:
+            state = "pending"
+        if state == "pending":
+            return RedirectResponse(url="/setup", status_code=307)
+    return await call_next(request)
+
 
 # StaticFiles asserts these directories exist at construction time.
 os.makedirs(ART_DIR, exist_ok=True)
@@ -112,6 +135,58 @@ def get_audio_devices():
     except Exception as e:
         print(f"Error querying devices: {e}")
         return {"devices": []}
+
+
+@app.get("/api/setup-state")
+def get_setup_state():
+    cfg = load_config()
+    return {"state": cfg.get("System", {}).get("Setup_Wizard_State", "pending")}
+
+
+def _try_mqtt_connect(host: str, port: int, user: str, password: str) -> tuple[bool, str]:
+    """Open a short-lived paho client, attempt connect, close. Returns
+    (ok, detail). Kept synchronous; the caller wraps it in to_thread so the
+    socket-level timeout doesn't block the event loop."""
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    if user and password:
+        client.username_pw_set(user, password)
+    try:
+        client.connect(host, port, keepalive=5)
+        client.disconnect()
+        return True, "Connected"
+    except Exception as e:
+        return False, str(e) or e.__class__.__name__
+
+
+@app.post("/api/mqtt/test")
+async def test_mqtt(request: Request):
+    body = await request.json()
+    host = str(body.get("host", "") or "")
+    port = body.get("port", 1883)
+    user = str(body.get("user", "") or "")
+    password = str(body.get("password", "") or "")
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "detail": "Port must be an integer"},
+        )
+    if not host:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "detail": "Host is required"},
+        )
+    try:
+        ok, detail = await asyncio.wait_for(
+            asyncio.to_thread(_try_mqtt_connect, host, port, user, password),
+            timeout=3.5,
+        )
+    except asyncio.TimeoutError:
+        return {"ok": False, "detail": f"Timed out connecting to {host}:{port}"}
+    if ok:
+        return {"ok": True, "detail": detail}
+    return {"ok": False, "detail": detail}
 
 
 @app.get("/api/recent")
