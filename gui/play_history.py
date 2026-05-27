@@ -63,12 +63,23 @@ def set_art_path(play_id: int, art_path: str, db_path: str | None = None) -> Non
         )
 
 
-def recent_plays(limit: int = 10, db_path: str | None = None) -> list[dict]:
-    limit = max(1, min(int(limit), 50))
+def recent_plays(
+    limit: int = 10,
+    offset: int = 0,
+    db_path: str | None = None,
+) -> list[dict]:
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
     with _connect(db_path) as conn:
         rows = conn.execute(
             "SELECT id, title, artist, album, art_url, art_path, played_at "
-            "FROM plays ORDER BY played_at DESC, id DESC LIMIT ?",
-            (limit,),
+            "FROM plays ORDER BY played_at DESC, id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def count_plays(db_path: str | None = None) -> int:
+    with _connect(db_path) as conn:
+        (n,) = conn.execute("SELECT COUNT(*) FROM plays").fetchone()
+        return int(n)

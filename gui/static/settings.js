@@ -1,0 +1,208 @@
+// settings.js — owns the /settings form: loads config + mic list, binds dirty
+// state, posts changes back to /api/config, and renders the live RMS preview
+// alongside the volume-threshold slider via shell.js's pub/sub.
+(function () {
+  const FORM = document.getElementById("settings-form");
+  const TOAST = document.getElementById("settings-toast");
+  const SAVE_BTN = document.getElementById("save-button");
+  const MIC_SELECT = document.getElementById("mic-device");
+  const THRESHOLD_SLIDER = document.getElementById("volume-threshold");
+  const THRESHOLD_VALUE = document.getElementById("volume-threshold-value");
+  const RMS_BAR = document.getElementById("rms-preview-bar");
+  const RMS_TICK = document.getElementById("rms-threshold-tick");
+
+  // Visual ceiling for the RMS bar + threshold tick. ~10x the default threshold
+  // so the tick lands at a readable position and there's headroom for a loud
+  // record to push the bar past it.
+  const RMS_CEILING = 0.05;
+
+  let dirty = false;
+  let initialConfig = {};
+
+  function getNested(obj, path) {
+    return path.split(".").reduce(
+      (o, k) => (o == null ? undefined : o[k]),
+      obj
+    );
+  }
+
+  function setNested(obj, path, value) {
+    const parts = path.split(".");
+    let cur = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (cur[parts[i]] == null || typeof cur[parts[i]] !== "object") {
+        cur[parts[i]] = {};
+      }
+      cur = cur[parts[i]];
+    }
+    cur[parts[parts.length - 1]] = value;
+  }
+
+  function mergeDeep(target, source) {
+    for (const key of Object.keys(source)) {
+      const v = source[key];
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        if (target[key] == null || typeof target[key] !== "object") {
+          target[key] = {};
+        }
+        mergeDeep(target[key], v);
+      } else {
+        target[key] = v;
+      }
+    }
+    return target;
+  }
+
+  function setDirty(value) {
+    dirty = value;
+    SAVE_BTN.disabled = !value;
+  }
+
+  function setToast(text, kind) {
+    TOAST.textContent = text;
+    TOAST.dataset.kind = kind || "";
+  }
+
+  function updateThresholdTick() {
+    const t = Number(THRESHOLD_SLIDER.value);
+    const pct = Math.min(100, (t / RMS_CEILING) * 100);
+    RMS_TICK.style.left = pct + "%";
+    THRESHOLD_VALUE.textContent = t.toFixed(4);
+  }
+
+  function populateForm(config) {
+    initialConfig = JSON.parse(JSON.stringify(config));
+    FORM.querySelectorAll("[name]").forEach((el) => {
+      const value = getNested(config, el.name);
+      if (value === undefined || value === null) return;
+      // The mic select is populated separately once /api/devices returns.
+      if (el === MIC_SELECT) return;
+      el.value = value;
+    });
+    updateThresholdTick();
+    setDirty(false);
+    setToast("");
+  }
+
+  function readForm() {
+    const formObj = {};
+    FORM.querySelectorAll("[name]").forEach((el) => {
+      let value = el.value;
+      if (el.type === "number" || el.type === "range") {
+        value = value === "" ? 0 : Number(value);
+      }
+      setNested(formObj, el.name, value);
+    });
+    // Merge over the original config so we preserve keys we don't expose
+    // (System, MQTT.Discovery, MQTT.Topics) and the round-trip stays valid.
+    return mergeDeep(JSON.parse(JSON.stringify(initialConfig)), formObj);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;",
+      '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  async function loadDevices() {
+    let devices = [];
+    try {
+      const res = await fetch("/api/devices");
+      const data = await res.json();
+      devices = (data && data.devices) || [];
+    } catch (e) {
+      // Fall through to default-only.
+    }
+    const current = getNested(initialConfig, "Hardware.Mic_Device") || "default";
+    const options = ['<option value="default">System default</option>'];
+    let currentInList = current === "default";
+    for (const d of devices) {
+      const name = String(d.name);
+      const escaped = escapeHtml(name);
+      options.push(`<option value="${escaped}">${escaped}</option>`);
+      if (name === current) currentInList = true;
+    }
+    // If the saved mic isn't in the live device list (e.g. unplugged), show it
+    // anyway so the user can see what's currently set without us silently
+    // mutating their config to "default".
+    if (!currentInList) {
+      options.push(`<option value="${escapeHtml(current)}">${escapeHtml(current)} (not connected)</option>`);
+    }
+    MIC_SELECT.innerHTML = options.join("");
+    MIC_SELECT.value = current;
+  }
+
+  async function loadConfig() {
+    try {
+      const res = await fetch("/api/config");
+      const cfg = await res.json();
+      populateForm(cfg);
+      await loadDevices();
+    } catch (e) {
+      setToast("Failed to load config: " + e.message, "error");
+    }
+  }
+
+  async function onSubmit(ev) {
+    ev.preventDefault();
+    if (!dirty) return;
+    SAVE_BTN.disabled = true;
+    setToast("Saving…");
+    const payload = readForm();
+    try {
+      const res = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setToast(body.detail || `Save failed (${res.status})`, "error");
+        SAVE_BTN.disabled = false;
+        return;
+      }
+      initialConfig = JSON.parse(JSON.stringify(payload));
+      setDirty(false);
+      setToast("Saved", "ok");
+      setTimeout(() => {
+        if (!dirty && TOAST.dataset.kind === "ok") setToast("");
+      }, 2500);
+    } catch (e) {
+      setToast("Network error: " + e.message, "error");
+      SAVE_BTN.disabled = false;
+    }
+  }
+
+  // Wire up RMS preview off the shell's WS pub/sub.
+  if (window.SpinSense && typeof window.SpinSense.onFrame === "function") {
+    window.SpinSense.onFrame((payload) => {
+      const rms = payload && typeof payload.rms_level === "number" ? payload.rms_level : 0;
+      const pct = Math.min(100, Math.max(0, (rms / RMS_CEILING) * 100));
+      RMS_BAR.style.width = pct + "%";
+    });
+  }
+
+  THRESHOLD_SLIDER.addEventListener("input", () => {
+    updateThresholdTick();
+    setDirty(true);
+  });
+
+  FORM.addEventListener("input", (ev) => {
+    // Don't double-fire dirty for the slider's input (handled above) or for
+    // events that didn't actually change a value.
+    if (ev.target === THRESHOLD_SLIDER) return;
+    setDirty(true);
+  });
+
+  FORM.addEventListener("submit", onSubmit);
+
+  window.addEventListener("beforeunload", (e) => {
+    if (dirty) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
+
+  loadConfig();
+})();

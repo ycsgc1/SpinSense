@@ -61,6 +61,27 @@ class PlayHistoryRoundTripTest(unittest.TestCase):
         # negative/zero limits get clamped up to 1
         self.assertEqual(len(play_history.recent_plays(limit=0, db_path=self.db_path)), 1)
 
+    def test_offset_paginates(self):
+        # Use distinct played_at values so order is deterministic.
+        for i, title in enumerate(["A", "B", "C", "D"]):
+            play_history.record_play(title, "x", None, None, db_path=self.db_path)
+            time.sleep(1.05)
+        # Newest first: D, C, B, A.
+        first_page = play_history.recent_plays(limit=2, offset=0, db_path=self.db_path)
+        self.assertEqual([r["title"] for r in first_page], ["D", "C"])
+        second_page = play_history.recent_plays(limit=2, offset=2, db_path=self.db_path)
+        self.assertEqual([r["title"] for r in second_page], ["B", "A"])
+
+    def test_offset_past_end_returns_empty(self):
+        play_history.record_play("only", "x", None, None, db_path=self.db_path)
+        self.assertEqual(play_history.recent_plays(limit=10, offset=5, db_path=self.db_path), [])
+
+    def test_count_plays(self):
+        self.assertEqual(play_history.count_plays(db_path=self.db_path), 0)
+        for i in range(3):
+            play_history.record_play(f"t{i}", "a", None, None, db_path=self.db_path)
+        self.assertEqual(play_history.count_plays(db_path=self.db_path), 3)
+
 
 class IPCDedupeTest(unittest.TestCase):
     """The dedupe state lives in ipc_manager (a module-level variable).

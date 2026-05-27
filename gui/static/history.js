@@ -1,0 +1,153 @@
+// history.js — paginated, date-grouped play history. Initial 50 rows on load;
+// IntersectionObserver on the sentinel fetches the next page until the server
+// returns fewer than `limit` rows, at which point we stop observing.
+(function () {
+  const LIST = document.getElementById("history-list");
+  const EMPTY = document.getElementById("history-empty");
+  const STATUS = document.getElementById("history-status");
+  const SENTINEL = document.getElementById("history-sentinel");
+  const TOTAL = document.getElementById("history-total");
+
+  const LIMIT = 50;
+  let offset = 0;
+  let exhausted = false;
+  let loading = false;
+  let lastDateLabel = null;
+
+  function setStatus(text) {
+    STATUS.textContent = text;
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;",
+      '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  function dateLabelForRow(row) {
+    const d = new Date((row.played_at || 0) * 1000);
+    const today = new Date();
+    const y = new Date(today);
+    y.setDate(today.getDate() - 1);
+    const sameDay = (a, b) =>
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+    if (sameDay(d, today)) return "Today";
+    if (sameDay(d, y)) return "Yesterday";
+    return d.toLocaleDateString(undefined, {
+      year: "numeric", month: "long", day: "numeric",
+    });
+  }
+
+  function timeOfDay(row) {
+    const d = new Date((row.played_at || 0) * 1000);
+    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+
+  function rowHtml(row) {
+    const artSrc = row.art_path ? `/${row.art_path}` : "/static/placeholder.jpg";
+    return `
+      <li class="flex items-center gap-md py-2">
+        <img src="${escapeHtml(artSrc)}" alt=""
+             class="w-12 h-12 rounded shrink-0 bg-surface-container-high object-cover"
+             onerror="this.src='/static/placeholder.jpg'">
+        <div class="flex-1 min-w-0">
+          <p class="text-body-md text-on-surface truncate">${escapeHtml(row.title)}</p>
+          <p class="text-body-sm text-on-surface-variant truncate">${escapeHtml(row.artist || "Unknown artist")}</p>
+          ${row.album ? `<p class="text-label-sm text-on-surface-variant truncate">${escapeHtml(row.album)}</p>` : ""}
+        </div>
+        <span class="text-label-sm text-on-surface-variant tabular-nums shrink-0">${escapeHtml(timeOfDay(row))}</span>
+      </li>
+    `;
+  }
+
+  function renderPage(rows) {
+    if (rows.length === 0) return;
+    // Group by date as we go. Each date header gets its own section so styling
+    // is simple and re-rendering doesn't need to know about prior pages.
+    let buffer = "";
+    let currentDate = lastDateLabel;
+    let listOpen = lastDateLabel != null;
+
+    for (const row of rows) {
+      const label = dateLabelForRow(row);
+      if (label !== currentDate) {
+        if (listOpen) buffer += "</ul></section>";
+        buffer += `
+          <section class="glass-panel rounded-xl p-md">
+            <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-2">${escapeHtml(label)}</h3>
+            <ul class="flex flex-col divide-y divide-outline-variant/20">
+        `;
+        currentDate = label;
+        listOpen = true;
+      }
+      buffer += rowHtml(row);
+    }
+    if (listOpen) buffer += "</ul></section>";
+
+    // If we already had an open section from the previous page and the first
+    // row of this page falls under the same date, the section tag we just
+    // opened above would create a duplicate header. Merge by stripping the
+    // last "</ul></section>" from existing markup and the leading new section
+    // opening when their date labels match.
+    if (lastDateLabel != null && rows[0] && dateLabelForRow(rows[0]) === lastDateLabel) {
+      // Remove the closing tags from the previous render to keep the list open
+      LIST.innerHTML = LIST.innerHTML.replace(/<\/ul><\/section>\s*$/, "");
+      // Strip the leading section open from our buffer
+      buffer = buffer.replace(/^\s*<section[^>]*>\s*<h3[^>]*>[^<]*<\/h3>\s*<ul[^>]*>/, "");
+    }
+
+    LIST.insertAdjacentHTML("beforeend", buffer);
+    lastDateLabel = currentDate;
+  }
+
+  async function fetchPage() {
+    if (loading || exhausted) return;
+    loading = true;
+    setStatus(offset === 0 ? "Loading…" : "Loading more…");
+    try {
+      const res = await fetch(`/api/plays?limit=${LIMIT}&offset=${offset}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const rows = (data && data.plays) || [];
+      const total = data && typeof data.total === "number" ? data.total : null;
+
+      if (offset === 0 && rows.length === 0) {
+        EMPTY.classList.remove("hidden");
+        TOTAL.textContent = "0 plays";
+        observer.disconnect();
+        setStatus("");
+        return;
+      }
+
+      renderPage(rows);
+      offset += rows.length;
+      if (total != null) {
+        TOTAL.textContent = `${total} ${total === 1 ? "play" : "plays"}`;
+      }
+      if (rows.length < LIMIT) {
+        exhausted = true;
+        observer.disconnect();
+        setStatus(offset > 0 ? "End of history." : "");
+      } else {
+        setStatus("");
+      }
+    } catch (e) {
+      setStatus("Failed to load: " + e.message);
+    } finally {
+      loading = false;
+    }
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    if (entries.some((e) => e.isIntersecting)) fetchPage();
+  }, { rootMargin: "200px" });
+
+  observer.observe(SENTINEL);
+
+  // Initial load. Without this, an empty list never scrolls and the observer
+  // would never fire.
+  fetchPage();
+})();

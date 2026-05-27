@@ -2,6 +2,24 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [0.2.0.0] - 2026-05-27
+
+### Added
+- Real Settings page at `/settings` covering Hardware (mic device dropdown sourced from `/api/devices`), Audio (volume threshold slider with a live RMS preview bar, song sample length, the two silence-interval fields), and MQTT broker auth (Host, Port, User, Password). Sticky save bar with dirty-state tracking, beforeunload guard, and a Saved/Error toast.
+- Real History page at `/history` rendering all play history grouped by date headers (Today, Yesterday, then explicit dates). Infinite scroll via IntersectionObserver, 50 rows per page.
+- `GET /api/plays?limit=N&offset=M` endpoint returning a paginated slice of the play history plus a total count. Default `limit=50`, capped at 100.
+- `play_history.count_plays()` helper for the History page header chip.
+- `gui/tests/test_config_round_trip.py` covering `config_manager` round-trip and pydantic validation rejection for invalid types. Three new pagination tests added to `gui/tests/test_play_history.py`.
+
+### Changed
+- `POST /api/config` now returns HTTP 400 with `{"status": "error", "detail": "<pydantic error>"}` when validation fails, instead of silently returning `{"status": "success"}` on failure. The Settings UI surfaces the detail as a red toast.
+- `play_history.recent_plays()` gains an `offset` parameter (default 0) and the upper limit cap moves from 50 to 100. Existing callers are unaffected.
+- `core/core_engine.py` reads the configured mic device from `Hardware.Mic_Device` instead of the non-existent `Audio.Input_Device` key. Mic selection has never actually taken effect before this fix — restart the container after picking a device for it to apply.
+
+### Notes
+- The engine reads `config.json` once at module import. Every Settings change requires a container restart (`docker compose restart`) to take effect — the Settings page surfaces this with a banner.
+- `MQTT.Discovery.Discovery_Topic` and `MQTT.Topics.*` config fields remain unread by the engine (hardcoded in `core_engine.py`). Not exposed in the Settings UI to avoid misleading users; tracked as a future cleanup.
+
 ## [0.1.0.0] - 2026-05-26
 
 ### Added

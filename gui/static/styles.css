@@ -40,3 +40,45 @@
     0%, 100% { opacity: 1; }
     50%      { opacity: 0.55; }
 }
+
+/* Form inputs on /settings. The @tailwindcss/forms plugin (loaded via the
+   CDN in _layout.html) injects its baseline AFTER styles.css, so we use the
+   element+class chain (`input.form-input`) for higher specificity than the
+   plugin's attribute selectors. */
+input.form-input,
+select.form-input,
+textarea.form-input {
+    width: 100%;
+    background-color: rgba(53, 52, 55, 0.5);   /* surface-container-highest @ 50% */
+    border: 1px solid rgba(77, 67, 84, 0.45);  /* outline-variant @ 45% */
+    color: #e5e1e4;                            /* on-surface */
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    font: inherit;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input.form-input:focus,
+select.form-input:focus,
+textarea.form-input:focus {
+    outline: none;
+    border-color: #ddb7ff;                     /* primary */
+    box-shadow: 0 0 0 2px rgba(221, 183, 255, 0.25);
+}
+input.form-input::placeholder {
+    color: #988d9f;                            /* outline */
+}
+/* Native select arrow doesn't pick up our color tokens — inline SVG keeps it
+   simple without adding a wrapper element. */
+select.form-input {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23cfc2d6'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 1.25rem;
+    padding-right: 2rem;
+}
+
+/* Toast kinds on the sticky save bar. */
+.settings-toast[data-kind="ok"]    { color: #4edea3; }   /* secondary */
+.settings-toast[data-kind="error"] { color: #ffb4ab; }   /* error */

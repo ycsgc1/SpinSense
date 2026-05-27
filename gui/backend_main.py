@@ -2,12 +2,14 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 import sounddevice as sd
 
 import play_history
-from config_manager import load_config, save_config
+from config_manager import SpinSenseConfig, load_config, save_config
 from ipc_manager import ART_DIR, manager, handle_uds_client
 
 
@@ -81,7 +83,22 @@ def get_config():
 @app.post("/api/config")
 async def update_config(request: Request):
     new_config = await request.json()
-    save_config(new_config)
+    try:
+        SpinSenseConfig(**new_config)
+    except ValidationError as e:
+        errs = e.errors()
+        first = errs[0] if errs else {}
+        loc = ".".join(str(p) for p in first.get("loc", []))
+        msg = first.get("msg", "Validation failed")
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "detail": f"{loc}: {msg}" if loc else msg},
+        )
+    if not save_config(new_config):
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "detail": "Failed to write config.json"},
+        )
     return {"status": "success"}
 
 
@@ -101,6 +118,13 @@ def get_audio_devices():
 async def get_recent(limit: int = 10):
     rows = await asyncio.to_thread(play_history.recent_plays, limit)
     return {"plays": rows}
+
+
+@app.get("/api/plays")
+async def get_plays(limit: int = 50, offset: int = 0):
+    rows = await asyncio.to_thread(play_history.recent_plays, limit, offset)
+    total = await asyncio.to_thread(play_history.count_plays)
+    return {"plays": rows, "total": total}
 
 
 # --- WebSocket ---

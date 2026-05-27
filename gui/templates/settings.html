@@ -3,11 +3,114 @@
 {% block title %}SpinSense — Settings{% endblock %}
 
 {% block content %}
-<div class="flex flex-col items-center justify-center text-center min-h-[60vh] gap-md">
-  <span class="material-symbols-outlined text-primary" style="font-size: 64px;">settings</span>
-  <h2 class="font-headline text-headline-lg text-on-background">Settings</h2>
-  <p class="text-body-md text-on-surface-variant max-w-md">
-    Hardware, audio engine, and MQTT settings move here in the next phase. Configuration still works via <code class="text-primary">/api/config</code>.
-  </p>
+<div class="max-w-3xl mx-auto flex flex-col gap-lg pb-32">
+
+  <header>
+    <h2 class="font-headline text-headline-lg text-on-background">Settings</h2>
+    <p class="text-body-sm text-on-surface-variant mt-1">
+      Audio detection, microphone, and MQTT broker.
+    </p>
+  </header>
+
+  <div class="glass-panel rounded-xl p-md flex items-start gap-sm">
+    <span class="material-symbols-outlined text-tertiary mt-0.5" style="font-size: 20px;">info</span>
+    <div>
+      <p class="text-body-sm text-on-surface font-medium">Restart required</p>
+      <p class="text-body-sm text-on-surface-variant mt-0.5">
+        Settings changes take effect after the container restarts (<code class="text-primary">docker compose restart</code>). The engine reads config once at startup.
+      </p>
+    </div>
+  </div>
+
+  <form id="settings-form" class="flex flex-col gap-lg">
+
+    <section class="glass-panel rounded-xl p-md md:p-lg">
+      <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Hardware</h3>
+      <label class="block">
+        <span class="text-body-sm text-on-surface mb-1 block">Microphone</span>
+        <select name="Hardware.Mic_Device" id="mic-device" class="form-input">
+          <option value="default">Loading&hellip;</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="glass-panel rounded-xl p-md md:p-lg">
+      <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Audio</h3>
+
+      <div class="flex flex-col gap-lg">
+
+        <div>
+          <div class="flex justify-between items-center mb-1">
+            <label for="volume-threshold" class="text-body-sm text-on-surface">Volume threshold</label>
+            <span id="volume-threshold-value" class="text-label-sm text-on-surface-variant tabular-nums">0.0000</span>
+          </div>
+          <input type="range" id="volume-threshold" name="Audio.Volume_Threshold"
+                 min="0" max="0.05" step="0.0001" value="0.0062"
+                 class="w-full accent-primary">
+          <div class="relative h-2 mt-2 bg-surface-container-highest rounded-full overflow-hidden border border-outline-variant/30">
+            <div id="rms-preview-bar" class="absolute inset-y-0 left-0 bg-primary/60 transition-[width] duration-200 ease-linear" style="width: 0%;"></div>
+            <div id="rms-threshold-tick" class="absolute inset-y-0 w-0.5 bg-tertiary shadow-[0_0_4px_rgba(255,180,171,0.8)]" style="left: 12%;"></div>
+          </div>
+          <p class="text-label-sm text-on-surface-variant mt-1">
+            Spin a silent record. Nudge the slider just above the peak of the bar.
+          </p>
+        </div>
+
+        <label class="block">
+          <span class="text-body-sm text-on-surface mb-1 block">Song sample length (seconds)</span>
+          <input type="number" name="Audio.Song_Sample_Length" min="1" max="60" step="0.5" class="form-input">
+        </label>
+
+        <label class="block">
+          <span class="text-body-sm text-on-surface mb-1 block">New-song silence interval (seconds)</span>
+          <input type="number" name="Audio.New_Song_Silence_Interval" min="1" max="600" step="0.5" class="form-input">
+        </label>
+
+        <label class="block">
+          <span class="text-body-sm text-on-surface mb-1 block">Stopped silence interval (seconds)</span>
+          <input type="number" name="Audio.Stopped_Silence_Interval" min="1" max="600" step="0.5" class="form-input">
+        </label>
+      </div>
+    </section>
+
+    <section class="glass-panel rounded-xl p-md md:p-lg">
+      <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">MQTT Broker</h3>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-md">
+        <label class="block md:col-span-2">
+          <span class="text-body-sm text-on-surface mb-1 block">Host</span>
+          <input type="text" name="MQTT.Broker.Host" autocomplete="off" class="form-input">
+        </label>
+        <label class="block">
+          <span class="text-body-sm text-on-surface mb-1 block">Port</span>
+          <input type="number" name="MQTT.Broker.Port" min="1" max="65535" step="1" class="form-input">
+        </label>
+        <label class="block">
+          <span class="text-body-sm text-on-surface mb-1 block">Username</span>
+          <input type="text" name="MQTT.Broker.User" autocomplete="off" class="form-input">
+        </label>
+        <label class="block md:col-span-2">
+          <span class="text-body-sm text-on-surface mb-1 block">Password</span>
+          <input type="password" name="MQTT.Broker.Password" autocomplete="off" class="form-input">
+        </label>
+      </div>
+    </section>
+
+  </form>
 </div>
+
+<div class="fixed bottom-16 md:bottom-0 left-0 right-0 md:left-64 bg-background/90 backdrop-blur-md border-t border-outline-variant/30 z-40">
+  <div class="max-w-3xl mx-auto flex justify-between items-center px-margin-mobile md:px-margin-desktop py-md">
+    <span id="settings-toast" class="text-body-sm settings-toast" aria-live="polite"></span>
+    <button type="submit" form="settings-form" id="save-button"
+            class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled>
+      Save
+    </button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/settings.js"></script>
 {% endblock %}
