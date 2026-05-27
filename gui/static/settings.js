@@ -164,7 +164,7 @@
       }
       initialConfig = JSON.parse(JSON.stringify(payload));
       setDirty(false);
-      setToast("Saved", "ok");
+      setToast("Saved and applied", "ok");
       setTimeout(() => {
         if (!dirty && TOAST.dataset.kind === "ok") setToast("");
       }, 2500);
@@ -196,6 +196,44 @@
   });
 
   FORM.addEventListener("submit", onSubmit);
+
+  // MQTT test connection
+  const MQTT_TEST_BTN = document.getElementById("mqtt-test");
+  const MQTT_TEST_STATUS = document.getElementById("mqtt-test-status");
+  if (MQTT_TEST_BTN && MQTT_TEST_STATUS) {
+    MQTT_TEST_BTN.addEventListener("click", async () => {
+      MQTT_TEST_BTN.disabled = true;
+      MQTT_TEST_STATUS.textContent = "Testing…";
+      MQTT_TEST_STATUS.dataset.kind = "";
+      const formData = readForm();
+      const broker = (formData.MQTT && formData.MQTT.Broker) || {};
+      try {
+        const res = await fetch("/api/mqtt/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            host: broker.Host || "",
+            port: broker.Port || 1883,
+            user: broker.User || "",
+            password: broker.Password || "",
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (res.ok && body.ok) {
+          MQTT_TEST_STATUS.textContent = "Connected ✓";
+          MQTT_TEST_STATUS.dataset.kind = "ok";
+        } else {
+          MQTT_TEST_STATUS.textContent = body.detail || `Failed (${res.status})`;
+          MQTT_TEST_STATUS.dataset.kind = "error";
+        }
+      } catch (e) {
+        MQTT_TEST_STATUS.textContent = "Network error: " + e.message;
+        MQTT_TEST_STATUS.dataset.kind = "error";
+      } finally {
+        MQTT_TEST_BTN.disabled = false;
+      }
+    });
+  }
 
   window.addEventListener("beforeunload", (e) => {
     if (dirty) {

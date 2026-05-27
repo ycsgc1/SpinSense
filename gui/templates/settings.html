@@ -12,16 +12,6 @@
     </p>
   </header>
 
-  <div class="glass-panel rounded-xl p-md flex items-start gap-sm">
-    <span class="material-symbols-outlined text-tertiary mt-0.5" style="font-size: 20px;">info</span>
-    <div>
-      <p class="text-body-sm text-on-surface font-medium">Restart required</p>
-      <p class="text-body-sm text-on-surface-variant mt-0.5">
-        Settings changes take effect after the container restarts (<code class="text-primary">docker compose restart</code>). The engine reads config once at startup.
-      </p>
-    </div>
-  </div>
-
   <form id="settings-form" class="flex flex-col gap-lg">
 
     <section class="glass-panel rounded-xl p-md md:p-lg">
@@ -32,6 +22,10 @@
           <option value="default">Loading&hellip;</option>
         </select>
       </label>
+      <p class="text-label-sm text-on-surface-variant mt-md">
+        First time?
+        <a href="/setup" class="text-primary hover:underline">Re-run the setup wizard</a>.
+      </p>
     </section>
 
     <section class="glass-panel rounded-xl p-md md:p-lg">
@@ -93,6 +87,13 @@
           <span class="text-body-sm text-on-surface mb-1 block">Password</span>
           <input type="password" name="MQTT.Broker.Password" autocomplete="off" class="form-input">
         </label>
+      </div>
+      <div class="flex items-center gap-xs mt-md">
+        <button type="button" id="mqtt-test"
+                class="bg-surface-container-high border border-outline-variant/40 text-on-surface font-medium px-md py-2 rounded-full hover:bg-surface-container-highest transition-colors">
+          Test connection
+        </button>
+        <span id="mqtt-test-status" class="text-body-sm" aria-live="polite"></span>
       </div>
     </section>
 

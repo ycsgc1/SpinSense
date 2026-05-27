@@ -79,6 +79,24 @@ select.form-input {
     padding-right: 2rem;
 }
 
-/* Toast kinds on the sticky save bar. */
+/* Toast kinds on the sticky save bar + the wizard MQTT inline status. */
 .settings-toast[data-kind="ok"]    { color: #4edea3; }   /* secondary */
 .settings-toast[data-kind="error"] { color: #ffb4ab; }   /* error */
+#wizard-mqtt-status[data-kind="ok"]    { color: #4edea3; }
+#wizard-mqtt-status[data-kind="error"] { color: #ffb4ab; }
+#mqtt-test-status[data-kind="ok"]      { color: #4edea3; }
+#mqtt-test-status[data-kind="error"]   { color: #ffb4ab; }
+
+/* Setup wizard progress dots. setup.js toggles data-active on the current
+   step's dot; the others stay dimmed. */
+.wizard-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background-color: rgba(207, 194, 214, 0.25); /* on-surface-variant @ 25% */
+    transition: background-color 0.2s ease, width 0.2s ease;
+}
+.wizard-dot[data-active="1"] {
+    background-color: #ddb7ff; /* primary */
+    width: 24px;
+}
