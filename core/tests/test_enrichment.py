@@ -35,3 +35,22 @@ class TestExtractEnrichment(unittest.TestCase):
         from core_engine import _extract_enrichment
         track = {"sections": [{"metadata": [{"title": "Released", "text": "n/a"}]}]}
         self.assertIsNone(_extract_enrichment(track)["release_year"])
+
+
+class TestMqttGating(unittest.TestCase):
+    def test_connect_loop_returns_immediately_when_mqtt_disabled(self):
+        """When MQTT_WANTED is False the connect loop must return without
+        attempting a broker connection. Without the gate this coroutine would
+        block forever retrying against a nonexistent broker, so a short timeout
+        proves the gate works."""
+        import asyncio
+        import core_engine
+
+        original = core_engine.MQTT_WANTED
+        core_engine.MQTT_WANTED = False
+        core_engine.MQTT_ENABLED = False
+        try:
+            asyncio.run(asyncio.wait_for(core_engine.connect_mqtt_loop(), timeout=2.0))
+        finally:
+            core_engine.MQTT_WANTED = original
+        self.assertFalse(core_engine.MQTT_ENABLED)

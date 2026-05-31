@@ -101,7 +101,10 @@ def _populate_runtime(cfg):
 
 _initial_cfg = _load_config()
 _populate_runtime(_initial_cfg)
-MQTT_ENABLED = bool(_initial_cfg.get("MQTT", {}).get("Enabled", False))
+# Config toggle: whether the user wants MQTT at all (read at startup, like the
+# other MQTT settings). Distinct from MQTT_ENABLED below, which is the runtime
+# "are we currently connected to the broker" flag.
+MQTT_WANTED = bool(_initial_cfg.get("MQTT", {}).get("Enabled", False))
 try:
     _config_mtime = os.path.getmtime(CONFIG_PATH)
 except OSError:
@@ -121,6 +124,9 @@ DISCOVERY_TOPIC = "homeassistant/media_player/spinsense/config"
 
 # --- 2. MQTT Setup ---
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+# Runtime connection-state flag: True only once a broker connection is live.
+# connect_mqtt_loop() flips it; publish_state()/announce_to_ha() gate on it.
+MQTT_ENABLED = False
 
 # Cross-task signal: the config watcher sets this when the mic device changes
 # so the audio loop tears down + rebuilds the InputStream on its next pass.
@@ -273,6 +279,9 @@ async def connect_mqtt_loop():
     """Initial connect + retries. Re-entered by _reconnect_mqtt() whenever the
     config watcher detects a broker change."""
     global MQTT_ENABLED
+    if not MQTT_WANTED:
+        print("📡 MQTT disabled in config — skipping broker connection.")
+        return
     if runtime["mqtt_user"] and runtime["mqtt_pass"]:
         mqtt_client.username_pw_set(runtime["mqtt_user"], runtime["mqtt_pass"])
     print(f"📡 MQTT connecting to {runtime['mqtt_host']}:{runtime['mqtt_port']}...")
