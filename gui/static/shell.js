@@ -79,10 +79,9 @@
     });
   }
 
-  window.SpinSense = {
-    onFrame(cb)  { subscribers.add(cb); },
-    offFrame(cb) { subscribers.delete(cb); },
-  };
+  if (!window.SpinSense) window.SpinSense = {};
+  window.SpinSense.onFrame  = (cb) => { subscribers.add(cb); };
+  window.SpinSense.offFrame = (cb) => { subscribers.delete(cb); };
 
   document.addEventListener("DOMContentLoaded", () => {
     setPillState("idle");
