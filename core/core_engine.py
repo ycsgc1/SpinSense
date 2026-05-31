@@ -133,6 +133,55 @@ mic_change_event = asyncio.Event()
 # reads the result.
 calibration: dict | None = None
 
+
+def _compute_stats(samples: list[float]) -> dict:
+    """Reduce raw RMS samples into the stats blob returned to the wizard.
+    Pure function; no engine state. Percentiles use linear interpolation on
+    the sorted samples (matches numpy.percentile's default 'linear' method)."""
+    if not samples:
+        return {
+            "samples_count": 0,
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "p10": 0.0,
+            "p50": 0.0,
+            "p99": 0.0,
+        }
+    arr = sorted(samples)
+    n = len(arr)
+
+    def percentile(q: float) -> float:
+        idx = (n - 1) * q
+        lo = int(idx)
+        hi = min(lo + 1, n - 1)
+        frac = idx - lo
+        return arr[lo] * (1 - frac) + arr[hi] * frac
+
+    return {
+        "samples_count": n,
+        "min": arr[0],
+        "max": arr[-1],
+        "mean": sum(arr) / n,
+        "p10": percentile(0.10),
+        "p50": percentile(0.50),
+        "p99": percentile(0.99),
+    }
+
+
+async def _finish_calibration(session: dict) -> None:
+    """Sleep through the session's capture window, then snapshot the samples
+    into stats and flip status to 'done'. If the active calibration has been
+    replaced (via clear_calibration or a new start_calibration) while we
+    slept, this is a no-op — identity check guards against writing into a
+    stale session."""
+    await asyncio.sleep(session["duration"])
+    if calibration is not session:
+        return
+    session["stats"] = _compute_stats(list(session["samples"]))
+    session["status"] = "done"
+
+
 # Single-flight handle on the connect loop so a broker change doesn't spawn
 # parallel connect attempts on the same paho Client.
 _mqtt_task: asyncio.Task | None = None
