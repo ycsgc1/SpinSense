@@ -36,6 +36,23 @@ class TestExtractEnrichment(unittest.TestCase):
         track = {"sections": [{"metadata": [{"title": "Released", "text": "n/a"}]}]}
         self.assertIsNone(_extract_enrichment(track)["release_year"])
 
+    def test_malformed_shapes_do_not_raise(self):
+        """External Shazam data is untrusted; wrong-typed fields must yield None,
+        never an exception (the helper runs in the always-on audio loop)."""
+        from core_engine import _extract_enrichment
+        for bad in (
+            {"sections": "nope"},
+            {"sections": ["str", 123, None]},
+            {"sections": [{"metadata": "nope"}]},
+            {"sections": [{"metadata": ["str", None]}]},
+            {"genres": "nope"},
+            {"genres": ["rock"]},
+            {"isrc": 12345},
+        ):
+            out = _extract_enrichment(bad)
+            self.assertIsNone(out["release_year"])
+            self.assertIsNone(out["genre"])
+
 
 class TestMqttGating(unittest.TestCase):
     def test_connect_loop_returns_immediately_when_mqtt_disabled(self):

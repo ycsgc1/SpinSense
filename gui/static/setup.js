@@ -69,7 +69,6 @@
 
   let step = 0;
   let initialConfig = {};
-  let skipMqtt = false;
 
   function escapeHtml(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
@@ -291,7 +290,6 @@
 
   MQTT_TEST.addEventListener("click", testMqtt);
   MQTT_SKIP.addEventListener("click", () => {
-    skipMqtt = true;
     showStep(step + 1);
   });
 
@@ -301,7 +299,6 @@
   });
   POPUP_SKIP.addEventListener("click", () => {
     closePopup();
-    skipMqtt = true;
     showStep(step + 1);
   });
 

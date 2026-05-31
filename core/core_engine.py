@@ -74,6 +74,9 @@ def _normalize_mic(cfg):
 # file watcher re-populates this dict on every config.json change; the audio
 # loop, recognize_audio(), and the MQTT connect loop read from it on every
 # iteration so changes take effect without a restart.
+# Exception: whether MQTT is enabled at all (MQTT.Enabled) is read once at
+# startup into MQTT_WANTED below, so toggling MQTT on/off in the GUI requires
+# an engine restart to take effect. (mDNS, handled in the GUI process, is live.)
 runtime = {
     "threshold": 0.01,
     "sample_len": 5.0,
@@ -416,9 +419,15 @@ def _extract_enrichment(track: dict) -> dict:
         genre = genres.get("primary") or None
 
     release_year = None
-    for section in track.get("sections", []) or []:
-        for item in (section or {}).get("metadata", []) or []:
-            if (item or {}).get("title") == "Released":
+    sections = track.get("sections")
+    for section in sections if isinstance(sections, list) else []:
+        if not isinstance(section, dict):
+            continue
+        metadata = section.get("metadata")
+        for item in metadata if isinstance(metadata, list) else []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("title") == "Released":
                 text = str(item.get("text", "")).strip()
                 digits = ""
                 for ch in text:
