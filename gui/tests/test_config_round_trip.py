@@ -102,5 +102,25 @@ class ConfigRoundTripTest(unittest.TestCase):
         self.assertEqual(defaults["Audio"]["Volume_Threshold"], 0.01)
 
 
+class TestDiscoveryConfig(unittest.TestCase):
+    def test_defaults_include_discovery_and_mqtt_enabled(self):
+        from config_manager import SpinSenseConfig
+        cfg = SpinSenseConfig().dict()
+        self.assertEqual(cfg["Discovery"]["mDNS"]["Enabled"], True)
+        self.assertEqual(cfg["Discovery"]["mDNS"]["Service_Name"], "")
+        self.assertEqual(cfg["MQTT"]["Enabled"], False)
+
+    def test_roundtrip_preserves_discovery(self):
+        from config_manager import SpinSenseConfig
+        data = SpinSenseConfig().dict()
+        data["Discovery"]["mDNS"]["Enabled"] = False
+        data["Discovery"]["mDNS"]["Service_Name"] = "Living Room"
+        data["MQTT"]["Enabled"] = True
+        out = SpinSenseConfig(**data).dict()
+        self.assertEqual(out["Discovery"]["mDNS"]["Enabled"], False)
+        self.assertEqual(out["Discovery"]["mDNS"]["Service_Name"], "Living Room")
+        self.assertEqual(out["MQTT"]["Enabled"], True)
+
+
 if __name__ == "__main__":
     unittest.main()

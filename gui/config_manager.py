@@ -39,15 +39,24 @@ class MQTTTopicsConfig(BaseModel):
     Album_Art: str = "home/vinyl/album_art"
 
 class MQTTConfig(BaseModel):
+    Enabled: bool = False
     Broker: MQTTBrokerConfig = MQTTBrokerConfig()
     Discovery: MQTTDiscoveryConfig = MQTTDiscoveryConfig()
     Topics: MQTTTopicsConfig = MQTTTopicsConfig()
+
+class MDNSConfig(BaseModel):
+    Enabled: bool = True
+    Service_Name: str = ""  # empty => derive from hostname at runtime
+
+class DiscoveryConfig(BaseModel):
+    mDNS: MDNSConfig = MDNSConfig()
 
 class SpinSenseConfig(BaseModel):
     System: SystemConfig = SystemConfig()
     Hardware: HardwareConfig = HardwareConfig()
     Audio: AudioConfig = AudioConfig()
     MQTT: MQTTConfig = MQTTConfig()
+    Discovery: DiscoveryConfig = DiscoveryConfig()
 
 # --- Core Functions ---
 def get_default_config() -> dict:
