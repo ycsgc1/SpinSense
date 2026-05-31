@@ -527,6 +527,13 @@ async def audio_monitor_loop():
         except Exception:
             pass
 
+        # Suppress detection during an active calibration capture window.
+        # The audio callback still appends samples + still updates the live
+        # meter — only the recognize/silence-tracking logic is paused.
+        if calibration is not None and calibration["status"] == "running":
+            await asyncio.sleep(1)
+            continue
+
         if vol > runtime["threshold"]:
             if not state["in_song"] or state["silence_counter"] > 0:
                 stream.stop()
