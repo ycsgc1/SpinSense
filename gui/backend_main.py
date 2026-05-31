@@ -271,6 +271,13 @@ async def get_plays(limit: int = 50, offset: int = 0):
     return {"plays": rows, "total": total}
 
 
+@app.get("/api/status")
+def get_status():
+    """Last-known engine status, in the shape the Home Assistant integration
+    polls. Defaults to a 'stopped' payload when the engine hasn't reported."""
+    return manager.last_status
+
+
 # --- WebSocket ---
 
 @app.websocket("/ws/live-status")
