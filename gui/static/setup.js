@@ -7,10 +7,37 @@
   const CLOSE_BTN = document.getElementById("wizard-close");
 
   const MIC = document.getElementById("wizard-mic");
-  // const THRESHOLD = document.getElementById("wizard-threshold");
-  // const THRESHOLD_VALUE = document.getElementById("wizard-threshold-value");
-  // const RMS_BAR = document.getElementById("wizard-rms-bar");
-  // const RMS_TICK = document.getElementById("wizard-rms-tick");
+
+  // Step 2 — auto path elements
+  const AUTO_BTN = document.getElementById("calibrate-auto-btn");
+  const MANUAL_BTN = document.getElementById("calibrate-manual-btn");
+  const AUTO_WARNING = document.getElementById("calibrate-auto-warning");
+
+  const NOISE_START = document.getElementById("calibrate-noise-start");
+  const NOISE_STATUS = document.getElementById("calibrate-noise-status");
+  const NOISE_BAR = document.getElementById("calibrate-noise-bar");
+
+  const MUSIC_START = document.getElementById("calibrate-music-start");
+  const MUSIC_STATUS = document.getElementById("calibrate-music-status");
+  const MUSIC_BAR = document.getElementById("calibrate-music-bar");
+
+  const RESULT_HEADLINE = document.getElementById("calibrate-result-headline");
+  const RESULT_NOISE = document.getElementById("calibrate-result-noise");
+  const RESULT_MUSIC = document.getElementById("calibrate-result-music");
+  const RESULT_THRESHOLD = document.getElementById("calibrate-result-threshold");
+  const RERUN_BTN = document.getElementById("calibrate-rerun");
+
+  // Step 2 — result-screen slider (auto path) and manual-screen slider.
+  // Both operate in dB; the engine value in config is linear RMS.
+  const THRESHOLD = document.getElementById("wizard-threshold");
+  const THRESHOLD_NUMBER = document.getElementById("wizard-threshold-number");
+  const RMS_BAR = document.getElementById("wizard-rms-bar");
+  const RMS_TICK = document.getElementById("wizard-rms-tick");
+
+  const THRESHOLD_MANUAL = document.getElementById("wizard-threshold-manual");
+  const THRESHOLD_MANUAL_NUMBER = document.getElementById("wizard-threshold-manual-number");
+  const RMS_BAR_MANUAL = document.getElementById("wizard-rms-bar-manual");
+  const RMS_TICK_MANUAL = document.getElementById("wizard-rms-tick-manual");
 
   const MQTT_HOST = document.getElementById("wizard-mqtt-host");
   const MQTT_PORT = document.getElementById("wizard-mqtt-port");
@@ -27,7 +54,15 @@
 
   const FINISH_BTN = document.getElementById("wizard-finish");
 
-  const RMS_CEILING = 0.05;
+  const DB_MIN = -80;
+  const DB_MAX = 0;
+  const dbUtil = window.SpinSense.db;
+  // Which slider holds the canonical threshold value for save. "result" = auto
+  // path slider on Screen 2D; "manual" = Screen 2E slider.
+  let activeSlider = "result";
+  let captures = { noise: null, music: null };
+  let currentSubstep = "choose";
+  let captureAbortKey = 0; // bumped on cancel to invalidate in-flight polls
 
   let step = 0;
   let initialConfig = {};
@@ -52,11 +87,22 @@
     step = n;
   }
 
-  function updateThresholdTick() {
-    // const t = Number(THRESHOLD.value);
-    // const pct = Math.min(100, (t / RMS_CEILING) * 100);
-    // RMS_TICK.style.left = pct + "%";
-    // THRESHOLD_VALUE.textContent = t.toFixed(4);
+  function placeTick(tickEl, db) {
+    if (!tickEl) return;
+    const pct = ((db - DB_MIN) / (DB_MAX - DB_MIN)) * 100;
+    tickEl.style.left = Math.max(0, Math.min(100, pct)) + "%";
+  }
+
+  function syncThresholdControls(which, db) {
+    const slider = which === "manual" ? THRESHOLD_MANUAL : THRESHOLD;
+    const number = which === "manual" ? THRESHOLD_MANUAL_NUMBER : THRESHOLD_NUMBER;
+    const tick = which === "manual" ? RMS_TICK_MANUAL : RMS_TICK;
+    const clamped = Math.max(DB_MIN, Math.min(DB_MAX, db));
+    slider.value = clamped.toFixed(1);
+    if (document.activeElement !== number) {
+      number.value = clamped.toFixed(1);
+    }
+    placeTick(tick, clamped);
   }
 
   function getNested(obj, path) {
@@ -122,12 +168,14 @@
     try {
       const res = await fetch("/api/config");
       initialConfig = await res.json();
-      // THRESHOLD.value = getNested(initialConfig, "Audio.Volume_Threshold") ?? 0.0062;
+      const storedRms = getNested(initialConfig, "Audio.Volume_Threshold") ?? 0.01;
+      const storedDb = dbUtil.rmsToDb(storedRms);
+      syncThresholdControls("result", storedDb);
+      syncThresholdControls("manual", storedDb);
       MQTT_HOST.value = getNested(initialConfig, "MQTT.Broker.Host") ?? "";
       MQTT_PORT.value = getNested(initialConfig, "MQTT.Broker.Port") ?? 1883;
       MQTT_USER.value = getNested(initialConfig, "MQTT.Broker.User") ?? "";
       MQTT_PASS.value = getNested(initialConfig, "MQTT.Broker.Password") ?? "";
-      updateThresholdTick();
       await loadDevices();
     } catch (e) {
       console.error("Wizard: failed to load config", e);
@@ -137,7 +185,10 @@
   function buildPayload({ state }) {
     const payload = JSON.parse(JSON.stringify(initialConfig || {}));
     setNested(payload, "Hardware.Mic_Device", MIC.value || "default");
-    // setNested(payload, "Audio.Volume_Threshold", Number(THRESHOLD.value));
+    const sliderDb = Number(
+      activeSlider === "manual" ? THRESHOLD_MANUAL.value : THRESHOLD.value
+    );
+    setNested(payload, "Audio.Volume_Threshold", dbUtil.dbToRms(sliderDb));
     if (!skipMqtt) {
       setNested(payload, "MQTT.Broker.Host", MQTT_HOST.value);
       setNested(payload, "MQTT.Broker.Port", Number(MQTT_PORT.value || 1883));
@@ -214,17 +265,17 @@
   });
   document.querySelectorAll("[data-wizard-skip]").forEach((b) => {
     b.addEventListener("click", async () => {
+      captureAbortKey++;
+      clearCalibrationBestEffort();
       if (await saveAndNavigate("skipped")) window.location.href = "/";
     });
   });
 
   CLOSE_BTN.addEventListener("click", () => {
-    // X = leave state as-is; just navigate away. If state was "pending" the
-    // middleware will redirect back to /setup on the next page hit.
+    captureAbortKey++;
+    clearCalibrationBestEffort();
     window.location.href = "/";
   });
-
-  // THRESHOLD.addEventListener("input", updateThresholdTick);
 
   MQTT_TEST.addEventListener("click", testMqtt);
   MQTT_SKIP.addEventListener("click", () => {
@@ -252,32 +303,188 @@
   });
 
   // Live RMS preview on the threshold step.
-  // if (window.SpinSense && typeof window.SpinSense.onFrame === "function") {
-  //   window.SpinSense.onFrame((payload) => {
-  //     const rms = payload && typeof payload.rms_level === "number" ? payload.rms_level : 0;
-  //     const pct = Math.min(100, Math.max(0, (rms / RMS_CEILING) * 100));
-  //     RMS_BAR.style.width = pct + "%";
-  //   });
-  // }
+  if (window.SpinSense && typeof window.SpinSense.onFrame === "function") {
+    window.SpinSense.onFrame((payload) => {
+      const rms = payload && typeof payload.rms_level === "number" ? payload.rms_level : 0;
+      const db = dbUtil.rmsToDb(rms);
+      const pct = Math.max(0, Math.min(100, ((db - DB_MIN) / (DB_MAX - DB_MIN)) * 100));
+      const widthStr = pct + "%";
+      if (NOISE_BAR) NOISE_BAR.style.width = widthStr;
+      if (MUSIC_BAR) MUSIC_BAR.style.width = widthStr;
+      if (RMS_BAR) RMS_BAR.style.width = widthStr;
+      if (RMS_BAR_MANUAL) RMS_BAR_MANUAL.style.width = widthStr;
+    });
+  }
 
-  // Step 2 substep router. Full capture orchestration lands in the next task.
   function showSubstep(name) {
+    currentSubstep = name;
     document.querySelectorAll(".wizard-substep").forEach((el) => {
       el.classList.toggle("hidden", el.dataset.substep !== name);
     });
+    if (name === "manual") activeSlider = "manual";
+    if (name === "result") activeSlider = "result";
   }
+
+  async function checkEngineReachable() {
+    try {
+      const res = await fetch("/api/calibrate/status");
+      if (res.status === 503) return false;
+      return res.ok;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function clearCalibrationBestEffort() {
+    try { await fetch("/api/calibrate/clear", { method: "POST" }); } catch (_) {}
+  }
+
+  function applyThresholdFormula(noiseStats, musicStats) {
+    // Threshold = noise_p99 + 0.25 * (music_p10 - noise_p99), all in dB.
+    // Safety: 2 dB minimum gap above noise; clamp to display range.
+    const noiseDb = dbUtil.rmsToDb(noiseStats.p99);
+    const musicDb = dbUtil.rmsToDb(musicStats.p10);
+    if (noiseDb >= musicDb) {
+      return { ok: false, noiseDb, musicDb };
+    }
+    let thresholdDb = noiseDb + 0.25 * (musicDb - noiseDb);
+    if (thresholdDb < noiseDb + 2) thresholdDb = noiseDb + 2;
+    thresholdDb = Math.max(DB_MIN, Math.min(DB_MAX, thresholdDb));
+    return { ok: true, noiseDb, musicDb, thresholdDb };
+  }
+
+  async function runCapture(phase, statusEl, startBtn) {
+    const myKey = ++captureAbortKey;
+    startBtn.disabled = true;
+    statusEl.textContent = "Starting…";
+
+    let startReply;
+    try {
+      const res = await fetch("/api/calibrate/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phase }),
+      });
+      startReply = await res.json().catch(() => ({}));
+      if (!res.ok || !startReply.ok) {
+        statusEl.textContent = (startReply && startReply.detail) || `Start failed (${res.status})`;
+        startBtn.disabled = false;
+        return null;
+      }
+    } catch (e) {
+      statusEl.textContent = "Network error: " + e.message;
+      startBtn.disabled = false;
+      return null;
+    }
+
+    const duration = (startReply.duration_s || 5) * 1000;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < duration) {
+      if (captureAbortKey !== myKey) return null;
+      const remaining = Math.ceil((duration - (Date.now() - startedAt)) / 1000);
+      statusEl.textContent = `Capturing… ${remaining}s`;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    // Poll status up to 3s extra slack for the engine's timer task to finish.
+    statusEl.textContent = "Finishing…";
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (captureAbortKey !== myKey) return null;
+      try {
+        const res = await fetch("/api/calibrate/status");
+        const body = await res.json().catch(() => ({}));
+        if (body.status === "done" && body.stats) {
+          startBtn.disabled = false;
+          statusEl.textContent = `Captured ${body.samples_count} samples.`;
+          return body.stats;
+        }
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    statusEl.textContent = "Capture timed out — try again.";
+    startBtn.disabled = false;
+    return null;
+  }
+
+  async function runNoiseCapture() {
+    const stats = await runCapture("noise_floor", NOISE_STATUS, NOISE_START);
+    if (!stats) return;
+    captures.noise = stats;
+    showSubstep("music_capture");
+  }
+
+  async function runMusicCapture() {
+    const stats = await runCapture("music", MUSIC_STATUS, MUSIC_START);
+    if (!stats) return;
+    captures.music = stats;
+
+    const result = applyThresholdFormula(captures.noise, captures.music);
+    if (!result.ok) {
+      MUSIC_STATUS.textContent = "Your silence sample was as loud as your music sample. Try again — make sure a song is actually playing.";
+      return; // user can click the capture button again to retry music phase only
+    }
+
+    RESULT_HEADLINE.textContent = dbUtil.formatDb(result.thresholdDb);
+    RESULT_NOISE.textContent = dbUtil.formatDb(result.noiseDb);
+    RESULT_MUSIC.textContent = dbUtil.formatDb(result.musicDb);
+    RESULT_THRESHOLD.textContent = dbUtil.formatDb(result.thresholdDb);
+    syncThresholdControls("result", result.thresholdDb);
+    showSubstep("result");
+    clearCalibrationBestEffort();
+  }
+
+  AUTO_BTN.addEventListener("click", async () => {
+    AUTO_WARNING.classList.add("hidden");
+    const reachable = await checkEngineReachable();
+    if (!reachable) {
+      AUTO_WARNING.textContent = "Audio engine not running — restart the container or use 'Set manually'.";
+      AUTO_WARNING.classList.remove("hidden");
+      return;
+    }
+    captures = { noise: null, music: null };
+    showSubstep("noise_capture");
+  });
+
+  MANUAL_BTN.addEventListener("click", () => {
+    activeSlider = "manual";
+    showSubstep("manual");
+  });
+
+  NOISE_START.addEventListener("click", runNoiseCapture);
+  MUSIC_START.addEventListener("click", runMusicCapture);
+
+  RERUN_BTN.addEventListener("click", () => {
+    captures = { noise: null, music: null };
+    showSubstep("noise_capture");
+  });
+
   document.querySelectorAll("[data-substep-back]").forEach((b) => {
-    b.addEventListener("click", () => showSubstep(b.dataset.substepBack));
+    b.addEventListener("click", () => {
+      captureAbortKey++;
+      clearCalibrationBestEffort();
+      showSubstep(b.dataset.substepBack);
+    });
   });
   document.querySelectorAll("[data-substep-goto]").forEach((b) => {
     b.addEventListener("click", () => showSubstep(b.dataset.substepGoto));
   });
-  document.getElementById("calibrate-auto-btn").addEventListener("click", () => {
-    showSubstep("noise_capture");
+
+  // Threshold control wiring for both sliders.
+  THRESHOLD.addEventListener("input", () => {
+    syncThresholdControls("result", Number(THRESHOLD.value));
   });
-  document.getElementById("calibrate-manual-btn").addEventListener("click", () => {
-    showSubstep("manual");
+  THRESHOLD_NUMBER.addEventListener("input", () => {
+    syncThresholdControls("result", Number(THRESHOLD_NUMBER.value));
   });
+  THRESHOLD_MANUAL.addEventListener("input", () => {
+    syncThresholdControls("manual", Number(THRESHOLD_MANUAL.value));
+  });
+  THRESHOLD_MANUAL_NUMBER.addEventListener("input", () => {
+    syncThresholdControls("manual", Number(THRESHOLD_MANUAL_NUMBER.value));
+  });
+
+  // Always start Step 2 on the chooser.
   showSubstep("choose");
 
   showStep(0);
