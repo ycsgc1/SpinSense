@@ -170,6 +170,13 @@
     try {
       const res = await fetch("/api/config");
       initialConfig = await res.json();
+    } catch (e) {
+      console.error("Wizard: failed to fetch config", e);
+    }
+    // Apply config to the form defensively. A failure here (e.g. a missing
+    // element from a stale/cached asset) must never block the mic list below,
+    // so this is isolated from loadDevices().
+    try {
       const storedRms = getNested(initialConfig, "Audio.Volume_Threshold") ?? 0.01;
       const storedDb = dbUtil.rmsToDb(storedRms);
       syncThresholdControls("result", storedDb);
@@ -178,13 +185,13 @@
       MQTT_PORT.value = getNested(initialConfig, "MQTT.Broker.Port") ?? 1883;
       MQTT_USER.value = getNested(initialConfig, "MQTT.Broker.User") ?? "";
       MQTT_PASS.value = getNested(initialConfig, "MQTT.Broker.Password") ?? "";
-      MDNS_ENABLED.checked = getNested(initialConfig, "Discovery.mDNS.Enabled") ?? true;
-      MQTT_ENABLED.checked = getNested(initialConfig, "MQTT.Enabled") ?? false;
-      MQTT_FIELDS.classList.toggle("hidden", !MQTT_ENABLED.checked);
-      await loadDevices();
+      if (MDNS_ENABLED) MDNS_ENABLED.checked = getNested(initialConfig, "Discovery.mDNS.Enabled") ?? true;
+      if (MQTT_ENABLED) MQTT_ENABLED.checked = getNested(initialConfig, "MQTT.Enabled") ?? false;
+      if (MQTT_FIELDS) MQTT_FIELDS.classList.toggle("hidden", !(MQTT_ENABLED && MQTT_ENABLED.checked));
     } catch (e) {
-      console.error("Wizard: failed to load config", e);
+      console.error("Wizard: failed to apply config to form", e);
     }
+    await loadDevices();
   }
 
   function buildPayload({ state }) {
@@ -194,9 +201,10 @@
       activeSlider === "manual" ? THRESHOLD_MANUAL.value : THRESHOLD.value
     );
     setNested(payload, "Audio.Volume_Threshold", dbUtil.dbToRms(sliderDb));
-    setNested(payload, "Discovery.mDNS.Enabled", !!MDNS_ENABLED.checked);
-    setNested(payload, "MQTT.Enabled", !!MQTT_ENABLED.checked);
-    if (MQTT_ENABLED.checked) {
+    setNested(payload, "Discovery.mDNS.Enabled", !!(MDNS_ENABLED && MDNS_ENABLED.checked));
+    const mqttOn = !!(MQTT_ENABLED && MQTT_ENABLED.checked);
+    setNested(payload, "MQTT.Enabled", mqttOn);
+    if (mqttOn) {
       setNested(payload, "MQTT.Broker.Host", MQTT_HOST.value);
       setNested(payload, "MQTT.Broker.Port", Number(MQTT_PORT.value || 1883));
       setNested(payload, "MQTT.Broker.User", MQTT_USER.value);
@@ -284,9 +292,11 @@
     window.location.href = "/";
   });
 
-  MQTT_ENABLED.addEventListener("change", () => {
-    MQTT_FIELDS.classList.toggle("hidden", !MQTT_ENABLED.checked);
-  });
+  if (MQTT_ENABLED && MQTT_FIELDS) {
+    MQTT_ENABLED.addEventListener("change", () => {
+      MQTT_FIELDS.classList.toggle("hidden", !MQTT_ENABLED.checked);
+    });
+  }
 
   MQTT_TEST.addEventListener("click", testMqtt);
   MQTT_SKIP.addEventListener("click", () => {
