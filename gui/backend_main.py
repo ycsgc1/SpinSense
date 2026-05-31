@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -16,6 +17,31 @@ from ipc_manager import ART_DIR, manager, handle_uds_client
 # Paths that the setup-wizard redirect must let through. Everything outside
 # this list is gated when Setup_Wizard_State == "pending".
 _SETUP_ALLOWED_PREFIXES = ("/setup", "/api/", "/static/", "/art/", "/ws/")
+
+CMD_SOCKET_PATH = '/tmp/spinsense-cmd.sock'
+
+
+async def _send_cmd(payload: dict, timeout: float = 2.0) -> dict:
+    """Open a short-lived connection to the engine's command socket, write
+    one JSON line, read one JSON line, close. Returns the parsed reply.
+
+    Raises FileNotFoundError if the socket doesn't exist, ConnectionRefusedError
+    if the engine isn't listening, asyncio.TimeoutError on either side."""
+    reader, writer = await asyncio.wait_for(
+        asyncio.open_unix_connection(CMD_SOCKET_PATH),
+        timeout=timeout,
+    )
+    try:
+        writer.write((json.dumps(payload) + '\n').encode())
+        await writer.drain()
+        line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+        return json.loads(line.decode())
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
 
 
 async def start_uds_listener():
@@ -187,6 +213,49 @@ async def test_mqtt(request: Request):
     if ok:
         return {"ok": True, "detail": detail}
     return {"ok": False, "detail": detail}
+
+
+@app.post("/api/calibrate/start")
+async def calibrate_start(request: Request):
+    body = await request.json()
+    phase = body.get("phase")
+    if phase not in ("noise_floor", "music"):
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "detail": f"invalid phase: {phase!r}"},
+        )
+    try:
+        reply = await _send_cmd({"cmd": "start_calibration", "phase": phase})
+    except (FileNotFoundError, ConnectionRefusedError, asyncio.TimeoutError):
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "detail": "Engine not reachable"},
+        )
+    return reply
+
+
+@app.get("/api/calibrate/status")
+async def calibrate_status():
+    try:
+        reply = await _send_cmd({"cmd": "get_calibration"})
+    except (FileNotFoundError, ConnectionRefusedError, asyncio.TimeoutError):
+        return JSONResponse(
+            status_code=503,
+            content={"status": "none", "samples_count": 0, "stats": None, "detail": "Engine not reachable"},
+        )
+    return reply
+
+
+@app.post("/api/calibrate/clear")
+async def calibrate_clear():
+    try:
+        reply = await _send_cmd({"cmd": "clear_calibration"})
+    except (FileNotFoundError, ConnectionRefusedError, asyncio.TimeoutError):
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "detail": "Engine not reachable"},
+        )
+    return reply
 
 
 @app.get("/api/recent")
