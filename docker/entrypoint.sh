@@ -12,5 +12,5 @@ echo "🚀 Starting SpinSense Web GUI (Foreground)..."
 # Move into the GUI folder so FastAPI can find the static/template folders
 cd gui
 
-# Launch FastAPI using Uvicorn, binding to all interfaces on port 8000
-exec uvicorn backend_main:app --host 0.0.0.0 --port 8000
+# Launch FastAPI using Uvicorn, binding to all interfaces on the configured port (SPINSENSE_PORT, default 3313)
+exec uvicorn backend_main:app --host 0.0.0.0 --port "${SPINSENSE_PORT:-3313}"

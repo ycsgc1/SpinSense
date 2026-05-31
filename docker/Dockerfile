@@ -21,4 +21,5 @@ COPY . .
 # Make sure entrypoint is executable
 RUN chmod +x ./docker/entrypoint.sh
 
+EXPOSE 3313
 ENTRYPOINT ["./docker/entrypoint.sh"]
