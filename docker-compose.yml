@@ -17,10 +17,14 @@ services:
 
     environment:
       - SPINSENSE_DATA_DIR=/app/data
+      - SPINSENSE_PORT=3313        # app binds host :3313 (a nod to 33⅓ RPM)
     volumes:
       - ./data:/app/data
       - /tmp:/tmp
-      
-    # Map Mac port 3313 to Container port 8000
-   # ports:
-    #  - "3313:8000"
+
+    # network_mode: host (above) is REQUIRED for mDNS Home Assistant discovery —
+    # multicast does not cross Docker bridge networking. Under host mode the app
+    # binds SPINSENSE_PORT directly on the host, so there is no ports: mapping.
+    # If you switch to bridge networking (no HA auto-discovery), expose it with:
+    #   ports:
+    #     - "3313:3313"
