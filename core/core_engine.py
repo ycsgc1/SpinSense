@@ -182,6 +182,88 @@ async def _finish_calibration(session: dict) -> None:
     session["status"] = "done"
 
 
+CMD_SOCKET_PATH = '/tmp/spinsense-cmd.sock'
+
+
+async def _handle_command(payload: dict) -> dict:
+    """Dispatch one command. Pure-ish — only side effect is mutating the
+    module-level `calibration` and scheduling the finish timer task."""
+    global calibration
+    cmd = payload.get("cmd")
+
+    if cmd == "start_calibration":
+        if calibration is not None and calibration["status"] == "running":
+            return {"ok": False, "detail": "calibration already running"}
+        phase = payload.get("phase")
+        if phase not in ("noise_floor", "music"):
+            return {"ok": False, "detail": f"invalid phase: {phase!r}"}
+        session = {
+            "phase": phase,
+            "samples": deque(maxlen=500),
+            "started_at": asyncio.get_event_loop().time(),
+            "duration": 5.0,
+            "status": "running",
+            "stats": None,
+        }
+        calibration = session
+        asyncio.create_task(_finish_calibration(session))
+        return {"ok": True, "duration_s": 5.0}
+
+    if cmd == "get_calibration":
+        if calibration is None:
+            return {"status": "none", "samples_count": 0, "stats": None}
+        return {
+            "status": calibration["status"],
+            "samples_count": len(calibration["samples"]),
+            "stats": calibration["stats"],
+        }
+
+    if cmd == "clear_calibration":
+        calibration = None
+        return {"ok": True}
+
+    return {"ok": False, "detail": f"unknown cmd: {cmd!r}"}
+
+
+async def _command_client_handler(reader, writer):
+    """One JSON-line in, one JSON-line out. Connections are short-lived."""
+    try:
+        line = await reader.readline()
+        if not line:
+            return
+        try:
+            payload = json.loads(line.decode())
+        except Exception as e:
+            response = {"ok": False, "detail": f"json parse error: {e}"}
+        else:
+            try:
+                response = await _handle_command(payload)
+            except Exception as e:
+                response = {"ok": False, "detail": f"handler error: {e}"}
+        writer.write((json.dumps(response) + "\n").encode())
+        await writer.drain()
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+
+async def command_listener_loop():
+    """Bind CMD_SOCKET_PATH and serve commands until cancelled. Removes a
+    pre-existing socket file (matches the pattern used by the backend's
+    /tmp/spinsense.sock listener)."""
+    if os.path.exists(CMD_SOCKET_PATH):
+        os.remove(CMD_SOCKET_PATH)
+    server = await asyncio.start_unix_server(
+        _command_client_handler, path=CMD_SOCKET_PATH,
+    )
+    print(f"🎛️ Command listener bound on {CMD_SOCKET_PATH}")
+    async with server:
+        await server.serve_forever()
+
+
 # Single-flight handle on the connect loop so a broker change doesn't spawn
 # parallel connect attempts on the same paho Client.
 _mqtt_task: asyncio.Task | None = None
@@ -398,6 +480,7 @@ async def audio_monitor_loop():
     global _mqtt_task
     _mqtt_task = asyncio.create_task(connect_mqtt_loop())
     asyncio.create_task(config_watch_loop())
+    asyncio.create_task(command_listener_loop())
     print("--- VINYL SCROBBLER ALPHA ACTIVE ---")
 
     stream = _open_input_stream(audio_callback)
