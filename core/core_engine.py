@@ -88,7 +88,7 @@ runtime = {
 
 
 def _populate_runtime(cfg):
-    runtime["threshold"]        = cfg.get('Audio', {}).get('Volume_Threshold', 0.015)
+    runtime["threshold"]        = cfg.get('Audio', {}).get('Volume_Threshold', 0.01)
     runtime["sample_len"]       = cfg.get('Audio', {}).get('Song_Sample_Length', 5.0)
     runtime["new_song_silence"] = cfg.get('Audio', {}).get('New_Song_Silence_Interval', 2.0)
     runtime["stopped_silence"]  = cfg.get('Audio', {}).get('Stopped_Silence_Interval', 5.0)
