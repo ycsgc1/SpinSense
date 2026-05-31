@@ -13,6 +13,7 @@ import sounddevice as sd
 import play_history
 from config_manager import SpinSenseConfig, load_config, save_config
 from ipc_manager import ART_DIR, manager, handle_uds_client
+from discovery import advertiser
 
 # Paths that the setup-wizard redirect must let through. Everything outside
 # this list is gated when Setup_Wizard_State == "pending".
@@ -61,7 +62,12 @@ async def lifespan(app: FastAPI):
     play_history.init_db()
     os.makedirs(ART_DIR, exist_ok=True)
     task = asyncio.create_task(start_uds_listener())
+    try:
+        await advertiser.start(load_config())
+    except Exception as e:
+        print(f"⚠️ mDNS advertiser failed to start: {e}")
     yield
+    await advertiser.stop()
     task.cancel()
 
 
@@ -148,6 +154,10 @@ async def update_config(request: Request):
             status_code=500,
             content={"status": "error", "detail": "Failed to write config.json"},
         )
+    try:
+        await advertiser.reconcile(new_config)
+    except Exception as e:
+        print(f"⚠️ mDNS reconcile after config save failed: {e}")
     return {"status": "success"}
 
 
