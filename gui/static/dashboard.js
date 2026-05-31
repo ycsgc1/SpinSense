@@ -15,8 +15,14 @@
   const levelBar    = $("input-level-bar");
   const levelText   = $("input-level-text");
   const recentList  = $("recent-plays-list");
+  const meterThreshold = $("input-meter-threshold");
 
-  let volumeThreshold = 0.05;  // overwritten by /api/config on load
+  // dB display window for the input meter on this page. Threshold tick is
+  // computed from Audio.Volume_Threshold (linear RMS in config -> dB here).
+  const DB_MIN = -80;
+  const DB_MAX = 0;
+  const dbUtil = window.SpinSense.db;
+  let volumeThresholdDb = -40;  // overwritten by /api/config on load
   let lastSeenTitle   = "";
 
   // ---------- helpers ----------
@@ -27,12 +33,6 @@
     if (delta < 3600)   return `${Math.floor(delta / 60)}m ago`;
     if (delta < 86400)  return `${Math.floor(delta / 3600)}h ago`;
     return `${Math.floor(delta / 86400)}d ago`;
-  }
-
-  function rmsToDb(rms) {
-    if (!rms || rms <= 0) return null; // -infinity
-    const db = 20 * Math.log10(rms);
-    return Math.max(-60, Math.min(0, db));
   }
 
   function setVinylSpinning(spinning) {
@@ -87,6 +87,12 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
+  function placeThresholdTick() {
+    if (!meterThreshold) return;
+    const pct = ((volumeThresholdDb - DB_MIN) / (DB_MAX - DB_MIN)) * 100;
+    meterThreshold.style.left = `${Math.max(0, Math.min(100, pct))}%`;
+  }
+
   async function refreshRecent() {
     try {
       const res = await fetch("/api/recent?limit=5");
@@ -123,23 +129,26 @@
       setVinylArt(null);
     }
 
-    // RMS input meter (against configured threshold)
+    // Input meter in dB, with a tick at the configured threshold.
     const rms = typeof payload.rms_level === "number" ? payload.rms_level : 0;
     if (meterBar && meterText) {
-      const pct = Math.max(0, Math.min(100, (rms / volumeThreshold) * 100));
+      const db = dbUtil.rmsToDb(rms);
+      const pct = Math.max(0, Math.min(100, ((db - DB_MIN) / (DB_MAX - DB_MIN)) * 100));
       meterBar.style.width = `${pct}%`;
-      meterText.textContent = rms.toFixed(4);
+      meterText.textContent = rms <= 0 ? "−∞ dB" : `${db.toFixed(1)} dB`;
     }
 
-    // System Health: Input Level (dB)
-    const db = rmsToDb(rms);
+    // System Health: Input Level (dB) — narrower visual window (-60..0)
+    // because that's where useful signal lives on this widget.
     if (levelBar && levelText) {
-      if (db === null) {
+      if (rms <= 0) {
         levelBar.style.width = "0%";
         levelText.innerHTML  = "&minus;&infin; dB";
       } else {
-        levelBar.style.width = `${((db + 60) / 60) * 100}%`;
-        levelText.textContent = `${Math.round(db)} dB`;
+        const db = dbUtil.rmsToDb(rms);
+        const clamped = Math.max(-60, Math.min(0, db));
+        levelBar.style.width = `${((clamped + 60) / 60) * 100}%`;
+        levelText.textContent = `${Math.round(clamped)} dB`;
       }
     }
 
@@ -162,7 +171,10 @@
       if (!res.ok) return;
       const cfg = await res.json();
       const v = cfg && cfg.Audio && cfg.Audio.Volume_Threshold;
-      if (typeof v === "number" && v > 0) volumeThreshold = v;
+      if (typeof v === "number" && v > 0) {
+        volumeThresholdDb = dbUtil.rmsToDb(v);
+        placeThresholdTick();
+      }
     } catch (_) { /* fallback default already set */ }
   }
 

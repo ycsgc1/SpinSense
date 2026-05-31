@@ -35,11 +35,12 @@
         <div>
           <div class="flex items-center justify-between mb-1">
             <span class="text-label-sm text-outline tracking-widest uppercase">Input</span>
-            <span id="input-meter-text" class="text-label-sm text-outline tabular-nums">0.000</span>
+            <span id="input-meter-text" class="text-label-sm text-outline tabular-nums">&minus;&infin; dB</span>
           </div>
-          <div class="h-2 bg-surface-container-highest rounded-full overflow-hidden border border-outline-variant/30">
+          <div class="relative h-2 bg-surface-container-highest rounded-full overflow-hidden border border-outline-variant/30">
             <div id="input-meter" class="h-full bg-primary/80 rounded-r-full shadow-[0_0_10px_rgba(221,183,255,0.35)] transition-[width] duration-200 linear"
                  style="width: 0%;"></div>
+            <div id="input-meter-threshold" class="absolute inset-y-0 w-0.5 bg-tertiary shadow-[0_0_4px_rgba(255,180,171,0.8)]" style="left: 50%;"></div>
           </div>
         </div>
       </div>
