@@ -7,14 +7,16 @@
   const SAVE_BTN = document.getElementById("save-button");
   const MIC_SELECT = document.getElementById("mic-device");
   const THRESHOLD_SLIDER = document.getElementById("volume-threshold");
-  const THRESHOLD_VALUE = document.getElementById("volume-threshold-value");
   const RMS_BAR = document.getElementById("rms-preview-bar");
   const RMS_TICK = document.getElementById("rms-threshold-tick");
 
-  // Visual ceiling for the RMS bar + threshold tick. ~10x the default threshold
-  // so the tick lands at a readable position and there's headroom for a loud
-  // record to push the bar past it.
-  const RMS_CEILING = 0.05;
+  // dB display range. Threshold value posted to the backend is linear RMS;
+  // the slider + number input both operate in dB and we convert on the way
+  // in/out.
+  const DB_MIN = -80;
+  const DB_MAX = 0;
+  const dbUtil = window.SpinSense.db;
+  const THRESHOLD_NUMBER = document.getElementById("volume-threshold-number");
 
   let dirty = false;
   let initialConfig = {};
@@ -64,10 +66,12 @@
   }
 
   function updateThresholdTick() {
-    const t = Number(THRESHOLD_SLIDER.value);
-    const pct = Math.min(100, (t / RMS_CEILING) * 100);
+    const db = Number(THRESHOLD_SLIDER.value);
+    const pct = ((db - DB_MIN) / (DB_MAX - DB_MIN)) * 100;
     RMS_TICK.style.left = pct + "%";
-    THRESHOLD_VALUE.textContent = t.toFixed(4);
+    if (document.activeElement !== THRESHOLD_NUMBER) {
+      THRESHOLD_NUMBER.value = db.toFixed(1);
+    }
   }
 
   function populateForm(config) {
@@ -75,10 +79,16 @@
     FORM.querySelectorAll("[name]").forEach((el) => {
       const value = getNested(config, el.name);
       if (value === undefined || value === null) return;
-      // The mic select is populated separately once /api/devices returns.
       if (el === MIC_SELECT) return;
       el.value = value;
     });
+    // Threshold is stored linear; display as dB.
+    const storedRms = getNested(config, "Audio.Volume_Threshold");
+    if (typeof storedRms === "number") {
+      const db = dbUtil.rmsToDb(storedRms);
+      THRESHOLD_SLIDER.value = db.toFixed(1);
+      THRESHOLD_NUMBER.value = db.toFixed(1);
+    }
     updateThresholdTick();
     setDirty(false);
     setToast("");
@@ -93,8 +103,10 @@
       }
       setNested(formObj, el.name, value);
     });
-    // Merge over the original config so we preserve keys we don't expose
-    // (System, MQTT.Discovery, MQTT.Topics) and the round-trip stays valid.
+    // The threshold inputs aren't part of FORM iteration (no name attribute).
+    // Convert dB back to linear RMS and write it explicitly.
+    const db = Number(THRESHOLD_SLIDER.value);
+    setNested(formObj, "Audio.Volume_Threshold", dbUtil.dbToRms(db));
     return mergeDeep(JSON.parse(JSON.stringify(initialConfig)), formObj);
   }
 
@@ -178,7 +190,8 @@
   if (window.SpinSense && typeof window.SpinSense.onFrame === "function") {
     window.SpinSense.onFrame((payload) => {
       const rms = payload && typeof payload.rms_level === "number" ? payload.rms_level : 0;
-      const pct = Math.min(100, Math.max(0, (rms / RMS_CEILING) * 100));
+      const db = dbUtil.rmsToDb(rms);
+      const pct = Math.max(0, Math.min(100, ((db - DB_MIN) / (DB_MAX - DB_MIN)) * 100));
       RMS_BAR.style.width = pct + "%";
     });
   }
@@ -188,10 +201,18 @@
     setDirty(true);
   });
 
+  THRESHOLD_NUMBER.addEventListener("input", () => {
+    const v = Math.max(DB_MIN, Math.min(DB_MAX, Number(THRESHOLD_NUMBER.value)));
+    THRESHOLD_SLIDER.value = v;
+    updateThresholdTick();
+    setDirty(true);
+  });
+
   FORM.addEventListener("input", (ev) => {
     // Don't double-fire dirty for the slider's input (handled above) or for
     // events that didn't actually change a value.
     if (ev.target === THRESHOLD_SLIDER) return;
+    if (ev.target === THRESHOLD_NUMBER) return;
     setDirty(true);
   });
 
