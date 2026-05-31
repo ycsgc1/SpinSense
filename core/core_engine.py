@@ -4,6 +4,7 @@ import os
 import io
 import wave
 import urllib.parse
+from collections import deque
 import aiohttp
 import numpy as np
 import sounddevice as sd
@@ -124,6 +125,13 @@ MQTT_ENABLED = False
 # Cross-task signal: the config watcher sets this when the mic device changes
 # so the audio loop tears down + rebuilds the InputStream on its next pass.
 mic_change_event = asyncio.Event()
+
+# Active calibration session, or None. The audio callback appends per-buffer
+# RMS to ["samples"] when status == "running"; a one-shot timer task flips
+# status to "done" after ["duration"] seconds and populates ["stats"].
+# Cleared by the wizard via the clear_calibration command after the user
+# reads the result.
+calibration: dict | None = None
 
 # Single-flight handle on the connect loop so a broker change doesn't spawn
 # parallel connect attempts on the same paho Client.
@@ -326,15 +334,22 @@ def _open_input_stream(callback):
     return stream
 
 
+def audio_callback(indata, frames, time, status):
+    """Runs on the sounddevice audio thread. Updates the GUI's live RMS
+    reading every buffer, and — when a calibration session is collecting —
+    appends the per-buffer RMS to its samples deque. deque.append is atomic
+    in CPython, safe to call from this thread."""
+    rms = float(np.sqrt(np.mean(indata ** 2)))
+    state["current_rms"] = rms
+    if calibration is not None and calibration["status"] == "running":
+        calibration["samples"].append(rms)
+
+
 async def audio_monitor_loop():
     global _mqtt_task
     _mqtt_task = asyncio.create_task(connect_mqtt_loop())
     asyncio.create_task(config_watch_loop())
     print("--- VINYL SCROBBLER ALPHA ACTIVE ---")
-
-    def audio_callback(indata, frames, time, status):
-        rms = np.sqrt(np.mean(indata ** 2))
-        state["current_rms"] = float(rms)
 
     stream = _open_input_stream(audio_callback)
 
