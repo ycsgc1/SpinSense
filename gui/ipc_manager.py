@@ -16,9 +16,18 @@ log = logging.getLogger(__name__)
 ART_DIR = os.path.join(play_history.DATA_DIR, "art")
 
 
+DEFAULT_STATUS = {
+    "engine_active": False,
+    "status_msg": "stopped",
+    "rms_level": 0.0,
+    "track": {"title": "", "artist": "", "album": "", "art_url": ""},
+}
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list["WebSocket"] = []
+        self.last_status: dict = dict(DEFAULT_STATUS)
 
     async def connect(self, websocket: "WebSocket"):
         await websocket.accept()
@@ -29,6 +38,8 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
+        if message.get("type") == "live_status" and isinstance(message.get("payload"), dict):
+            self.last_status = message["payload"]
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
@@ -96,10 +107,14 @@ async def _record_if_new(track: dict) -> None:
     artist = track.get("artist", "") or ""
     album = track.get("album") or None
     art_url = track.get("art_url") or None
+    isrc = track.get("isrc") or None
+    genre = track.get("genre") or None
+    release_year = track.get("release_year") or None
 
     try:
         play_id = await asyncio.to_thread(
-            play_history.record_play, title, artist, album, art_url
+            play_history.record_play, title, artist, album, art_url,
+            isrc=isrc, genre=genre, release_year=release_year,
         )
     except Exception as e:
         log.error("failed to record play %s - %s: %s", artist, title, e)
