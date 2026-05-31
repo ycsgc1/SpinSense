@@ -7,10 +7,10 @@
   const CLOSE_BTN = document.getElementById("wizard-close");
 
   const MIC = document.getElementById("wizard-mic");
-  const THRESHOLD = document.getElementById("wizard-threshold");
-  const THRESHOLD_VALUE = document.getElementById("wizard-threshold-value");
-  const RMS_BAR = document.getElementById("wizard-rms-bar");
-  const RMS_TICK = document.getElementById("wizard-rms-tick");
+  // const THRESHOLD = document.getElementById("wizard-threshold");
+  // const THRESHOLD_VALUE = document.getElementById("wizard-threshold-value");
+  // const RMS_BAR = document.getElementById("wizard-rms-bar");
+  // const RMS_TICK = document.getElementById("wizard-rms-tick");
 
   const MQTT_HOST = document.getElementById("wizard-mqtt-host");
   const MQTT_PORT = document.getElementById("wizard-mqtt-port");
@@ -53,10 +53,10 @@
   }
 
   function updateThresholdTick() {
-    const t = Number(THRESHOLD.value);
-    const pct = Math.min(100, (t / RMS_CEILING) * 100);
-    RMS_TICK.style.left = pct + "%";
-    THRESHOLD_VALUE.textContent = t.toFixed(4);
+    // const t = Number(THRESHOLD.value);
+    // const pct = Math.min(100, (t / RMS_CEILING) * 100);
+    // RMS_TICK.style.left = pct + "%";
+    // THRESHOLD_VALUE.textContent = t.toFixed(4);
   }
 
   function getNested(obj, path) {
@@ -122,7 +122,7 @@
     try {
       const res = await fetch("/api/config");
       initialConfig = await res.json();
-      THRESHOLD.value = getNested(initialConfig, "Audio.Volume_Threshold") ?? 0.0062;
+      // THRESHOLD.value = getNested(initialConfig, "Audio.Volume_Threshold") ?? 0.0062;
       MQTT_HOST.value = getNested(initialConfig, "MQTT.Broker.Host") ?? "";
       MQTT_PORT.value = getNested(initialConfig, "MQTT.Broker.Port") ?? 1883;
       MQTT_USER.value = getNested(initialConfig, "MQTT.Broker.User") ?? "";
@@ -137,7 +137,7 @@
   function buildPayload({ state }) {
     const payload = JSON.parse(JSON.stringify(initialConfig || {}));
     setNested(payload, "Hardware.Mic_Device", MIC.value || "default");
-    setNested(payload, "Audio.Volume_Threshold", Number(THRESHOLD.value));
+    // setNested(payload, "Audio.Volume_Threshold", Number(THRESHOLD.value));
     if (!skipMqtt) {
       setNested(payload, "MQTT.Broker.Host", MQTT_HOST.value);
       setNested(payload, "MQTT.Broker.Port", Number(MQTT_PORT.value || 1883));
@@ -224,7 +224,7 @@
     window.location.href = "/";
   });
 
-  THRESHOLD.addEventListener("input", updateThresholdTick);
+  // THRESHOLD.addEventListener("input", updateThresholdTick);
 
   MQTT_TEST.addEventListener("click", testMqtt);
   MQTT_SKIP.addEventListener("click", () => {
@@ -252,13 +252,33 @@
   });
 
   // Live RMS preview on the threshold step.
-  if (window.SpinSense && typeof window.SpinSense.onFrame === "function") {
-    window.SpinSense.onFrame((payload) => {
-      const rms = payload && typeof payload.rms_level === "number" ? payload.rms_level : 0;
-      const pct = Math.min(100, Math.max(0, (rms / RMS_CEILING) * 100));
-      RMS_BAR.style.width = pct + "%";
+  // if (window.SpinSense && typeof window.SpinSense.onFrame === "function") {
+  //   window.SpinSense.onFrame((payload) => {
+  //     const rms = payload && typeof payload.rms_level === "number" ? payload.rms_level : 0;
+  //     const pct = Math.min(100, Math.max(0, (rms / RMS_CEILING) * 100));
+  //     RMS_BAR.style.width = pct + "%";
+  //   });
+  // }
+
+  // Step 2 substep router. Full capture orchestration lands in the next task.
+  function showSubstep(name) {
+    document.querySelectorAll(".wizard-substep").forEach((el) => {
+      el.classList.toggle("hidden", el.dataset.substep !== name);
     });
   }
+  document.querySelectorAll("[data-substep-back]").forEach((b) => {
+    b.addEventListener("click", () => showSubstep(b.dataset.substepBack));
+  });
+  document.querySelectorAll("[data-substep-goto]").forEach((b) => {
+    b.addEventListener("click", () => showSubstep(b.dataset.substepGoto));
+  });
+  document.getElementById("calibrate-auto-btn").addEventListener("click", () => {
+    showSubstep("noise_capture");
+  });
+  document.getElementById("calibrate-manual-btn").addEventListener("click", () => {
+    showSubstep("manual");
+  });
+  showSubstep("choose");
 
   showStep(0);
   loadConfig();

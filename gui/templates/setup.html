@@ -65,38 +65,173 @@
       </div>
     </section>
 
-    <!-- Step 2: Threshold calibration -->
+    <!-- Step 2: Threshold calibration (5 sub-screens, in-place swap) -->
     <section class="wizard-step hidden" data-step="2">
       <span class="material-symbols-outlined text-primary block mb-sm" style="font-size: 36px;">graphic_eq</span>
       <h2 class="font-headline text-headline-md text-on-background">Calibrate your threshold</h2>
-      <p class="text-body-sm text-on-surface-variant mt-sm">
-        Drop the needle on a record but don't play music yet. Watch where the bar peaks &mdash; that's your noise floor. Nudge the slider just above it.
-      </p>
-      <div class="mt-md">
-        <div class="flex justify-between items-center mb-1">
-          <span class="text-body-sm text-on-surface">Volume threshold</span>
-          <span id="wizard-threshold-value" class="text-label-sm text-on-surface-variant tabular-nums">0.0000</span>
-        </div>
-        <input type="range" id="wizard-threshold" name="Audio.Volume_Threshold"
-               min="0" max="0.05" step="0.0001" value="0.0062"
-               class="w-full accent-primary">
-        <div class="relative h-3 mt-2 bg-surface-container-highest rounded-full overflow-hidden border border-outline-variant/30">
-          <div id="wizard-rms-bar" class="absolute inset-y-0 left-0 bg-primary/60 transition-[width] duration-200 ease-linear" style="width: 0%;"></div>
-          <div id="wizard-rms-tick" class="absolute inset-y-0 w-0.5 bg-tertiary shadow-[0_0_4px_rgba(255,180,171,0.8)]" style="left: 12%;"></div>
-        </div>
-        <p class="text-label-sm text-on-surface-variant mt-1">
-          If the bar isn't moving, the engine isn't getting any audio yet &mdash; check your mic selection.
+
+      <!-- 2A: chooser -->
+      <div class="wizard-substep" data-substep="choose">
+        <p class="text-body-sm text-on-surface-variant mt-sm">
+          Two ways to get the right threshold:
         </p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-md mt-md">
+          <button type="button" id="calibrate-auto-btn"
+                  class="bg-primary text-on-primary font-medium px-lg py-md rounded-xl hover:opacity-90 transition-opacity text-left">
+            <div class="flex items-center gap-xs mb-1">
+              <span class="material-symbols-outlined">auto_fix_high</span>
+              <span class="text-label-md font-semibold">Auto-calibrate</span>
+            </div>
+            <span class="text-body-sm opacity-90">Recommended. Capture silence and a song; we compute the threshold for you.</span>
+          </button>
+          <button type="button" id="calibrate-manual-btn"
+                  class="bg-surface-container-high border border-outline-variant/40 text-on-surface font-medium px-lg py-md rounded-xl hover:bg-surface-container-highest transition-colors text-left">
+            <div class="flex items-center gap-xs mb-1">
+              <span class="material-symbols-outlined">tune</span>
+              <span class="text-label-md font-semibold">Set manually</span>
+            </div>
+            <span class="text-body-sm opacity-90">Drag a slider while watching the live meter.</span>
+          </button>
+        </div>
+        <p id="calibrate-auto-warning" class="hidden text-label-sm text-error mt-sm" aria-live="polite"></p>
+        <div class="flex justify-between items-center mt-lg">
+          <button type="button" data-wizard-back
+                  class="text-label-md text-on-surface-variant hover:text-on-surface transition-colors">Back</button>
+        </div>
       </div>
-      <div class="flex justify-between items-center mt-lg">
-        <button type="button" data-wizard-back
-                class="text-label-md text-on-surface-variant hover:text-on-surface transition-colors">
-          Back
-        </button>
-        <button type="button" data-wizard-next
-                class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full hover:opacity-90 transition-opacity">
-          Continue
-        </button>
+
+      <!-- 2B: noise floor capture -->
+      <div class="wizard-substep hidden" data-substep="noise_capture">
+        <p class="text-body-md text-on-surface mt-sm font-medium">Step 1 of 2: Capture the noise floor</p>
+        <p class="text-body-sm text-on-surface-variant mt-1">
+          Drop the needle on the runout groove — the silent section at the end or beginning of a side. Don't play a song yet. If your room is quiet, you can usually hear the music at the needle itself without speakers, so this is also how you know you're in a quiet section.
+        </p>
+        <div class="mt-md text-center">
+          <button type="button" id="calibrate-noise-start"
+                  class="bg-primary text-on-primary font-medium px-xl py-md rounded-full hover:opacity-90 transition-opacity">
+            Start 5s capture
+          </button>
+          <p id="calibrate-noise-status" class="text-label-md text-on-surface-variant mt-sm" aria-live="polite"></p>
+        </div>
+        <div class="mt-md">
+          <p class="text-label-sm text-on-surface-variant mb-1">Live level</p>
+          <div class="relative h-3 bg-surface-container-highest rounded-full overflow-hidden border border-outline-variant/30">
+            <div id="calibrate-noise-bar" class="absolute inset-y-0 left-0 bg-primary/60 transition-[width] duration-200 ease-linear" style="width: 0%;"></div>
+          </div>
+        </div>
+        <div class="flex justify-between items-center mt-lg">
+          <button type="button" data-substep-back="choose"
+                  class="text-label-md text-on-surface-variant hover:text-on-surface transition-colors">Back</button>
+        </div>
+      </div>
+
+      <!-- 2C: music capture -->
+      <div class="wizard-substep hidden" data-substep="music_capture">
+        <p class="text-body-md text-on-surface mt-sm font-medium">Step 2 of 2: Capture a song</p>
+        <p class="text-body-sm text-on-surface-variant mt-1">
+          Now move the needle to a song. When you hear it start playing, click the button — we'll listen for 5 seconds.
+        </p>
+        <div class="mt-md text-center">
+          <button type="button" id="calibrate-music-start"
+                  class="bg-primary text-on-primary font-medium px-xl py-md rounded-full hover:opacity-90 transition-opacity">
+            Music started — capture now
+          </button>
+          <p id="calibrate-music-status" class="text-label-md text-on-surface-variant mt-sm" aria-live="polite"></p>
+        </div>
+        <div class="mt-md">
+          <p class="text-label-sm text-on-surface-variant mb-1">Live level</p>
+          <div class="relative h-3 bg-surface-container-highest rounded-full overflow-hidden border border-outline-variant/30">
+            <div id="calibrate-music-bar" class="absolute inset-y-0 left-0 bg-primary/60 transition-[width] duration-200 ease-linear" style="width: 0%;"></div>
+          </div>
+        </div>
+        <div class="flex justify-between items-center mt-lg">
+          <button type="button" data-substep-back="noise_capture"
+                  class="text-label-md text-on-surface-variant hover:text-on-surface transition-colors">Back</button>
+        </div>
+      </div>
+
+      <!-- 2D: result -->
+      <div class="wizard-substep hidden" data-substep="result">
+        <p class="text-body-md text-on-surface mt-sm">
+          <span class="text-primary">✨</span> Your optimum threshold is
+          <span id="calibrate-result-headline" class="font-headline text-headline-md text-on-background">—</span>
+        </p>
+        <dl class="grid grid-cols-3 gap-md mt-md text-center">
+          <div>
+            <dt class="text-label-sm text-on-surface-variant">Silence (noise floor)</dt>
+            <dd id="calibrate-result-noise" class="text-body-md text-on-surface tabular-nums mt-1">—</dd>
+          </div>
+          <div>
+            <dt class="text-label-sm text-on-surface-variant">Music (quiet parts)</dt>
+            <dd id="calibrate-result-music" class="text-body-md text-on-surface tabular-nums mt-1">—</dd>
+          </div>
+          <div>
+            <dt class="text-label-sm text-on-surface-variant">Threshold</dt>
+            <dd id="calibrate-result-threshold" class="text-body-md text-primary font-semibold tabular-nums mt-1">—</dd>
+          </div>
+        </dl>
+        <div class="mt-md">
+          <div class="flex justify-between items-center mb-1">
+            <label for="wizard-threshold" class="text-body-sm text-on-surface">Volume threshold</label>
+            <input type="number" id="wizard-threshold-number"
+                   min="-80" max="0" step="0.5"
+                   class="form-input w-24 text-right tabular-nums py-1">
+          </div>
+          <input type="range" id="wizard-threshold"
+                 min="-80" max="0" step="0.5" value="-40"
+                 class="w-full accent-primary">
+          <div class="relative h-3 mt-2 bg-surface-container-highest rounded-full overflow-hidden border border-outline-variant/30">
+            <div id="wizard-rms-bar" class="absolute inset-y-0 left-0 bg-primary/60 transition-[width] duration-200 ease-linear" style="width: 0%;"></div>
+            <div id="wizard-rms-tick" class="absolute inset-y-0 w-0.5 bg-tertiary shadow-[0_0_4px_rgba(255,180,171,0.8)]" style="left: 50%;"></div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-md mt-md text-label-md">
+          <button type="button" id="calibrate-rerun"
+                  class="text-on-surface-variant hover:text-on-surface transition-colors">Re-run calibration</button>
+          <button type="button" data-substep-goto="manual"
+                  class="text-on-surface-variant hover:text-on-surface transition-colors">Set manually instead</button>
+        </div>
+        <div class="flex justify-between items-center mt-lg">
+          <button type="button" data-substep-back="choose"
+                  class="text-label-md text-on-surface-variant hover:text-on-surface transition-colors">Back</button>
+          <button type="button" data-wizard-next
+                  class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full hover:opacity-90 transition-opacity">
+            Looks good — continue
+          </button>
+        </div>
+      </div>
+
+      <!-- 2E: manual -->
+      <div class="wizard-substep hidden" data-substep="manual">
+        <p class="text-body-sm text-on-surface-variant mt-sm">
+          Drop the needle on a record but don't play music yet. Watch where the bar peaks — that's your noise floor. Nudge the slider just above it.
+        </p>
+        <div class="mt-md">
+          <div class="flex justify-between items-center mb-1">
+            <label for="wizard-threshold-manual" class="text-body-sm text-on-surface">Volume threshold</label>
+            <input type="number" id="wizard-threshold-manual-number"
+                   min="-80" max="0" step="0.5"
+                   class="form-input w-24 text-right tabular-nums py-1">
+          </div>
+          <input type="range" id="wizard-threshold-manual"
+                 min="-80" max="0" step="0.5" value="-40"
+                 class="w-full accent-primary">
+          <div class="relative h-3 mt-2 bg-surface-container-highest rounded-full overflow-hidden border border-outline-variant/30">
+            <div id="wizard-rms-bar-manual" class="absolute inset-y-0 left-0 bg-primary/60 transition-[width] duration-200 ease-linear" style="width: 0%;"></div>
+            <div id="wizard-rms-tick-manual" class="absolute inset-y-0 w-0.5 bg-tertiary shadow-[0_0_4px_rgba(255,180,171,0.8)]" style="left: 50%;"></div>
+          </div>
+          <p class="text-label-sm text-on-surface-variant mt-1">
+            If the bar isn't moving, the engine isn't getting any audio yet — check your mic selection.
+          </p>
+        </div>
+        <div class="flex justify-between items-center mt-lg">
+          <button type="button" data-substep-back="choose"
+                  class="text-label-md text-on-surface-variant hover:text-on-surface transition-colors">Back</button>
+          <button type="button" data-wizard-next
+                  class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full hover:opacity-90 transition-opacity">
+            Continue
+          </button>
+        </div>
       </div>
     </section>
 
