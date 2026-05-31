@@ -96,6 +96,11 @@ class ConfigRoundTripTest(unittest.TestCase):
         cfg["System"]["Setup_Wizard_State"] = "abandoned"
         self.assertFalse(config_manager.save_config(cfg))
 
+    def test_default_volume_threshold_is_minus_40_db(self):
+        # 0.01 = -40 dB exactly; cleaner than 0.0062 / 0.015 once we display in dB.
+        defaults = config_manager.get_default_config()
+        self.assertEqual(defaults["Audio"]["Volume_Threshold"], 0.01)
+
 
 if __name__ == "__main__":
     unittest.main()

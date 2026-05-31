@@ -25,7 +25,7 @@ DEFAULT_CONFIG = {
         "Mic_Device": "default",
     },
     "Audio": {
-        "Volume_Threshold": 0.015,
+        "Volume_Threshold": 0.01,
         "Song_Sample_Length": 5.0,
         "New_Song_Silence_Interval": 2.0,
         "Stopped_Silence_Interval": 5.0,
@@ -74,7 +74,7 @@ def _normalize_mic(cfg):
 # loop, recognize_audio(), and the MQTT connect loop read from it on every
 # iteration so changes take effect without a restart.
 runtime = {
-    "threshold": 0.015,
+    "threshold": 0.01,
     "sample_len": 5.0,
     "new_song_silence": 2.0,
     "stopped_silence": 5.0,

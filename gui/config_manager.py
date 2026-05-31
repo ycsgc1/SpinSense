@@ -17,7 +17,7 @@ class HardwareConfig(BaseModel):
     Mic_Device: str = "default"
 
 class AudioConfig(BaseModel):
-    Volume_Threshold: float = 0.0062
+    Volume_Threshold: float = 0.01
     Song_Sample_Length: float = 10.0
     New_Song_Silence_Interval: float = 10.0
     Stopped_Silence_Interval: float = 30.0
