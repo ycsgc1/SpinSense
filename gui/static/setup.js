@@ -46,6 +46,9 @@
   const MQTT_TEST = document.getElementById("wizard-mqtt-test");
   const MQTT_STATUS = document.getElementById("wizard-mqtt-status");
   const MQTT_SKIP = document.getElementById("wizard-mqtt-skip");
+  const MDNS_ENABLED = document.getElementById("wizard-mdns-enabled");
+  const MQTT_ENABLED = document.getElementById("wizard-mqtt-enabled");
+  const MQTT_FIELDS = document.getElementById("wizard-mqtt-fields");
 
   const POPUP = document.getElementById("wizard-mqtt-popup");
   const POPUP_DETAIL = document.getElementById("wizard-mqtt-popup-detail");
@@ -176,6 +179,9 @@
       MQTT_PORT.value = getNested(initialConfig, "MQTT.Broker.Port") ?? 1883;
       MQTT_USER.value = getNested(initialConfig, "MQTT.Broker.User") ?? "";
       MQTT_PASS.value = getNested(initialConfig, "MQTT.Broker.Password") ?? "";
+      MDNS_ENABLED.checked = getNested(initialConfig, "Discovery.mDNS.Enabled") ?? true;
+      MQTT_ENABLED.checked = getNested(initialConfig, "MQTT.Enabled") ?? false;
+      MQTT_FIELDS.classList.toggle("hidden", !MQTT_ENABLED.checked);
       await loadDevices();
     } catch (e) {
       console.error("Wizard: failed to load config", e);
@@ -189,7 +195,9 @@
       activeSlider === "manual" ? THRESHOLD_MANUAL.value : THRESHOLD.value
     );
     setNested(payload, "Audio.Volume_Threshold", dbUtil.dbToRms(sliderDb));
-    if (!skipMqtt) {
+    setNested(payload, "Discovery.mDNS.Enabled", !!MDNS_ENABLED.checked);
+    setNested(payload, "MQTT.Enabled", !!MQTT_ENABLED.checked);
+    if (MQTT_ENABLED.checked) {
       setNested(payload, "MQTT.Broker.Host", MQTT_HOST.value);
       setNested(payload, "MQTT.Broker.Port", Number(MQTT_PORT.value || 1883));
       setNested(payload, "MQTT.Broker.User", MQTT_USER.value);
@@ -275,6 +283,10 @@
     captureAbortKey++;
     clearCalibrationBestEffort();
     window.location.href = "/";
+  });
+
+  MQTT_ENABLED.addEventListener("change", () => {
+    MQTT_FIELDS.classList.toggle("hidden", !MQTT_ENABLED.checked);
   });
 
   MQTT_TEST.addEventListener("click", testMqtt);

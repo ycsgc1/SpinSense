@@ -243,6 +243,24 @@
         Enter your MQTT broker's address and credentials. SpinSense publishes track info to MQTT for Home Assistant to pick up. Don't have a broker? Skip this step.
       </p>
 
+      <div class="mt-md space-y-3">
+        <label class="flex items-center justify-between gap-md p-3 rounded-lg bg-surface-container-high">
+          <span>
+            <span class="text-body-md text-on-surface block">Home Assistant auto-discovery (mDNS)</span>
+            <span class="text-body-sm text-on-surface-variant">Zero-config. Install the SpinSense HACS integration and it finds this device automatically. Recommended.</span>
+          </span>
+          <input type="checkbox" id="wizard-mdns-enabled" class="form-checkbox h-5 w-5" checked>
+        </label>
+        <label class="flex items-center justify-between gap-md p-3 rounded-lg bg-surface-container-high">
+          <span>
+            <span class="text-body-md text-on-surface block">MQTT (advanced)</span>
+            <span class="text-body-sm text-on-surface-variant">Publish to your own MQTT broker instead of (or in addition to) mDNS.</span>
+          </span>
+          <input type="checkbox" id="wizard-mqtt-enabled" class="form-checkbox h-5 w-5">
+        </label>
+      </div>
+
+      <div id="wizard-mqtt-fields" class="hidden">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-md mt-md">
         <label class="block md:col-span-2">
           <span class="text-body-sm text-on-surface mb-1 block">Host</span>
@@ -268,6 +286,7 @@
           Test connection
         </button>
         <span id="wizard-mqtt-status" class="text-body-sm" aria-live="polite"></span>
+      </div>
       </div>
 
       <div class="flex justify-between items-center mt-lg">
