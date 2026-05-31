@@ -101,6 +101,7 @@ def _populate_runtime(cfg):
 
 _initial_cfg = _load_config()
 _populate_runtime(_initial_cfg)
+MQTT_ENABLED = bool(_initial_cfg.get("MQTT", {}).get("Enabled", False))
 try:
     _config_mtime = os.path.getmtime(CONFIG_PATH)
 except OSError:
@@ -120,7 +121,6 @@ DISCOVERY_TOPIC = "homeassistant/media_player/spinsense/config"
 
 # --- 2. MQTT Setup ---
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-MQTT_ENABLED = False
 
 # Cross-task signal: the config watcher sets this when the mic device changes
 # so the audio loop tears down + rebuilds the InputStream on its next pass.
@@ -394,6 +394,40 @@ async def fetch_image_base64(url):
     return ""
 
 
+def _extract_enrichment(track: dict) -> dict:
+    """Best-effort pull of stable-id/genre/year from a Shazam track object.
+    Every field is optional; anything missing or unparseable is None so it
+    never blocks a play from being recorded."""
+    track = track or {}
+    isrc = track.get("isrc") or None
+
+    genre = None
+    genres = track.get("genres")
+    if isinstance(genres, dict):
+        genre = genres.get("primary") or None
+
+    release_year = None
+    for section in track.get("sections", []) or []:
+        for item in (section or {}).get("metadata", []) or []:
+            if (item or {}).get("title") == "Released":
+                text = str(item.get("text", "")).strip()
+                digits = ""
+                for ch in text:
+                    if ch.isdigit():
+                        digits += ch
+                        if len(digits) == 4:
+                            break
+                    elif digits:
+                        break
+                if len(digits) == 4:
+                    release_year = int(digits)
+                break
+        if release_year is not None:
+            break
+
+    return {"isrc": isrc, "genre": genre, "release_year": release_year}
+
+
 async def recognize_audio():
     sample_len = runtime["sample_len"]
     mic = runtime["mic_device"]
@@ -434,6 +468,10 @@ async def recognize_audio():
         state["title"] = title
         state["album"] = album
         state["art_url"] = art_url
+        enrichment = _extract_enrichment(track)
+        state["isrc"] = enrichment["isrc"]
+        state["genre"] = enrichment["genre"]
+        state["release_year"] = enrichment["release_year"]
 
         if result_str != state["last_song"]:
             print(f"🎵 NEW TRACK: {result_str}")
@@ -517,6 +555,9 @@ async def audio_monitor_loop():
                             "artist": state.get("artist", ""),
                             "album": state.get("album", ""),
                             "art_url": state.get("art_url", ""),
+                            "isrc": state.get("isrc"),
+                            "genre": state.get("genre"),
+                            "release_year": state.get("release_year"),
                         },
                     },
                 }) + "\n"
