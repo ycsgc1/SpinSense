@@ -136,5 +136,42 @@ class IPCDedupeTest(unittest.TestCase):
         self.assertEqual(play_history.recent_plays(db_path=self.db_path), [])
 
 
+class TestEnrichmentColumns(unittest.TestCase):
+    def setUp(self):
+        import tempfile, os
+        self.tmp = tempfile.mkdtemp()
+        self.db = os.path.join(self.tmp, "t.db")
+        import play_history
+        play_history.init_db(self.db)
+
+    def test_init_db_is_idempotent_with_new_columns(self):
+        import play_history
+        play_history.init_db(self.db)  # run twice, must not error
+        import sqlite3
+        cols = {r[1] for r in sqlite3.connect(self.db).execute("PRAGMA table_info(plays)")}
+        self.assertTrue({"isrc", "genre", "release_year"} <= cols)
+
+    def test_record_play_stores_enrichment(self):
+        import play_history
+        pid = play_history.record_play(
+            "Title", "Artist", "Album", "http://art",
+            isrc="USRC12345678", genre="Rock", release_year=1977,
+            db_path=self.db,
+        )
+        rows = play_history.recent_plays(10, 0, db_path=self.db)
+        self.assertEqual(rows[0]["id"], pid)
+        self.assertEqual(rows[0]["isrc"], "USRC12345678")
+        self.assertEqual(rows[0]["genre"], "Rock")
+        self.assertEqual(rows[0]["release_year"], 1977)
+
+    def test_record_play_enrichment_optional(self):
+        import play_history
+        pid = play_history.record_play("T", "A", None, None, db_path=self.db)
+        rows = play_history.recent_plays(10, 0, db_path=self.db)
+        self.assertIsNone(rows[0]["isrc"])
+        self.assertIsNone(rows[0]["genre"])
+        self.assertIsNone(rows[0]["release_year"])
+
+
 if __name__ == "__main__":
     unittest.main()

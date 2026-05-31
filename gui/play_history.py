@@ -21,6 +21,13 @@ def _connect(db_path: str | None = None) -> sqlite3.Connection:
     return conn
 
 
+_ENRICHMENT_COLUMNS = {
+    "isrc": "TEXT",
+    "genre": "TEXT",
+    "release_year": "INTEGER",
+}
+
+
 def init_db(db_path: str | None = None) -> None:
     with _connect(db_path) as conn:
         conn.executescript(
@@ -37,6 +44,10 @@ def init_db(db_path: str | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_plays_played_at ON plays (played_at DESC);
             """
         )
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(plays)")}
+        for name, sqltype in _ENRICHMENT_COLUMNS.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE plays ADD COLUMN {name} {sqltype}")
 
 
 def record_play(
@@ -45,12 +56,17 @@ def record_play(
     album: str | None,
     art_url: str | None,
     db_path: str | None = None,
+    *,
+    isrc: str | None = None,
+    genre: str | None = None,
+    release_year: int | None = None,
 ) -> int:
     with _connect(db_path) as conn:
         cur = conn.execute(
-            "INSERT INTO plays (title, artist, album, art_url, played_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (title, artist, album, art_url, int(time.time())),
+            "INSERT INTO plays "
+            "(title, artist, album, art_url, played_at, isrc, genre, release_year) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (title, artist, album, art_url, int(time.time()), isrc, genre, release_year),
         )
         return int(cur.lastrowid)
 
@@ -72,7 +88,8 @@ def recent_plays(
     offset = max(0, int(offset))
     with _connect(db_path) as conn:
         rows = conn.execute(
-            "SELECT id, title, artist, album, art_url, art_path, played_at "
+            "SELECT id, title, artist, album, art_url, art_path, played_at, "
+            "isrc, genre, release_year "
             "FROM plays ORDER BY played_at DESC, id DESC LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()
