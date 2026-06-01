@@ -75,37 +75,47 @@ The first time you open the web UI, SpinSense walks you through a short setup wi
 
 ### 1. Welcome
 
-![Setup wizard — welcome](docs/images/wizard-welcome.png)
+![Setup wizard — welcome](docs/images/Setup_Wizard.png)
 
-A quick intro. Continue to begin, or skip setup to configure things manually later.
+A quick intro. **Get started** to begin, or **Skip setup** to configure things manually later.
 
-### 2. Choose your microphone
+### 2. Pick your microphone
 
-![Setup wizard — microphone selection](docs/images/wizard-mic.png)
+![Setup wizard — microphone selection](docs/images/Audi_Device_Selection.png)
 
-Pick the audio input your turntable feeds into. The list is populated from the devices the container can see; "System default" works if you only have one.
+Choose the input device receiving audio from your turntable (e.g. a USB audio interface). The list comes from the devices the container can see; "System default" works if you only have one.
 
 ### 3. Calibrate the threshold
 
-![Setup wizard — threshold calibration](docs/images/wizard-calibration.png)
+SpinSense tells "music" from "silence" using input volume, so it needs a threshold. There are two ways to set it:
 
-SpinSense decides "music vs. silence" from input volume. **Auto-calibrate** captures a few seconds of silence and a few seconds of a playing record and picks a threshold for you (shown in dB); the live meter lets you fine-tune. Prefer to set it by hand? Switch to manual and drag the slider.
+![Setup wizard — calibration method](docs/images/Calibration_Method_Selection.png)
 
-### 4. Home Assistant & Integrations
+**Auto-calibrate (recommended)** captures your setup in two quick passes and computes the threshold for you:
 
-![Setup wizard — Home Assistant & Integrations](docs/images/wizard-homeassistant.png)
+| Step 1 — noise floor | Step 2 — a song |
+|---|---|
+| ![Auto-calibrate — noise floor](docs/images/Noise_Floor_Auto_Calibration.png) | ![Auto-calibrate — capture a song](docs/images/Music_Level_Auto_Calibration.png) |
+| Needle on the silent runout groove — capture 5s of "quiet". | Drop the needle on a song — capture 5s of "music". |
 
-Two independent toggles:
-- **mDNS auto-discovery** *(on by default)* — zero-config discovery for the HACS integration. Leave it on for the easiest Home Assistant setup.
-- **MQTT** *(off by default)* — enable to publish to your own broker; reveals host/port/credentials and a "Test connection" button.
+Or **set it manually**: drag the slider (shown in dB) while watching the live meter, and nudge it just above where the bar peaks during silence.
 
-You can run one, both, or neither.
+![Setup wizard — manual threshold](docs/images/Manual_Threshold_Calibration.png)
 
-### 5. Done
+### 4. Connect to Home Assistant
 
-![Setup wizard — done](docs/images/wizard-done.png)
+Two independent toggles — run one, both, or neither:
 
-Save and finish applies your settings to the running engine — no restart needed. Drop the needle and you're off.
+![Setup wizard — Home Assistant auto-discovery](docs/images/Connection_Selection.png)
+
+- **Home Assistant auto-discovery (mDNS)** *(on by default)* — zero-config; install the HACS integration and it finds SpinSense automatically. Recommended.
+- **MQTT (advanced)** *(off by default)* — enable to publish to your own broker; this reveals the host / port / credentials and a "Test connection" button:
+
+![Setup wizard — MQTT broker fields](docs/images/MQTT_Interface.png)
+
+### 5. Finish
+
+Save and finish applies everything to the running engine — no restart needed. Drop the needle and you're off.
 
 ---
 
@@ -113,21 +123,23 @@ Save and finish applies your settings to the running engine — no restart neede
 
 ### Dashboard
 
-![Dashboard — now playing](docs/images/dashboard.png)
+When nothing's playing, the dashboard waits for a record and shows your live input level:
 
-The dashboard shows what's spinning right now — album art, title, and artist — plus a live input meter and your recent plays.
+![Dashboard — idle, waiting for a record](docs/images/Blank_Dashboard.png)
+
+Drop the needle and it lights up with the current track — album art, title, artist — alongside system health and your recent plays:
+
+![Dashboard — a record now playing](docs/images/Dashboard_with_history_and_now_playing.png)
 
 ### History
 
-![History page](docs/images/history.png)
+![History page](docs/images/History_Page.png)
 
-Every identified track is logged with its art and timestamp, grouped by day. Scroll back through everything you've played.
+Every identified track is logged with its art and timestamp, grouped by day — scroll back through everything you've spun.
 
 ### In Home Assistant
 
-![SpinSense media_player in Home Assistant](docs/images/ha-entity.png)
-
-Once added, SpinSense appears as a `media_player` entity that reflects the current track in real time — ready for dashboards, automations (dim the lights when a record starts?), and voice queries.
+Once discovered, SpinSense appears as a `media_player` entity that reflects the current track in real time — ready for dashboards, automations (dim the lights when a record starts?), and voice queries.
 
 ---
 
