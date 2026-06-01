@@ -2,6 +2,25 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [1.0.0.0] - 2026-06-01
+
+### Added
+- **Home Assistant mDNS/zeroconf discovery.** SpinSense advertises `_spinsense._tcp.local.` on the LAN (`gui/discovery.py`), so the companion HACS integration auto-discovers it with no broker. Advertising is toggleable and reconciled live whenever config is saved; failures are non-fatal.
+- **`GET /api/status`** — returns the last engine status (`engine_active`, `status_msg`, `rms_level`, `track{title,artist,album,art_url,…}`), the contract the Home Assistant integration polls. Backed by a last-status cache in `ipc_manager` that defaults to a "stopped" payload before the engine reports.
+- **Configurable listen port** via `SPINSENSE_PORT` (default **3313**, a nod to 33⅓ RPM); `EXPOSE 3313` in the Dockerfile. Required because mDNS needs `network_mode: host`, which removes port remapping.
+- **Setup wizard "Home Assistant & Integrations" step** — independent **mDNS** (on by default, zero-config) and **MQTT** (opt-in) toggles, replacing the MQTT-only step.
+- **History enrichment columns** — nullable `isrc`, `genre`, `release_year` on the `plays` table, populated best-effort from the recognition result, paving the way for listening analytics. Idempotent `ALTER TABLE` migration; old rows stay valid.
+- First-party HACS integration repository: [ycsgc1/homeassistant-spinsense](https://github.com/ycsgc1/homeassistant-spinsense).
+- Installation, Setup, and Usage sections in the README.
+
+### Changed
+- **The MQTT enable toggle is now live.** Flipping `MQTT.Enabled` in the wizard/Settings reconnects or tears down the broker connection via the config watcher — no engine restart.
+- App HTML pages and `/static` JS/CSS are served `Cache-Control: no-cache` (revalidate; cheap 304s when unchanged) so a rebuild can never leave the browser executing a stale asset against fresh markup. `/art` and `/api` stay cacheable.
+
+### Notes
+- `MQTT.Discovery.Discovery_Topic` and `MQTT.Topics.*` remain hardcoded in the engine (unchanged from prior releases).
+- Listening analytics ("Wrapped") and clean DB export/import are planned for a future release; the history schema is now ready for the former.
+
 ## [0.3.0.0] - 2026-05-27
 
 ### Added
