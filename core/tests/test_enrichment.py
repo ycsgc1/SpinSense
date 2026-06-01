@@ -54,6 +54,16 @@ class TestExtractEnrichment(unittest.TestCase):
             self.assertIsNone(out["genre"])
 
 
+class TestMqttReapplyDecision(unittest.TestCase):
+    def test_reapply_when_toggle_flips_or_broker_changes_while_on(self):
+        from core_engine import _should_reapply_mqtt
+        self.assertTrue(_should_reapply_mqtt(False, True, False))   # enabled
+        self.assertTrue(_should_reapply_mqtt(True, False, False))   # disabled
+        self.assertTrue(_should_reapply_mqtt(True, True, True))     # broker changed while on
+        self.assertFalse(_should_reapply_mqtt(True, True, False))   # nothing changed
+        self.assertFalse(_should_reapply_mqtt(False, False, True))  # off; broker change irrelevant
+
+
 class TestMqttGating(unittest.TestCase):
     def test_connect_loop_returns_immediately_when_mqtt_disabled(self):
         """When MQTT_WANTED is False the connect loop must return without

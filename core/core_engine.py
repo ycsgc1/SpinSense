@@ -74,9 +74,9 @@ def _normalize_mic(cfg):
 # file watcher re-populates this dict on every config.json change; the audio
 # loop, recognize_audio(), and the MQTT connect loop read from it on every
 # iteration so changes take effect without a restart.
-# Exception: whether MQTT is enabled at all (MQTT.Enabled) is read once at
-# startup into MQTT_WANTED below, so toggling MQTT on/off in the GUI requires
-# an engine restart to take effect. (mDNS, handled in the GUI process, is live.)
+# MQTT.Enabled is mirrored into MQTT_WANTED below at startup and refreshed live
+# by the config watcher (_apply_config_diff), so toggling MQTT on/off in the GUI
+# takes effect without an engine restart. (mDNS is handled in the GUI process.)
 runtime = {
     "threshold": 0.01,
     "sample_len": 5.0,
@@ -307,9 +307,11 @@ async def connect_mqtt_loop():
 
 async def _reconnect_mqtt():
     """Tear down the current MQTT client connection and re-enter the connect
-    loop with the new broker fields. Safe to call when no connection exists."""
+    loop. Used when the broker fields change, or when the MQTT enable toggle
+    flips: connect_mqtt_loop() returns immediately if MQTT is now disabled, so
+    this doubles as a clean teardown. Safe to call when no connection exists."""
     global MQTT_ENABLED, _mqtt_task
-    print("📡 MQTT broker changed, reconnecting…")
+    print("📡 MQTT settings changed, reapplying…")
     if _mqtt_task and not _mqtt_task.done():
         _mqtt_task.cancel()
         try:
@@ -643,15 +645,25 @@ async def config_watch_loop():
         _config_mtime = m
 
 
+def _should_reapply_mqtt(old_wanted: bool, new_wanted: bool, broker_changed: bool) -> bool:
+    """Whether an MQTT teardown/reconnect is needed after a config change.
+    Re-apply when the enable toggle flipped (either direction), or when the
+    broker settings changed while MQTT is (still) enabled."""
+    return old_wanted != new_wanted or (new_wanted and broker_changed)
+
+
 def _apply_config_diff(new_cfg):
     """Re-populate the runtime dict and dispatch side-effects per category."""
+    global MQTT_WANTED
     old_mic = runtime["mic_device"]
     old_mqtt = (
         runtime["mqtt_host"], runtime["mqtt_port"],
         runtime["mqtt_user"], runtime["mqtt_pass"],
     )
+    old_wanted = MQTT_WANTED
 
     _populate_runtime(new_cfg)
+    MQTT_WANTED = bool(new_cfg.get("MQTT", {}).get("Enabled", False))
 
     new_mic = runtime["mic_device"]
     new_mqtt = (
@@ -669,7 +681,7 @@ def _apply_config_diff(new_cfg):
         print(f"🎤 Mic device change queued: {old_mic!r} → {new_mic!r}")
         mic_change_event.set()
 
-    if old_mqtt != new_mqtt:
+    if _should_reapply_mqtt(old_wanted, MQTT_WANTED, old_mqtt != new_mqtt):
         asyncio.create_task(_reconnect_mqtt())
 
 
