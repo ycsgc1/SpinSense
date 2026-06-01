@@ -16,7 +16,8 @@ Images used by the main `README.md`. Filenames are referenced directly, so keep 
 | `Dashboard_with_history_and_now_playing.png` | Usage → dashboard now-playing |
 | `History_Page.png` | Usage → History |
 
-## Still wanted (optional)
+## Still wanted
 
-- A **Home Assistant `media_player` entity** screenshot (the integration payoff) for the "In Home Assistant" subsection.
-- A wizard **"Done"/finish** screen, if desired.
+- `behringer-uca202.png` — a photo of the recommended audio interface (rendered small/right-aligned in the Installation section). **Add this to merge cleanly.**
+- *(optional)* A **Home Assistant `media_player` entity** screenshot — deferred until after v1.0.
+- *(optional)* A wizard **"Done"/finish** screen.

@@ -22,6 +22,12 @@ SpinSense runs as a Docker container. The examples below use [Dockge](https://gi
 - An **audio input** the host can see — typically your turntable's output into a USB audio interface or the host's line-in (exposed to the container via `/dev/snd`).
 - *(Optional)* A Home Assistant instance on the same LAN for the integration.
 
+### Recommended audio interface
+
+<img src="docs/images/behringer-uca202.png" alt="Behringer UCA202 USB audio interface" width="200" align="right" />
+
+SpinSense works with any audio input the host can see, but **the interface matters** — many add processing that subtly degrades the sound. After trying a number of them, the one I recommend is the **[Behringer UCA202](https://www.behringer.com/product.html?modelCode=P0484)** (or its near-identical sibling, the **UCA222**). It behaves almost like a passthrough: your turntable's signal reaches your speakers untouched while SpinSense samples a copy, so nothing colors the music. It's cheap, widely available, and the only interface I found that doesn't compromise playback quality.
+
 ### Compose
 
 ```yaml
