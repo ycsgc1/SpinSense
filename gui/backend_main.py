@@ -91,6 +91,19 @@ async def setup_wizard_gate(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def no_cache_app_assets(request: Request, call_next):
+    """Force the browser to revalidate the app's own HTML pages and static
+    JS/CSS, so a rebuild can never serve a stale asset against fresh markup
+    (the 'works in incognito but not my normal browser' class of bug). ETag /
+    Last-Modified still produce cheap 304s; /art and /api are left cacheable."""
+    response = await call_next(request)
+    ctype = response.headers.get("content-type", "")
+    if request.url.path.startswith("/static/") or ctype.startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # StaticFiles asserts these directories exist at construction time.
 os.makedirs(ART_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
