@@ -37,9 +37,7 @@ SpinSense works with any audio input the host can see, but **the interface matte
 services:
   spinsense:
     container_name: spinsense
-    build:
-      context: https://github.com/ycsgc1/SpinSense.git#main
-      dockerfile: docker/Dockerfile
+    image: ghcr.io/ycsgc1/spinsense:latest   # prebuilt multi-arch (amd64 + arm64)
     network_mode: host                 # required for mDNS Home Assistant discovery
     devices:
       - /dev/snd:/dev/snd              # passes audio hardware into the container
@@ -53,7 +51,7 @@ services:
     restart: unless-stopped
 ```
 
-Bring it up, then open the web UI at **`http://<your-host-ip>:3313`**.
+Bring it up, then open the web UI at **`http://<your-host-ip>:3313`**. (`:latest` tracks releases; use `:main` for the latest commit, or swap `image:` for a `build:` block to build from source.)
 
 > **Why host networking?** mDNS uses multicast, which doesn't cross Docker's bridge network. `network_mode: host` lets Home Assistant discover SpinSense — and means the app binds `SPINSENSE_PORT` directly on the host (no `ports:` mapping). If you don't need auto-discovery you can use bridge networking with `ports: ["3313:3313"]` instead, and integrate via MQTT.
 
@@ -61,11 +59,11 @@ Bring it up, then open the web UI at **`http://<your-host-ip>:3313`**.
 
 ### Updating
 
-The container builds from the `main` branch. Because Docker caches the git context, force a fresh pull when updating:
-
 ```bash
-docker compose build --no-cache spinsense && docker compose up -d
+docker compose pull spinsense && docker compose up -d
 ```
+
+That's it — the prebuilt image means Dockge's **Update** button works too. (Building from source instead? Use `docker compose build --no-cache spinsense && docker compose up -d`.)
 
 ### Home Assistant integration
 

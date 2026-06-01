@@ -12,6 +12,7 @@ All notable changes to SpinSense are recorded here. The format follows [Keep a C
 - **History enrichment columns** — nullable `isrc`, `genre`, `release_year` on the `plays` table, populated best-effort from the recognition result, paving the way for listening analytics. Idempotent `ALTER TABLE` migration; old rows stay valid.
 - First-party HACS integration repository: [ycsgc1/homeassistant-spinsense](https://github.com/ycsgc1/homeassistant-spinsense).
 - Installation, Setup, and Usage sections in the README.
+- **Prebuilt multi-arch images** (amd64 + arm64) published to GHCR (`ghcr.io/ycsgc1/spinsense`) by a GitHub Actions workflow — `:main` on every commit, `:latest` + the version tag on each release. The reference `docker-compose.yml` now pulls the image, so `docker compose pull` (and Dockge's Update button) just works.
 
 ### Changed
 - **The MQTT enable toggle is now live.** Flipping `MQTT.Enabled` in the wizard/Settings reconnects or tears down the broker connection via the config watcher — no engine restart.

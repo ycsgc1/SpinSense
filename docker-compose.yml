@@ -1,8 +1,12 @@
 services:
   spinsense:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
+    # Prebuilt multi-arch image from GHCR. :latest tracks releases; :main tracks
+    # the latest commit. To build from source instead, comment out `image:` and
+    # uncomment the `build:` block below.
+    image: ghcr.io/ycsgc1/spinsense:latest
+    # build:
+    #   context: .
+    #   dockerfile: docker/Dockerfile
     container_name: spinsense_engine
     restart: unless-stopped
     
