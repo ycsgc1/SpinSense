@@ -24,9 +24,12 @@ SpinSense runs as a Docker container. The examples below use [Dockge](https://gi
 
 ### Recommended audio interface
 
-<img src="docs/images/behringer-uca202.png" alt="Behringer UCA202 USB audio interface" width="200" align="right" />
+<img src="docs/images/behringer-ufo202.webp" alt="Behringer U-PHONO UFO202 USB audio interface" width="200" align="right" />
 
-SpinSense works with any audio input the host can see, but **the interface matters** — many add processing that subtly degrades the sound. After trying a number of them, the one I recommend is the **[Behringer UCA202](https://www.behringer.com/product.html?modelCode=P0484)** (or its near-identical sibling, the **UCA222**). It behaves almost like a passthrough: your turntable's signal reaches your speakers untouched while SpinSense samples a copy, so nothing colors the music. It's cheap, widely available, and the only interface I found that doesn't compromise playback quality.
+SpinSense works with any audio input the host can see, but **the interface matters** — many add processing that subtly degrades the sound. After trying a number of them, the **Behringer U-PHONO** interfaces are what I recommend: they act almost like a passthrough, so your turntable's signal reaches your speakers untouched while SpinSense samples a copy. Cheap, widely available, and the only ones I found that don't compromise playback quality. Pick based on your setup:
+
+- **Behringer UFO202** *(pictured)* — has a **built-in phono preamp** plus an RCA output that passes straight through to your amplifier. Plug a turntable directly in. The simplest option if your deck doesn't already have a preamp.
+- **Behringer UCA202 / UCA222** — **line-level** (no built-in phono preamp). Ideal if your turntable or receiver already provides phono preamplification.
 
 ### Compose
 
