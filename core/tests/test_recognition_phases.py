@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import unittest
@@ -34,3 +35,19 @@ class BuildStatusPayloadTest(unittest.TestCase):
         p = core_engine.build_status_payload("listening", 0.0, {"in_song": False})["payload"]
         self.assertEqual(p["status_msg"], "Listening")
         self.assertEqual(p["track"]["title"], "")
+
+
+class RescanCommandTest(unittest.TestCase):
+    def setUp(self):
+        core_engine.state["force_scan"] = False
+        core_engine.state["back_off"] = True
+
+    def test_rescan_sets_force_and_clears_backoff(self):
+        reply = asyncio.run(core_engine._handle_command({"cmd": "rescan"}))
+        self.assertEqual(reply, {"ok": True})
+        self.assertTrue(core_engine.state["force_scan"])
+        self.assertFalse(core_engine.state["back_off"])
+
+    def test_unknown_cmd_still_rejected(self):
+        reply = asyncio.run(core_engine._handle_command({"cmd": "bogus"}))
+        self.assertFalse(reply["ok"])

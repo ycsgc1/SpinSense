@@ -231,6 +231,11 @@ async def _handle_command(payload: dict) -> dict:
         calibration = None
         return {"ok": True}
 
+    if cmd == "rescan":
+        state["force_scan"] = True
+        state["back_off"] = False
+        return {"ok": True}
+
     return {"ok": False, "detail": f"unknown cmd: {cmd!r}"}
 
 
