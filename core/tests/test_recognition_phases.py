@@ -158,4 +158,5 @@ class IdleBlipTest(unittest.TestCase):
         core_engine.runtime["retrigger_on_track_change"] = False
         asyncio.run(core_engine._handle_match({"title": "T2", "subtitle": "A"}))
         self.assertNotIn("idle_blip", self.events)
+        self.assertNotIn("mqtt:stopped", self.events)
         self.assertIn("mqtt:playing", self.events)

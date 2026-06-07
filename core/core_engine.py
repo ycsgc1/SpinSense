@@ -572,10 +572,12 @@ async def _handle_match(track: dict) -> None:
         print(f"🎵 NEW TRACK: {result_str}")
         print(f"💿 Album:     {album}")
         print(f"🖼️  Art URL:   {art_url}")
-        publish_state("stopped")
         if runtime.get("retrigger_on_track_change"):
+            # Re-announce on BOTH protocols: stopped on MQTT + idle on the WS,
+            # so HA automations re-fire on the track change either way.
+            publish_state("stopped")
             await _publish_idle_blip()
-        await asyncio.sleep(0.5)
+            await asyncio.sleep(0.5)
         publish_state("playing", artist, title, album, art_url, art_base64)
         state["last_song"] = result_str
     else:
