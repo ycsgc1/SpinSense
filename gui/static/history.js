@@ -49,7 +49,7 @@
   function rowHtml(row) {
     const artSrc = row.art_path ? `/${row.art_path}` : "/static/placeholder.jpg";
     return `
-      <li class="flex items-center gap-md py-2">
+      <li class="group flex items-center gap-md py-2" data-id="${row.id}">
         <img src="${escapeHtml(artSrc)}" alt=""
              class="w-12 h-12 rounded shrink-0 bg-surface-container-high object-cover"
              onerror="this.src='/static/placeholder.jpg'">
@@ -59,6 +59,12 @@
           ${row.album ? `<p class="text-label-sm text-on-surface-variant truncate">${escapeHtml(row.album)}</p>` : ""}
         </div>
         <span class="text-label-sm text-on-surface-variant tabular-nums shrink-0">${escapeHtml(timeOfDay(row))}</span>
+        <button type="button" class="history-del shrink-0 ml-2 p-1 rounded text-on-surface-variant hover:text-error
+                       opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity
+                       focus-visible:ring-2 focus-visible:ring-primary"
+                title="Remove ${escapeHtml(row.title)}" aria-label="Remove ${escapeHtml(row.title)}">
+          <span class="material-symbols-outlined" style="font-size:20px;">close</span>
+        </button>
       </li>
     `;
   }
@@ -146,6 +152,75 @@
   }, { rootMargin: "200px" });
 
   observer.observe(SENTINEL);
+
+  // ---------- delete + undo ----------
+  const TOAST = document.getElementById("history-toast");
+  const TOAST_UNDO = document.getElementById("history-toast-undo");
+  let toastTimer = null;
+  let pending = null; // { id, node, parent, next }
+
+  function adjustTotal(delta) {
+    const m = /(\d+)/.exec(TOTAL.textContent || "");
+    if (!m) return;
+    const n = Math.max(0, parseInt(m[1], 10) + delta);
+    TOTAL.textContent = `${n} ${n === 1 ? "play" : "plays"}`;
+  }
+
+  function hideToast() {
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+    TOAST.classList.add("hidden");
+    pending = null;
+  }
+
+  async function removeRow(li) {
+    const id = li.dataset.id;
+    if (!id) return;
+    // Only one undo slot: finalize any prior pending delete before starting a new one.
+    if (pending) hideToast();
+    const titleEl = li.querySelector("p");
+    const titleText = titleEl ? titleEl.textContent : "";
+    const parent = li.parentNode;
+    const next = li.nextSibling;
+    li.remove();
+    adjustTotal(-1);
+    pending = { id, node: li, parent, next };
+    try {
+      const res = await fetch(`/api/plays/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      // Roll the DOM back if the server rejected it.
+      if (pending && pending.node === li) {
+        parent.insertBefore(li, next);
+        adjustTotal(1);
+        pending = null;
+      }
+      return;
+    }
+    const msgEl = document.getElementById("history-toast-msg");
+    if (msgEl) msgEl.textContent = titleText ? `Removed "${titleText}"` : "Removed";
+    TOAST.classList.remove("hidden");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(hideToast, 5000);
+  }
+
+  async function undo() {
+    if (!pending) return;
+    const { id, node, parent, next } = pending;
+    try {
+      await fetch(`/api/plays/${id}/restore`, { method: "POST" });
+    } catch (e) { /* best effort */ }
+    parent.insertBefore(node, next);
+    adjustTotal(1);
+    hideToast();
+  }
+
+  LIST.addEventListener("click", (e) => {
+    const btn = e.target.closest(".history-del");
+    if (!btn) return;
+    const li = btn.closest("li[data-id]");
+    if (li) removeRow(li);
+  });
+  TOAST_UNDO.addEventListener("click", undo);
 
   // Initial load. Without this, an empty list never scrolls and the observer
   // would never fire.
