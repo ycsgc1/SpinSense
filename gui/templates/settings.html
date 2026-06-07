@@ -68,7 +68,7 @@
         </label>
 
         <label class="flex items-center justify-between gap-md cursor-pointer">
-          <span class="text-body-sm text-on-surface">Re-announce each track to Home Assistant<span class="help-tip" tabindex="0" role="note" aria-label="Help: Re-announce each track to Home Assistant"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">When on, each new song briefly drops the Home Assistant player to idle before playing again, so automations that trigger on 'started playing' re-fire on every track (e.g. to push the new title to a display). Off keeps playback smooth with no idle blip. The MQTT entity already re-announces each track regardless.</span></span></span>
+          <span class="text-body-sm text-on-surface">Re-announce each track to Home Assistant<span class="help-tip" tabindex="0" role="note" aria-label="Help: Re-announce each track to Home Assistant"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">When on, each new song briefly drops Home Assistant to idle before playing again — over both the integration and MQTT — so automations that trigger on 'started playing' re-fire on every track (e.g. to push the new title to a display). Off keeps playback smooth, with no idle blip on either.</span></span></span>
           <input type="checkbox" name="Audio.Retrigger_On_Track_Change" class="sr-only peer">
           <span class="relative shrink-0 w-11 h-6 rounded-full bg-surface-container-highest border border-outline-variant/40 peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-on-surface after:transition-transform peer-checked:after:translate-x-5"></span>
         </label>
@@ -121,5 +121,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/settings.js"></script>
+<script src="/static/settings.js?v={{ asset_v }}"></script>
 {% endblock %}

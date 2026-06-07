@@ -126,6 +126,15 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/art", StaticFiles(directory=ART_DIR), name="art")
 templates = Jinja2Templates(directory="templates")
 
+# Version-stamp static asset URLs so each release busts browser/proxy caches
+# (kills the 'new HTML, stale CSS/JS' class of bug). VERSION lives at repo root.
+try:
+    with open(os.path.join(os.path.dirname(__file__), "..", "VERSION")) as _vf:
+        ASSET_VERSION = _vf.read().strip() or "dev"
+except Exception:
+    ASSET_VERSION = "dev"
+templates.env.globals["asset_v"] = ASSET_VERSION
+
 
 # --- Page routes ---
 
