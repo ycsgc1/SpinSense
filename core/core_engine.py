@@ -373,7 +373,57 @@ state = {
     "art_url": "",
     "silence_counter": 0,
     "current_rms": 0.0,
+    "isrc": None,
+    "genre": None,
+    "release_year": None,
+    "back_off": False,
+    "force_scan": False,
 }
+
+
+def build_status_payload(phase: str, rms: float, st: dict) -> dict:
+    """Build a live_status frame. `phase` is the machine-readable recognition
+    phase; the track always reflects current state so the GUI's dedupe hook is
+    never reset mid-song. The frontend decides display from phase, not track."""
+    return {
+        "type": "live_status",
+        "payload": {
+            "rms_level": rms,
+            "engine_active": True,
+            "phase": phase,
+            "status_msg": "Playing" if st.get("in_song") else "Listening",
+            "track": {
+                "title": st.get("title", "") or "",
+                "artist": st.get("artist", "") or "",
+                "album": st.get("album", "") or "",
+                "art_url": st.get("art_url", "") or "",
+                "isrc": st.get("isrc"),
+                "genre": st.get("genre"),
+                "release_year": st.get("release_year"),
+            },
+        },
+    }
+
+
+async def _write_uds(line: str) -> None:
+    """Best-effort: write one newline-terminated frame to the GUI's UDS. Errors
+    are swallowed (the GUI may not be up; the engine must not crash)."""
+    try:
+        if not os.path.exists('/tmp/spinsense.sock'):
+            return
+        reader, writer = await asyncio.open_unix_connection('/tmp/spinsense.sock')
+        writer.write(line.encode())
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+    except Exception:
+        pass
+
+
+async def _publish_phase(phase: str) -> None:
+    """Publish a phase frame using current state + last RMS reading."""
+    payload = build_status_payload(phase, state.get("current_rms", 0.0), state)
+    await _write_uds(json.dumps(payload) + "\n")
 
 
 async def fetch_itunes_metadata(artist, title):
