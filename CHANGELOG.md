@@ -2,6 +2,12 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [Unreleased]
+
+### Added
+- **"Re-announce each track to Home Assistant" toggle** (`Audio.Retrigger_On_Track_Change`, opt-in, default off). When on, each new track briefly drops the WebSocket-driven Home Assistant media player to idle before going back to playing, so automations that trigger on "started playing" re-fire on every track (e.g. to push the new title to a Tidbyt). App-side only — no integration change needed; the MQTT entity already re-announces each track regardless.
+- **Help tooltips on the Settings page** — a hover/focus "?" next to each option (Microphone and all Audio settings, including the new re-announce toggle) explaining what it does. The MQTT section is intentionally left without tips.
+
 ## [1.1.0.0] - 2026-06-07
 
 ### Added
