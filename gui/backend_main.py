@@ -297,6 +297,18 @@ async def calibrate_clear():
     return reply
 
 
+@app.post("/api/rescan")
+async def rescan():
+    try:
+        reply = await _send_cmd({"cmd": "rescan"})
+    except (FileNotFoundError, ConnectionRefusedError, asyncio.TimeoutError):
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "detail": "Engine not reachable"},
+        )
+    return reply
+
+
 @app.get("/api/recent")
 async def get_recent(limit: int = 10):
     rows = await asyncio.to_thread(play_history.recent_plays, limit)
