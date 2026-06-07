@@ -231,6 +231,11 @@ async def _handle_command(payload: dict) -> dict:
         calibration = None
         return {"ok": True}
 
+    if cmd == "rescan":
+        state["force_scan"] = True
+        state["back_off"] = False
+        return {"ok": True}
+
     return {"ok": False, "detail": f"unknown cmd: {cmd!r}"}
 
 
@@ -364,6 +369,7 @@ def publish_state(status, artist="", title="", album="", art_url="", art_base64=
 
 # --- 3. Shazam, iTunes, & Audio Logic ---
 shazam = Shazam()
+RECOGNIZE_ATTEMPTS = 3  # 1 initial + 2 auto-retries
 state = {
     "in_song": False,
     "last_song": "",
@@ -373,7 +379,57 @@ state = {
     "art_url": "",
     "silence_counter": 0,
     "current_rms": 0.0,
+    "isrc": None,
+    "genre": None,
+    "release_year": None,
+    "back_off": False,
+    "force_scan": False,
 }
+
+
+def build_status_payload(phase: str, rms: float, st: dict) -> dict:
+    """Build a live_status frame. `phase` is the machine-readable recognition
+    phase; the track always reflects current state so the GUI's dedupe hook is
+    never reset mid-song. The frontend decides display from phase, not track."""
+    return {
+        "type": "live_status",
+        "payload": {
+            "rms_level": rms,
+            "engine_active": True,
+            "phase": phase,
+            "status_msg": "Playing" if st.get("in_song") else "Listening",
+            "track": {
+                "title": st.get("title", "") or "",
+                "artist": st.get("artist", "") or "",
+                "album": st.get("album", "") or "",
+                "art_url": st.get("art_url", "") or "",
+                "isrc": st.get("isrc"),
+                "genre": st.get("genre"),
+                "release_year": st.get("release_year"),
+            },
+        },
+    }
+
+
+async def _write_uds(line: str) -> None:
+    """Best-effort: write one newline-terminated frame to the GUI's UDS. Errors
+    are swallowed (the GUI may not be up; the engine must not crash)."""
+    try:
+        if not os.path.exists('/tmp/spinsense.sock'):
+            return
+        reader, writer = await asyncio.open_unix_connection('/tmp/spinsense.sock')
+        writer.write(line.encode())
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+    except Exception:
+        pass
+
+
+async def _publish_phase(phase: str) -> None:
+    """Publish a phase frame using current state + last RMS reading."""
+    payload = build_status_payload(phase, state.get("current_rms", 0.0), state)
+    await _write_uds(json.dumps(payload) + "\n")
 
 
 async def fetch_itunes_metadata(artist, title):
@@ -448,66 +504,117 @@ def _extract_enrichment(track: dict) -> dict:
     return {"isrc": isrc, "genre": genre, "release_year": release_year}
 
 
-async def recognize_audio():
+async def _capture_sample() -> bytes:
+    """Record sample_len seconds from the mic and return WAV bytes."""
     sample_len = runtime["sample_len"]
     mic = runtime["mic_device"]
-    print(f"\n[!] Music detected. Recording {sample_len}s for identification...")
-    recording = sd.rec(int(sample_len * 48000), samplerate=48000, channels=1, dtype='int16', device=mic)
+    print(f"[!] Recording {sample_len}s sample for identification...")
+    recording = sd.rec(int(sample_len * 48000), samplerate=48000, channels=1,
+                       dtype='int16', device=mic)
     await asyncio.to_thread(sd.wait)
-
     wav_io = io.BytesIO()
     with wave.open(wav_io, 'wb') as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(48000)
         wf.writeframes(recording.tobytes())
+    return wav_io.getvalue()
 
+
+async def _identify(wav_bytes: bytes) -> dict | None:
+    """Return the matched Shazam track dict, or None if no match."""
     print("[!] Analyzing with Shazam...")
-    out = await shazam.recognize(wav_io.getvalue())
+    out = await shazam.recognize(wav_bytes)
+    if isinstance(out, dict) and 'track' in out:
+        return out['track']
+    return None
 
-    if 'track' in out:
-        track = out['track']
-        title = track.get('title', 'Unknown Title')
-        artist = track.get('subtitle', 'Unknown Artist')
 
-        print("[!] Fetching high-res metadata from iTunes...")
-        album, art_url = await fetch_itunes_metadata(artist, title)
-        if not art_url:
-            art_url = track.get('images', {}).get('coverarthq', track.get('images', {}).get('coverart', ''))
-        if not album:
-            album = "Unknown Album"
+async def _handle_match(track: dict) -> None:
+    """Enrich, publish, and record a matched track (the old success branch)."""
+    title = track.get('title', 'Unknown Title')
+    artist = track.get('subtitle', 'Unknown Artist')
 
-        art_base64 = ""
-        if art_url:
-            print("[!] Encoding album art to Base64 for Home Assistant...")
-            art_base64 = await fetch_image_base64(art_url)
+    print("[!] Fetching high-res metadata from iTunes...")
+    album, art_url = await fetch_itunes_metadata(artist, title)
+    if not art_url:
+        art_url = track.get('images', {}).get('coverarthq',
+                  track.get('images', {}).get('coverart', ''))
+    if not album:
+        album = "Unknown Album"
 
-        result_str = f"{artist} - {title}"
+    art_base64 = ""
+    if art_url:
+        print("[!] Encoding album art to Base64 for Home Assistant...")
+        art_base64 = await fetch_image_base64(art_url)
 
-        state["artist"] = artist
-        state["title"] = title
-        state["album"] = album
-        state["art_url"] = art_url
-        enrichment = _extract_enrichment(track)
-        state["isrc"] = enrichment["isrc"]
-        state["genre"] = enrichment["genre"]
-        state["release_year"] = enrichment["release_year"]
+    result_str = f"{artist} - {title}"
+    state["artist"] = artist
+    state["title"] = title
+    state["album"] = album
+    state["art_url"] = art_url
+    enrichment = _extract_enrichment(track)
+    state["isrc"] = enrichment["isrc"]
+    state["genre"] = enrichment["genre"]
+    state["release_year"] = enrichment["release_year"]
 
-        if result_str != state["last_song"]:
-            print(f"🎵 NEW TRACK: {result_str}")
-            print(f"💿 Album:     {album}")
-            print(f"🖼️  Art URL:   {art_url}")
-            publish_state("stopped")
-            await asyncio.sleep(0.5)
-            publish_state("playing", artist, title, album, art_url, art_base64)
-            state["last_song"] = result_str
-        else:
-            print(f"      (Confirmed same track: {state['last_song']})")
-            publish_state("playing", artist, title, album, art_url, art_base64)
-
-        state["in_song"] = True
+    if result_str != state["last_song"]:
+        print(f"🎵 NEW TRACK: {result_str}")
+        print(f"💿 Album:     {album}")
+        print(f"🖼️  Art URL:   {art_url}")
+        publish_state("stopped")
+        await asyncio.sleep(0.5)
+        publish_state("playing", artist, title, album, art_url, art_base64)
+        state["last_song"] = result_str
     else:
-        print("❌ Could not identify track.")
+        print(f"      (Confirmed same track: {state['last_song']})")
+        publish_state("playing", artist, title, album, art_url, art_base64)
+
+    state["in_song"] = True
+    state["back_off"] = False
+    await _publish_phase("playing")
+
+
+def _clear_track_state(set_backoff: bool) -> None:
+    """Reset all track + enrichment fields to the 'no song' state. `set_backoff`
+    arms the re-scan back-off gate — True after a no_match (don't re-hammer the
+    same unidentifiable audio), False on a natural silence-stop."""
+    state["in_song"] = False
+    state["last_song"] = ""
+    state["artist"] = ""
+    state["title"] = ""
+    state["album"] = ""
+    state["art_url"] = ""
+    state["isrc"] = None
+    state["genre"] = None
+    state["release_year"] = None
+    state["back_off"] = set_backoff
+
+
+async def recognize_audio():
+    """Sample + identify with up to 2 auto-retries. On total failure, publish
+    no_match, clear the track, and set the back-off gate so the monitor loop
+    waits for a fresh audio onset before scanning again."""
+    print("\n[!] Music detected — identifying...")
+    track = None
+    for attempt in range(RECOGNIZE_ATTEMPTS):
+        await _publish_phase("scanning")
+        wav = await _capture_sample()
+        await _publish_phase("identifying" if attempt == 0 else "retrying")
+        track = await _identify(wav)
+        if track:
+            break
+
+    if track:
+        await _handle_match(track)
+    else:
+        print("❌ Could not identify track (gave up).")
+        # Order matters: clear the track (emptying the title) BEFORE publishing
+        # no_match, so the empty-title frame resets ipc_manager's dedupe. Reorder
+        # these and a same-title track after a failed ID could be dropped or
+        # double-recorded.
+        _clear_track_state(set_backoff=True)
+        await _publish_phase("no_match")
 
     state["silence_counter"] = 0
 
@@ -532,6 +639,18 @@ def audio_callback(indata, frames, time, status):
     state["current_rms"] = rms
     if calibration is not None and calibration["status"] == "running":
         calibration["samples"].append(rms)
+
+
+def _scan_decision(vol, threshold, in_song, silence_counter, back_off):
+    """Pure: decide what the monitor loop should do this tick.
+    Returns 'scan' | 'tick' | 'wait_gap' | 'silence'."""
+    if vol > threshold:
+        if back_off:
+            return "wait_gap"
+        if (not in_song) or silence_counter > 0:
+            return "scan"
+        return "tick"
+    return "silence"
 
 
 async def audio_monitor_loop():
@@ -561,32 +680,8 @@ async def audio_monitor_loop():
 
         vol = state["current_rms"]
 
-        try:
-            if os.path.exists('/tmp/spinsense.sock'):
-                reader, writer = await asyncio.open_unix_connection('/tmp/spinsense.sock')
-                payload = json.dumps({
-                    "type": "live_status",
-                    "payload": {
-                        "rms_level": vol,
-                        "engine_active": True,
-                        "status_msg": "Playing" if state["in_song"] else "Listening",
-                        "track": {
-                            "title": state.get("title", ""),
-                            "artist": state.get("artist", ""),
-                            "album": state.get("album", ""),
-                            "art_url": state.get("art_url", ""),
-                            "isrc": state.get("isrc"),
-                            "genre": state.get("genre"),
-                            "release_year": state.get("release_year"),
-                        },
-                    },
-                }) + "\n"
-                writer.write(payload.encode())
-                await writer.drain()
-                writer.close()
-                await writer.wait_closed()
-        except Exception:
-            pass
+        phase = "playing" if state["in_song"] else "listening"
+        await _write_uds(json.dumps(build_status_payload(phase, vol, state)) + "\n")
 
         # Suppress detection during an active calibration capture window.
         # The audio callback still appends samples + still updates the live
@@ -595,28 +690,39 @@ async def audio_monitor_loop():
             await asyncio.sleep(1)
             continue
 
-        if vol > runtime["threshold"]:
-            if not state["in_song"] or state["silence_counter"] > 0:
-                stream.stop()
-                stream.close()
-                await recognize_audio()
-                stream = _open_input_stream(audio_callback)
-                state["current_rms"] = 0.0
-            else:
-                print(".", end="", flush=True)
-        else:
+        if state.get("force_scan"):
+            state["force_scan"] = False
+            stream.stop()
+            stream.close()
+            await recognize_audio()
+            stream = _open_input_stream(audio_callback)
+            state["current_rms"] = 0.0
+            await asyncio.sleep(1)
+            continue
+
+        decision = _scan_decision(
+            vol, runtime["threshold"], state["in_song"],
+            state["silence_counter"], state.get("back_off", False),
+        )
+        if decision == "scan":
+            stream.stop()
+            stream.close()
+            await recognize_audio()
+            stream = _open_input_stream(audio_callback)
+            state["current_rms"] = 0.0
+        elif decision == "wait_gap":
+            print("b", end="", flush=True)
+        elif decision == "tick":
+            print(".", end="", flush=True)
+        else:  # silence
+            state["back_off"] = False  # gap observed → next onset is fair game
             if state["in_song"]:
                 state["silence_counter"] += 1
                 print("s", end="", flush=True)
                 if state["silence_counter"] >= runtime["stopped_silence"]:
                     print(f"\n[ STOPPED ] {runtime['stopped_silence']}s silence limit reached.")
                     publish_state("stopped")
-                    state["in_song"] = False
-                    state["last_song"] = ""
-                    state["artist"] = ""
-                    state["title"] = ""
-                    state["album"] = ""
-                    state["art_url"] = ""
+                    _clear_track_state(set_backoff=False)
                     state["silence_counter"] = 0
 
         await asyncio.sleep(1)

@@ -2,6 +2,18 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [Unreleased]
+
+### Added
+- **Recognition status indicators on the dashboard.** A per-phase glow behind the vinyl (listening / scanning / identifying / playing / retrying / no_match), a status caption, and matching engine-pill states. The engine now publishes a machine-readable `phase` field on the `live_status` WebSocket frame — purely additive; the Home-Assistant-polled `status_msg` is unchanged.
+- **Recognition resilience.** Identification now auto-retries twice before giving up, surfaces a distinct "couldn't identify this one" (`no_match`) state instead of silently leaving the previous track spinning on screen, and then backs off so it won't re-hammer the same unidentifiable track until the next audio onset (the gap between songs).
+- **"Scan again" button** on the dashboard to force a fresh identification on demand — a new `rescan` engine command over the existing command socket, exposed as `POST /api/rescan`.
+- **Delete a scrobble from History** — a hover ✕ with a 5-second Undo. Backed by soft-delete (a `deleted_at` column) so Undo is instant; `DELETE /api/plays/{id}` and `POST /api/plays/{id}/restore`.
+- **Automatic art cleanup** (`purge_deleted`) — hard-deletes soft-deleted scrobbles past a 120 s grace window and unlinks their cached art only when no remaining row references it. Runs on startup and every 30 minutes.
+
+### Changed
+- **`recognize_audio` refactored** into capture / identify / handle stages with a retry policy; track-state clearing is centralized in `_clear_track_state`, shared by the no-match and silence-stop paths. The dashboard now drives all now-playing display from `phase`, clearing stale art the instant recognition leaves `playing` (fixing the case where an unidentifiable track left the previous song's art on screen).
+
 ## [1.0.0.0] - 2026-06-01
 
 ### Added

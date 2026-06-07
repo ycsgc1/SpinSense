@@ -6,6 +6,10 @@
   const LABELS = {
     idle:         "Idle",
     listening:    "Listening",
+    scanning:     "Scanning",
+    identifying:  "Identifying",
+    retrying:     "Retrying",
+    no_match:     "No match",
     playing:      "Playing",
     disconnected: "Disconnected",
   };
@@ -30,12 +34,12 @@
   }
 
   function handleFrame(payload) {
-    const track = (payload && payload.track) || {};
-    if (track.title) {
-      setPillState("playing");
-    } else if (payload && payload.status_msg) {
-      // Engine emits "Listening" while idle; treat any non-Playing status as listening.
-      setPillState("listening");
+    const phase = payload && payload.phase;
+    if (phase) {
+      setPillState(phase === "stopped" ? "listening" : phase);
+    } else {
+      const track = (payload && payload.track) || {};
+      setPillState(track.title ? "playing" : "listening");
     }
     notify(payload);
   }

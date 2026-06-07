@@ -173,5 +173,109 @@ class TestEnrichmentColumns(unittest.TestCase):
         self.assertIsNone(rows[0]["release_year"])
 
 
+class SoftDeleteTest(unittest.TestCase):
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        play_history.init_db(db_path=self.db_path)
+
+    def tearDown(self):
+        try:
+            os.remove(self.db_path)
+        except OSError:
+            pass
+
+    def test_delete_hides_from_reads(self):
+        pid = play_history.record_play("Gone", "A", None, None, db_path=self.db_path)
+        self.assertTrue(play_history.delete_play(pid, db_path=self.db_path))
+        self.assertEqual(play_history.recent_plays(db_path=self.db_path), [])
+        self.assertEqual(play_history.count_plays(db_path=self.db_path), 0)
+
+    def test_delete_unknown_returns_false(self):
+        self.assertFalse(play_history.delete_play(999, db_path=self.db_path))
+
+    def test_delete_is_idempotent(self):
+        pid = play_history.record_play("Once", "A", None, None, db_path=self.db_path)
+        self.assertTrue(play_history.delete_play(pid, db_path=self.db_path))
+        self.assertFalse(play_history.delete_play(pid, db_path=self.db_path))
+
+    def test_restore_brings_it_back(self):
+        pid = play_history.record_play("Back", "A", None, None, db_path=self.db_path)
+        play_history.delete_play(pid, db_path=self.db_path)
+        self.assertTrue(play_history.restore_play(pid, db_path=self.db_path))
+        rows = play_history.recent_plays(db_path=self.db_path)
+        self.assertEqual([r["title"] for r in rows], ["Back"])
+
+    def test_restore_unknown_or_live_returns_false(self):
+        pid = play_history.record_play("Live", "A", None, None, db_path=self.db_path)
+        self.assertFalse(play_history.restore_play(pid, db_path=self.db_path))  # not deleted
+        self.assertFalse(play_history.restore_play(999, db_path=self.db_path))
+
+    def test_migration_adds_column_on_existing_db(self):
+        play_history.init_db(db_path=self.db_path)  # run twice, must not error
+        import sqlite3
+        cols = {r[1] for r in sqlite3.connect(self.db_path).execute("PRAGMA table_info(plays)")}
+        self.assertIn("deleted_at", cols)
+
+
+class PurgeTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db_path = os.path.join(self.tmp, "t.db")
+        os.makedirs(os.path.join(self.tmp, "art"), exist_ok=True)
+        play_history.init_db(db_path=self.db_path)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _age_deleted(self, pid, seconds_ago):
+        import sqlite3
+        with sqlite3.connect(self.db_path) as c:
+            c.execute("UPDATE plays SET deleted_at = ? WHERE id = ?",
+                      (int(time.time()) - seconds_ago, pid))
+
+    def _art(self, name):
+        p = os.path.join(self.tmp, "art", name)
+        with open(p, "wb") as f:
+            f.write(b"x")
+        return p, f"art/{name}"
+
+    def test_purges_past_grace_and_unlinks_art(self):
+        path, rel = self._art("1.jpg")
+        pid = play_history.record_play("Old", "A", None, None, db_path=self.db_path)
+        play_history.set_art_path(pid, rel, db_path=self.db_path)
+        play_history.delete_play(pid, db_path=self.db_path)
+        self._age_deleted(pid, 300)
+        n = play_history.purge_deleted(grace_seconds=120, data_dir=self.tmp, db_path=self.db_path)
+        self.assertEqual(n, 1)
+        self.assertFalse(os.path.exists(path))
+
+    def test_keeps_rows_within_grace(self):
+        pid = play_history.record_play("Recent", "A", None, None, db_path=self.db_path)
+        play_history.delete_play(pid, db_path=self.db_path)  # deleted_at = now
+        n = play_history.purge_deleted(grace_seconds=120, data_dir=self.tmp, db_path=self.db_path)
+        self.assertEqual(n, 0)
+
+    def test_keeps_art_still_referenced_by_live_row(self):
+        path, rel = self._art("shared.jpg")
+        live = play_history.record_play("Live", "A", None, None, db_path=self.db_path)
+        dead = play_history.record_play("Dead", "A", None, None, db_path=self.db_path)
+        play_history.set_art_path(live, rel, db_path=self.db_path)
+        play_history.set_art_path(dead, rel, db_path=self.db_path)
+        play_history.delete_play(dead, db_path=self.db_path)
+        self._age_deleted(dead, 300)
+        play_history.purge_deleted(grace_seconds=120, data_dir=self.tmp, db_path=self.db_path)
+        self.assertTrue(os.path.exists(path))  # still used by the live row
+
+    def test_tolerates_missing_art_file(self):
+        pid = play_history.record_play("NoFile", "A", None, None, db_path=self.db_path)
+        play_history.set_art_path(pid, "art/missing.jpg", db_path=self.db_path)
+        play_history.delete_play(pid, db_path=self.db_path)
+        self._age_deleted(pid, 300)
+        n = play_history.purge_deleted(grace_seconds=120, data_dir=self.tmp, db_path=self.db_path)
+        self.assertEqual(n, 1)  # no exception
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,24 @@
   const levelText   = $("input-level-text");
   const recentList  = $("recent-plays-list");
   const meterThreshold = $("input-meter-threshold");
+  const vinylStage = $("vinyl-stage");
+  const phaseCaption = $("phase-caption");
+  const scanBtn = $("scan-again");
+
+  // Eyebrow = short label; headline = descriptive line (when not playing) or
+  // the track title (when playing). Filling both avoids an empty headline.
+  const PHASE_EYEBROW = {
+    listening: "Idle", scanning: "Scanning", identifying: "Identifying",
+    retrying: "Retrying", no_match: "No match", playing: "Now playing",
+  };
+  const PHASE_HEADLINE = {
+    listening:   "Waiting for the needle…",
+    scanning:    "Listening to the track…",
+    identifying: "Identifying…",
+    retrying:    "Couldn't catch it — retrying…",
+    no_match:    "Couldn't identify this one",
+  };
+  const SPIN_PHASES = new Set(["playing", "scanning", "identifying", "retrying"]);
 
   // dB display window for the input meter on this page. Threshold tick is
   // computed from Audio.Volume_Threshold (linear RMS in config -> dB here).
@@ -114,18 +132,24 @@
     const track = payload.track || {};
     const title = track.title || "";
 
-    // Vinyl + track metadata
-    if (title) {
+    // Phase drives display. Frames carry the prior track during scanning/etc.,
+    // so we key everything off phase (falling back to title presence if the
+    // engine hasn't sent a phase — e.g. the mock stream).
+    const phase = payload.phase || (title ? "playing" : "listening");
+    const uiPhase = phase === "stopped" ? "listening" : phase;
+    if (vinylStage) vinylStage.dataset.phase = uiPhase;
+    if (phaseCaption) phaseCaption.textContent = PHASE_EYEBROW[uiPhase] || "Idle";
+    setVinylSpinning(SPIN_PHASES.has(uiPhase));
+
+    if (uiPhase === "playing" && title) {
       titleEl.textContent  = title;
       artistEl.textContent = track.artist || "Unknown Artist";
       albumEl.textContent  = track.album  || "";
-      setVinylSpinning(true);
       setVinylArt(track.art_url || null);
     } else {
-      titleEl.textContent  = "Waiting for drop…";
+      titleEl.textContent  = PHASE_HEADLINE[uiPhase] || "Waiting for the needle…";
       artistEl.innerHTML   = "&nbsp;";
       albumEl.innerHTML    = "&nbsp;";
-      setVinylSpinning(false);
       setVinylArt(null);
     }
 
@@ -182,5 +206,14 @@
     loadConfig();
     refreshRecent();
     window.SpinSense.onFrame(handleFrame);
+
+    if (scanBtn) {
+      scanBtn.addEventListener("click", async () => {
+        scanBtn.disabled = true;
+        try { await fetch("/api/rescan", { method: "POST" }); }
+        catch (_) { /* engine may be down; ignore */ }
+        setTimeout(() => { scanBtn.disabled = false; }, 1500);
+      });
+    }
   });
 })();

@@ -10,24 +10,36 @@
     <h2 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Now Playing</h2>
 
     <div class="flex flex-col md:flex-row gap-lg items-center">
-      <!-- Vinyl -->
-      <div class="relative w-48 h-48 md:w-64 md:h-64 flex-shrink-0">
-        <div class="absolute inset-0 rounded-full bg-black/60 shadow-[0_0_50px_rgba(0,0,0,0.8)] border border-surface-variant"></div>
-        <div id="vinyl" class="vinyl-disc absolute inset-2 rounded-full bg-[#111] border border-[#222]"
-             style="background: repeating-radial-gradient(#111 0, #111 2px, #0a0a0a 3px, #0a0a0a 4px);">
-          <div class="absolute inset-0 m-auto w-1/3 h-1/3 rounded-full overflow-hidden border-2 border-primary/40 shadow-[0_0_20px_rgba(221,183,255,0.25)] bg-surface-container-high flex items-center justify-center">
-            <img id="vinyl-art" src="/static/placeholder.jpg" alt=""
-                 class="w-full h-full object-cover hidden">
-            <span id="vinyl-logo" class="material-symbols-outlined text-primary text-3xl">album</span>
+      <!-- Vinyl + Scan again -->
+      <div class="flex flex-col items-center gap-md flex-shrink-0">
+        <div id="vinyl-stage" data-phase="listening" class="relative w-48 h-48 md:w-64 md:h-64">
+          <div class="absolute inset-0 rounded-full bg-black/60 shadow-[0_0_50px_rgba(0,0,0,0.8)] border border-surface-variant"></div>
+          <div id="vinyl" class="vinyl-disc absolute inset-2 rounded-full bg-[#111] border border-[#222]"
+               style="background: repeating-radial-gradient(#111 0, #111 2px, #0a0a0a 3px, #0a0a0a 4px);">
+            <div class="absolute inset-0 m-auto w-1/3 h-1/3 rounded-full overflow-hidden border-2 border-primary/40 shadow-[0_0_20px_rgba(221,183,255,0.25)] bg-surface-container-high flex items-center justify-center">
+              <img id="vinyl-art" src="/static/placeholder.jpg" alt=""
+                   class="w-full h-full object-cover hidden">
+              <span id="vinyl-logo" class="material-symbols-outlined text-primary text-3xl">album</span>
+            </div>
+            <div class="absolute inset-0 m-auto w-2 h-2 bg-background rounded-full"></div>
           </div>
-          <div class="absolute inset-0 m-auto w-2 h-2 bg-background rounded-full"></div>
         </div>
+        <button id="scan-again" type="button"
+                class="inline-flex items-center gap-2 text-label-md text-on-surface-variant
+                       hover:text-primary bg-surface-container/55 border border-outline-variant/40
+                       rounded-full px-4 py-2 backdrop-blur-md transition-colors
+                       disabled:opacity-50 disabled:cursor-default
+                       focus-visible:ring-2 focus-visible:ring-primary">
+          <span class="material-symbols-outlined" style="font-size:16px;">refresh</span>
+          Scan again
+        </button>
       </div>
 
       <!-- Track metadata + RMS meter -->
       <div class="flex-1 flex flex-col justify-center text-center md:text-left w-full">
         <div class="mb-md">
-          <h3 id="track-title" class="font-headline text-headline-lg text-on-background tracking-tight">Waiting for drop&hellip;</h3>
+          <p id="phase-caption" class="text-label-md text-on-surface-variant uppercase tracking-widest mb-1">Idle</p>
+          <h3 id="track-title" class="font-headline text-headline-lg text-on-background tracking-tight">Waiting for the needle&hellip;</h3>
           <p id="track-artist" class="text-body-lg text-primary mt-1">&nbsp;</p>
           <p id="track-album" class="text-body-sm text-on-surface-variant mt-0.5">&nbsp;</p>
         </div>

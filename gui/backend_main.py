@@ -57,11 +57,26 @@ async def start_uds_listener():
         await server.serve_forever()
 
 
+async def _purge_loop():
+    """Reclaim art for scrobbles soft-deleted beyond the Undo grace window."""
+    while True:
+        await asyncio.sleep(1800)  # 30 min
+        try:
+            await asyncio.to_thread(play_history.purge_deleted)
+        except Exception as e:
+            print(f"⚠️ purge sweep failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     play_history.init_db()
     os.makedirs(ART_DIR, exist_ok=True)
+    try:
+        await asyncio.to_thread(play_history.purge_deleted)
+    except Exception as e:
+        print(f"⚠️ startup purge failed: {e}")
     task = asyncio.create_task(start_uds_listener())
+    purge_task = asyncio.create_task(_purge_loop())
     try:
         await advertiser.start(load_config())
     except Exception as e:
@@ -69,6 +84,7 @@ async def lifespan(app: FastAPI):
     yield
     await advertiser.stop()
     task.cancel()
+    purge_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -281,6 +297,18 @@ async def calibrate_clear():
     return reply
 
 
+@app.post("/api/rescan")
+async def rescan():
+    try:
+        reply = await _send_cmd({"cmd": "rescan"})
+    except (FileNotFoundError, ConnectionRefusedError, asyncio.TimeoutError):
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "detail": "Engine not reachable"},
+        )
+    return reply
+
+
 @app.get("/api/recent")
 async def get_recent(limit: int = 10):
     rows = await asyncio.to_thread(play_history.recent_plays, limit)
@@ -292,6 +320,22 @@ async def get_plays(limit: int = 50, offset: int = 0):
     rows = await asyncio.to_thread(play_history.recent_plays, limit, offset)
     total = await asyncio.to_thread(play_history.count_plays)
     return {"plays": rows, "total": total}
+
+
+@app.delete("/api/plays/{play_id}")
+async def delete_play_route(play_id: int):
+    ok = await asyncio.to_thread(play_history.delete_play, play_id)
+    if not ok:
+        return JSONResponse(status_code=404, content={"detail": "not found"})
+    return {"status": "deleted", "id": play_id}
+
+
+@app.post("/api/plays/{play_id}/restore")
+async def restore_play_route(play_id: int):
+    ok = await asyncio.to_thread(play_history.restore_play, play_id)
+    if not ok:
+        return JSONResponse(status_code=404, content={"detail": "not found"})
+    return {"status": "restored", "id": play_id}
 
 
 @app.get("/api/status")

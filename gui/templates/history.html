@@ -26,6 +26,17 @@
   <div id="history-sentinel" class="h-px"></div>
 
   <div id="history-status" class="text-center text-body-sm text-on-surface-variant py-md" aria-live="polite"></div>
+
+  <div id="history-toast"
+       role="status" aria-live="polite" aria-atomic="true"
+       class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-md
+              glass-panel rounded-full px-5 py-3 shadow-lg">
+    <span id="history-toast-msg" class="text-body-sm text-on-surface">Removed</span>
+    <button id="history-toast-undo" type="button"
+            class="text-label-md uppercase tracking-widest text-primary hover:text-primary-fixed-dim">
+      Undo
+    </button>
+  </div>
 </div>
 {% endblock %}
 
