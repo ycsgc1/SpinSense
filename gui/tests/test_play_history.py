@@ -173,5 +173,50 @@ class TestEnrichmentColumns(unittest.TestCase):
         self.assertIsNone(rows[0]["release_year"])
 
 
+class SoftDeleteTest(unittest.TestCase):
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        play_history.init_db(db_path=self.db_path)
+
+    def tearDown(self):
+        try:
+            os.remove(self.db_path)
+        except OSError:
+            pass
+
+    def test_delete_hides_from_reads(self):
+        pid = play_history.record_play("Gone", "A", None, None, db_path=self.db_path)
+        self.assertTrue(play_history.delete_play(pid, db_path=self.db_path))
+        self.assertEqual(play_history.recent_plays(db_path=self.db_path), [])
+        self.assertEqual(play_history.count_plays(db_path=self.db_path), 0)
+
+    def test_delete_unknown_returns_false(self):
+        self.assertFalse(play_history.delete_play(999, db_path=self.db_path))
+
+    def test_delete_is_idempotent(self):
+        pid = play_history.record_play("Once", "A", None, None, db_path=self.db_path)
+        self.assertTrue(play_history.delete_play(pid, db_path=self.db_path))
+        self.assertFalse(play_history.delete_play(pid, db_path=self.db_path))
+
+    def test_restore_brings_it_back(self):
+        pid = play_history.record_play("Back", "A", None, None, db_path=self.db_path)
+        play_history.delete_play(pid, db_path=self.db_path)
+        self.assertTrue(play_history.restore_play(pid, db_path=self.db_path))
+        rows = play_history.recent_plays(db_path=self.db_path)
+        self.assertEqual([r["title"] for r in rows], ["Back"])
+
+    def test_restore_unknown_or_live_returns_false(self):
+        pid = play_history.record_play("Live", "A", None, None, db_path=self.db_path)
+        self.assertFalse(play_history.restore_play(pid, db_path=self.db_path))  # not deleted
+        self.assertFalse(play_history.restore_play(999, db_path=self.db_path))
+
+    def test_migration_adds_column_on_existing_db(self):
+        play_history.init_db(db_path=self.db_path)  # run twice, must not error
+        import sqlite3
+        cols = {r[1] for r in sqlite3.connect(self.db_path).execute("PRAGMA table_info(plays)")}
+        self.assertIn("deleted_at", cols)
+
+
 if __name__ == "__main__":
     unittest.main()
