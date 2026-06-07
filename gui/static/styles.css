@@ -100,3 +100,28 @@ select.form-input {
     background-color: #ddb7ff; /* primary */
     width: 24px;
 }
+
+/* Recognition-phase glow behind the vinyl. dashboard.js sets
+   #vinyl-stage[data-phase]. Keyframes are namespaced glow-* so they don't
+   collide with the engine-pill `pulse` (opacity) keyframe above. */
+#vinyl-stage { border-radius: 9999px; transition: box-shadow 0.4s ease; }
+#vinyl-stage[data-phase="listening"]   { box-shadow: 0 0 18px 2px rgba(152,141,159,0.30); animation: glow-breathe 3.2s ease-in-out infinite; }
+#vinyl-stage[data-phase="scanning"]    { box-shadow: 0 0 40px 4px rgba(78,222,163,0.55);  animation: glow-pulse 1.1s ease-in-out infinite; }
+#vinyl-stage[data-phase="identifying"] { box-shadow: 0 0 44px 5px rgba(95,180,255,0.62);  animation: glow-pulse 0.7s ease-in-out infinite; }
+#vinyl-stage[data-phase="playing"]     { box-shadow: 0 0 48px 6px rgba(221,183,255,0.50); }
+#vinyl-stage[data-phase="retrying"]    { box-shadow: 0 0 40px 4px rgba(252,211,77,0.55);  animation: glow-flash 1.0s ease-in-out infinite; }
+#vinyl-stage[data-phase="no_match"]    { box-shadow: 0 0 42px 5px rgba(255,84,81,0.60);   animation: glow-flash 1.8s ease-in-out infinite; }
+
+@keyframes glow-breathe { 0%,100% { box-shadow: 0 0 14px 1px rgba(152,141,159,0.22); } 50% { box-shadow: 0 0 22px 3px rgba(152,141,159,0.38); } }
+@keyframes glow-pulse   { 0%,100% { filter: brightness(0.9); } 50% { filter: brightness(1.3); } }
+@keyframes glow-flash   { 0%,100% { filter: brightness(0.85); } 50% { filter: brightness(1.35); } }
+
+/* New engine-pill phase states (dots). */
+.engine-pill[data-state="scanning"]    { color: #4edea3; }
+.engine-pill[data-state="scanning"] .engine-pill-dot    { background: #4edea3; box-shadow: 0 0 6px rgba(78,222,163,0.6); }
+.engine-pill[data-state="identifying"] { color: #5fb4ff; }
+.engine-pill[data-state="identifying"] .engine-pill-dot { background: #5fb4ff; box-shadow: 0 0 6px rgba(95,180,255,0.6); }
+.engine-pill[data-state="retrying"]    { color: #fcd34d; }
+.engine-pill[data-state="retrying"] .engine-pill-dot    { background: #fcd34d; box-shadow: 0 0 6px rgba(252,211,77,0.6); }
+.engine-pill[data-state="no_match"]    { color: #ff5451; }
+.engine-pill[data-state="no_match"] .engine-pill-dot    { background: #ff5451; box-shadow: 0 0 6px rgba(255,84,81,0.6); }
