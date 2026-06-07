@@ -609,6 +609,10 @@ async def recognize_audio():
         await _handle_match(track)
     else:
         print("❌ Could not identify track (gave up).")
+        # Order matters: clear the track (emptying the title) BEFORE publishing
+        # no_match, so the empty-title frame resets ipc_manager's dedupe. Reorder
+        # these and a same-title track after a failed ID could be dropped or
+        # double-recorded.
         _clear_track_state(set_backoff=True)
         await _publish_phase("no_match")
 
