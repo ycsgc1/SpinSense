@@ -2,6 +2,14 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [1.2.1.0] - 2026-06-07
+
+### Fixed
+- **Settings help tooltips now appear in a hover/focus bubble** instead of printing their text inline. The underlying cause was stale cached CSS; static CSS/JS assets are now **version-stamped** (`/static/…?v=<version>`) so every release reliably busts browser and reverse-proxy caches — fixing this whole class of "new HTML, old stylesheet" bug.
+
+### Changed
+- **The "Re-announce each track to Home Assistant" toggle now controls both protocols.** When on, each new track re-announces over **both** the WebSocket integration and MQTT; when off, neither does. (Previously MQTT pulsed `stopped`→`playing` on every track regardless of the toggle.) Note: with the toggle off (default), the MQTT entity no longer pulses per track — turn the toggle on to keep that behavior.
+
 ## [1.2.0.0] - 2026-06-07
 
 ### Added
