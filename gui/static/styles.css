@@ -125,3 +125,19 @@ select.form-input {
 .engine-pill[data-state="retrying"] .engine-pill-dot    { background: #fcd34d; box-shadow: 0 0 6px rgba(252,211,77,0.6); }
 .engine-pill[data-state="no_match"]    { color: #ff5451; }
 .engine-pill[data-state="no_match"] .engine-pill-dot    { background: #ff5451; box-shadow: 0 0 6px rgba(255,84,81,0.6); }
+
+/* Settings help tooltips: a focusable "?" icon revealing a small bubble on
+   hover/focus. Pure CSS; pointer-events:none on the bubble so it never blocks. */
+.help-tip { position: relative; display: inline-flex; align-items: center; margin-left: 6px; color: #988d9f; cursor: help; outline: none; vertical-align: middle; }
+.help-tip:hover, .help-tip:focus { color: #ddb7ff; }
+.help-tip .help-icon { font-size: 16px; line-height: 1; }
+.help-tip .help-bubble {
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  width: max-content; max-width: 260px; padding: 10px 12px;
+  background: #2a2a2c; color: #e5e1e4; border: 1px solid #4d4354; border-radius: 0.5rem;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45); font-size: 12px; line-height: 1.45; font-weight: 400;
+  text-transform: none; letter-spacing: normal; white-space: normal; text-align: left;
+  opacity: 0; visibility: hidden; transition: opacity 0.12s ease; pointer-events: none; z-index: 50;
+}
+.help-tip:hover .help-bubble, .help-tip:focus .help-bubble, .help-tip:focus-within .help-bubble { opacity: 1; visibility: visible; }
+@media (max-width: 480px) { .help-tip .help-bubble { left: auto; right: 0; transform: none; } }
