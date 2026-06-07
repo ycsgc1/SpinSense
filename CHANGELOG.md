@@ -2,7 +2,7 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
-## [Unreleased]
+## [1.1.0.0] - 2026-06-07
 
 ### Added
 - **Recognition status indicators on the dashboard.** A per-phase glow behind the vinyl (listening / scanning / identifying / playing / retrying / no_match), a status caption, and matching engine-pill states. The engine now publishes a machine-readable `phase` field on the `live_status` WebSocket frame — purely additive; the Home-Assistant-polled `status_msg` is unchanged.
