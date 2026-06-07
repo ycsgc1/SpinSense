@@ -118,6 +118,52 @@ def recent_plays(
         return [dict(r) for r in rows]
 
 
+def _unlink_art(data_dir: str, art_path: str) -> None:
+    """Unlink a cached art file, but only if it resolves inside data_dir/art.
+    Tolerates an already-missing file."""
+    full = os.path.normpath(os.path.join(data_dir, art_path))
+    art_root = os.path.normpath(os.path.join(data_dir, "art"))
+    if not (full == art_root or full.startswith(art_root + os.sep)):
+        return
+    try:
+        os.remove(full)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def purge_deleted(
+    grace_seconds: int = 120,
+    data_dir: str | None = None,
+    db_path: str | None = None,
+) -> int:
+    """Hard-delete soft-deleted rows whose deleted_at is older than grace_seconds,
+    and unlink any art file no longer referenced by a remaining row. Returns the
+    number of rows purged."""
+    cutoff = int(time.time()) - int(grace_seconds)
+    base = data_dir if data_dir is not None else DATA_DIR
+    with _connect(db_path) as conn:
+        victims = conn.execute(
+            "SELECT id, art_path FROM plays "
+            "WHERE deleted_at IS NOT NULL AND deleted_at < ?",
+            (cutoff,),
+        ).fetchall()
+        if not victims:
+            return 0
+        conn.executemany(
+            "DELETE FROM plays WHERE id = ?", [(r["id"],) for r in victims]
+        )
+        # Rows are gone now; unlink art only if nothing remaining references it.
+        for art_path in {r["art_path"] for r in victims if r["art_path"]}:
+            still = conn.execute(
+                "SELECT 1 FROM plays WHERE art_path = ? LIMIT 1", (art_path,)
+            ).fetchone()
+            if still is None:
+                _unlink_art(base, art_path)
+    return len(victims)
+
+
 def count_plays(db_path: str | None = None) -> int:
     with _connect(db_path) as conn:
         (n,) = conn.execute("SELECT COUNT(*) FROM plays WHERE deleted_at IS NULL").fetchone()
