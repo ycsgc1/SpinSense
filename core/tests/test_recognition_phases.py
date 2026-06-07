@@ -51,3 +51,54 @@ class RescanCommandTest(unittest.TestCase):
     def test_unknown_cmd_still_rejected(self):
         reply = asyncio.run(core_engine._handle_command({"cmd": "bogus"}))
         self.assertFalse(reply["ok"])
+
+
+class RecognizeRetryTest(unittest.TestCase):
+    def setUp(self):
+        self.phases = []
+        self.handled = []
+        # Capture phase publishes instead of hitting the socket.
+        async def fake_publish(phase):
+            self.phases.append(phase)
+        async def fake_capture():
+            return b""
+        async def fake_handle(track):
+            self.handled.append(track)
+            core_engine.state["in_song"] = True
+            core_engine.state["back_off"] = False
+        self._orig = (core_engine._publish_phase, core_engine._capture_sample,
+                      core_engine._handle_match, core_engine._identify)
+        core_engine._publish_phase = fake_publish
+        core_engine._capture_sample = fake_capture
+        core_engine._handle_match = fake_handle
+        core_engine.state["back_off"] = False
+        core_engine.state["in_song"] = False
+
+    def tearDown(self):
+        (core_engine._publish_phase, core_engine._capture_sample,
+         core_engine._handle_match, core_engine._identify) = self._orig
+
+    def test_all_miss_sets_no_match_and_backoff(self):
+        async def always_none(_wav):
+            return None
+        core_engine._identify = always_none
+        asyncio.run(core_engine.recognize_audio())
+        self.assertEqual(
+            self.phases,
+            ["scanning", "identifying", "scanning", "retrying",
+             "scanning", "retrying", "no_match"],
+        )
+        self.assertEqual(self.handled, [])
+        self.assertTrue(core_engine.state["back_off"])
+        self.assertFalse(core_engine.state["in_song"])
+
+    def test_match_on_third_attempt_handles_and_no_backoff(self):
+        self.calls = 0
+        async def third(_wav):
+            self.calls += 1
+            return {"title": "Hit"} if self.calls == 3 else None
+        core_engine._identify = third
+        asyncio.run(core_engine.recognize_audio())
+        self.assertEqual(self.handled, [{"title": "Hit"}])
+        self.assertFalse(core_engine.state["back_off"])
+        self.assertNotIn("no_match", self.phases)

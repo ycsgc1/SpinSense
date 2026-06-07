@@ -369,6 +369,7 @@ def publish_state(status, artist="", title="", album="", art_url="", art_base64=
 
 # --- 3. Shazam, iTunes, & Audio Logic ---
 shazam = Shazam()
+RECOGNIZE_ATTEMPTS = 3  # 1 initial + 2 auto-retries
 state = {
     "in_song": False,
     "last_song": "",
@@ -503,66 +504,113 @@ def _extract_enrichment(track: dict) -> dict:
     return {"isrc": isrc, "genre": genre, "release_year": release_year}
 
 
-async def recognize_audio():
+async def _capture_sample() -> bytes:
+    """Record sample_len seconds from the mic and return WAV bytes."""
     sample_len = runtime["sample_len"]
     mic = runtime["mic_device"]
-    print(f"\n[!] Music detected. Recording {sample_len}s for identification...")
-    recording = sd.rec(int(sample_len * 48000), samplerate=48000, channels=1, dtype='int16', device=mic)
+    print(f"[!] Recording {sample_len}s sample for identification...")
+    recording = sd.rec(int(sample_len * 48000), samplerate=48000, channels=1,
+                       dtype='int16', device=mic)
     await asyncio.to_thread(sd.wait)
-
     wav_io = io.BytesIO()
     with wave.open(wav_io, 'wb') as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(48000)
         wf.writeframes(recording.tobytes())
+    return wav_io.getvalue()
 
+
+async def _identify(wav_bytes: bytes) -> dict | None:
+    """Return the matched Shazam track dict, or None if no match."""
     print("[!] Analyzing with Shazam...")
-    out = await shazam.recognize(wav_io.getvalue())
+    out = await shazam.recognize(wav_bytes)
+    if isinstance(out, dict) and 'track' in out:
+        return out['track']
+    return None
 
-    if 'track' in out:
-        track = out['track']
-        title = track.get('title', 'Unknown Title')
-        artist = track.get('subtitle', 'Unknown Artist')
 
-        print("[!] Fetching high-res metadata from iTunes...")
-        album, art_url = await fetch_itunes_metadata(artist, title)
-        if not art_url:
-            art_url = track.get('images', {}).get('coverarthq', track.get('images', {}).get('coverart', ''))
-        if not album:
-            album = "Unknown Album"
+async def _handle_match(track: dict) -> None:
+    """Enrich, publish, and record a matched track (the old success branch)."""
+    title = track.get('title', 'Unknown Title')
+    artist = track.get('subtitle', 'Unknown Artist')
 
-        art_base64 = ""
-        if art_url:
-            print("[!] Encoding album art to Base64 for Home Assistant...")
-            art_base64 = await fetch_image_base64(art_url)
+    print("[!] Fetching high-res metadata from iTunes...")
+    album, art_url = await fetch_itunes_metadata(artist, title)
+    if not art_url:
+        art_url = track.get('images', {}).get('coverarthq',
+                  track.get('images', {}).get('coverart', ''))
+    if not album:
+        album = "Unknown Album"
 
-        result_str = f"{artist} - {title}"
+    art_base64 = ""
+    if art_url:
+        print("[!] Encoding album art to Base64 for Home Assistant...")
+        art_base64 = await fetch_image_base64(art_url)
 
-        state["artist"] = artist
-        state["title"] = title
-        state["album"] = album
-        state["art_url"] = art_url
-        enrichment = _extract_enrichment(track)
-        state["isrc"] = enrichment["isrc"]
-        state["genre"] = enrichment["genre"]
-        state["release_year"] = enrichment["release_year"]
+    result_str = f"{artist} - {title}"
+    state["artist"] = artist
+    state["title"] = title
+    state["album"] = album
+    state["art_url"] = art_url
+    enrichment = _extract_enrichment(track)
+    state["isrc"] = enrichment["isrc"]
+    state["genre"] = enrichment["genre"]
+    state["release_year"] = enrichment["release_year"]
 
-        if result_str != state["last_song"]:
-            print(f"🎵 NEW TRACK: {result_str}")
-            print(f"💿 Album:     {album}")
-            print(f"🖼️  Art URL:   {art_url}")
-            publish_state("stopped")
-            await asyncio.sleep(0.5)
-            publish_state("playing", artist, title, album, art_url, art_base64)
-            state["last_song"] = result_str
-        else:
-            print(f"      (Confirmed same track: {state['last_song']})")
-            publish_state("playing", artist, title, album, art_url, art_base64)
-
-        state["in_song"] = True
+    if result_str != state["last_song"]:
+        print(f"🎵 NEW TRACK: {result_str}")
+        print(f"💿 Album:     {album}")
+        print(f"🖼️  Art URL:   {art_url}")
+        publish_state("stopped")
+        await asyncio.sleep(0.5)
+        publish_state("playing", artist, title, album, art_url, art_base64)
+        state["last_song"] = result_str
     else:
-        print("❌ Could not identify track.")
+        print(f"      (Confirmed same track: {state['last_song']})")
+        publish_state("playing", artist, title, album, art_url, art_base64)
+
+    state["in_song"] = True
+    state["back_off"] = False
+    await _publish_phase("playing")
+
+
+def _clear_track_state(set_backoff: bool) -> None:
+    """Reset all track + enrichment fields to the 'no song' state. `set_backoff`
+    arms the re-scan back-off gate — True after a no_match (don't re-hammer the
+    same unidentifiable audio), False on a natural silence-stop."""
+    state["in_song"] = False
+    state["last_song"] = ""
+    state["artist"] = ""
+    state["title"] = ""
+    state["album"] = ""
+    state["art_url"] = ""
+    state["isrc"] = None
+    state["genre"] = None
+    state["release_year"] = None
+    state["back_off"] = set_backoff
+
+
+async def recognize_audio():
+    """Sample + identify with up to 2 auto-retries. On total failure, publish
+    no_match, clear the track, and set the back-off gate so the monitor loop
+    waits for a fresh audio onset before scanning again."""
+    print("\n[!] Music detected — identifying...")
+    track = None
+    for attempt in range(RECOGNIZE_ATTEMPTS):
+        await _publish_phase("scanning")
+        wav = await _capture_sample()
+        await _publish_phase("identifying" if attempt == 0 else "retrying")
+        track = await _identify(wav)
+        if track:
+            break
+
+    if track:
+        await _handle_match(track)
+    else:
+        print("❌ Could not identify track (gave up).")
+        _clear_track_state(set_backoff=True)
+        await _publish_phase("no_match")
 
     state["silence_counter"] = 0
 
