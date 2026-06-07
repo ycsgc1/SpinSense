@@ -102,3 +102,23 @@ class RecognizeRetryTest(unittest.TestCase):
         self.assertEqual(self.handled, [{"title": "Hit"}])
         self.assertFalse(core_engine.state["back_off"])
         self.assertNotIn("no_match", self.phases)
+
+
+class ScanDecisionTest(unittest.TestCase):
+    def d(self, vol, thr, in_song, sc, back_off):
+        return core_engine._scan_decision(vol, thr, in_song, sc, back_off)
+
+    def test_loud_idle_scans(self):
+        self.assertEqual(self.d(0.5, 0.1, False, 0, False), "scan")
+
+    def test_loud_in_song_steady_ticks(self):
+        self.assertEqual(self.d(0.5, 0.1, True, 0, False), "tick")
+
+    def test_loud_in_song_after_silence_rescans(self):
+        self.assertEqual(self.d(0.5, 0.1, True, 1, False), "scan")
+
+    def test_loud_but_backoff_waits_for_gap(self):
+        self.assertEqual(self.d(0.5, 0.1, False, 0, True), "wait_gap")
+
+    def test_quiet_is_silence(self):
+        self.assertEqual(self.d(0.0, 0.1, True, 0, False), "silence")

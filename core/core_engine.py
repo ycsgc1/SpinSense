@@ -637,6 +637,18 @@ def audio_callback(indata, frames, time, status):
         calibration["samples"].append(rms)
 
 
+def _scan_decision(vol, threshold, in_song, silence_counter, back_off):
+    """Pure: decide what the monitor loop should do this tick.
+    Returns 'scan' | 'tick' | 'wait_gap' | 'silence'."""
+    if vol > threshold:
+        if back_off:
+            return "wait_gap"
+        if (not in_song) or silence_counter > 0:
+            return "scan"
+        return "tick"
+    return "silence"
+
+
 async def audio_monitor_loop():
     global _mqtt_task
     _mqtt_task = asyncio.create_task(connect_mqtt_loop())
@@ -664,32 +676,8 @@ async def audio_monitor_loop():
 
         vol = state["current_rms"]
 
-        try:
-            if os.path.exists('/tmp/spinsense.sock'):
-                reader, writer = await asyncio.open_unix_connection('/tmp/spinsense.sock')
-                payload = json.dumps({
-                    "type": "live_status",
-                    "payload": {
-                        "rms_level": vol,
-                        "engine_active": True,
-                        "status_msg": "Playing" if state["in_song"] else "Listening",
-                        "track": {
-                            "title": state.get("title", ""),
-                            "artist": state.get("artist", ""),
-                            "album": state.get("album", ""),
-                            "art_url": state.get("art_url", ""),
-                            "isrc": state.get("isrc"),
-                            "genre": state.get("genre"),
-                            "release_year": state.get("release_year"),
-                        },
-                    },
-                }) + "\n"
-                writer.write(payload.encode())
-                await writer.drain()
-                writer.close()
-                await writer.wait_closed()
-        except Exception:
-            pass
+        phase = "playing" if state["in_song"] else "listening"
+        await _write_uds(json.dumps(build_status_payload(phase, vol, state)) + "\n")
 
         # Suppress detection during an active calibration capture window.
         # The audio callback still appends samples + still updates the live
@@ -698,28 +686,39 @@ async def audio_monitor_loop():
             await asyncio.sleep(1)
             continue
 
-        if vol > runtime["threshold"]:
-            if not state["in_song"] or state["silence_counter"] > 0:
-                stream.stop()
-                stream.close()
-                await recognize_audio()
-                stream = _open_input_stream(audio_callback)
-                state["current_rms"] = 0.0
-            else:
-                print(".", end="", flush=True)
-        else:
+        if state.get("force_scan"):
+            state["force_scan"] = False
+            stream.stop()
+            stream.close()
+            await recognize_audio()
+            stream = _open_input_stream(audio_callback)
+            state["current_rms"] = 0.0
+            await asyncio.sleep(1)
+            continue
+
+        decision = _scan_decision(
+            vol, runtime["threshold"], state["in_song"],
+            state["silence_counter"], state.get("back_off", False),
+        )
+        if decision == "scan":
+            stream.stop()
+            stream.close()
+            await recognize_audio()
+            stream = _open_input_stream(audio_callback)
+            state["current_rms"] = 0.0
+        elif decision == "wait_gap":
+            print("b", end="", flush=True)
+        elif decision == "tick":
+            print(".", end="", flush=True)
+        else:  # silence
+            state["back_off"] = False  # gap observed → next onset is fair game
             if state["in_song"]:
                 state["silence_counter"] += 1
                 print("s", end="", flush=True)
                 if state["silence_counter"] >= runtime["stopped_silence"]:
                     print(f"\n[ STOPPED ] {runtime['stopped_silence']}s silence limit reached.")
                     publish_state("stopped")
-                    state["in_song"] = False
-                    state["last_song"] = ""
-                    state["artist"] = ""
-                    state["title"] = ""
-                    state["album"] = ""
-                    state["art_url"] = ""
+                    _clear_track_state(set_backoff=False)
                     state["silence_counter"] = 0
 
         await asyncio.sleep(1)
