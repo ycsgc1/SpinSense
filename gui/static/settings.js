@@ -80,7 +80,11 @@
       const value = getNested(config, el.name);
       if (value === undefined || value === null) return;
       if (el === MIC_SELECT) return;
-      el.value = value;
+      if (el.type === "checkbox") {
+        el.checked = Boolean(value);
+      } else {
+        el.value = value;
+      }
     });
     // Threshold is stored linear; display as dB.
     const storedRms = getNested(config, "Audio.Volume_Threshold");
@@ -97,9 +101,13 @@
   function readForm() {
     const formObj = {};
     FORM.querySelectorAll("[name]").forEach((el) => {
-      let value = el.value;
-      if (el.type === "number" || el.type === "range") {
-        value = value === "" ? 0 : Number(value);
+      let value;
+      if (el.type === "checkbox") {
+        value = el.checked;
+      } else if (el.type === "number" || el.type === "range") {
+        value = el.value === "" ? 0 : Number(el.value);
+      } else {
+        value = el.value;
       }
       setNested(formObj, el.name, value);
     });
@@ -214,6 +222,11 @@
     if (ev.target === THRESHOLD_SLIDER) return;
     if (ev.target === THRESHOLD_NUMBER) return;
     setDirty(true);
+  });
+
+  // Checkboxes emit `change`, not `input` — wire dirty tracking for them.
+  FORM.addEventListener("change", (ev) => {
+    if (ev.target.type === "checkbox") setDirty(true);
   });
 
   FORM.addEventListener("submit", onSubmit);

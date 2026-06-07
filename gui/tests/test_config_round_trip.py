@@ -101,6 +101,18 @@ class ConfigRoundTripTest(unittest.TestCase):
         defaults = config_manager.get_default_config()
         self.assertEqual(defaults["Audio"]["Volume_Threshold"], 0.01)
 
+    def test_retrigger_on_track_change_round_trips(self):
+        # Default must be False.
+        defaults = config_manager.get_default_config()
+        self.assertFalse(defaults["Audio"]["Retrigger_On_Track_Change"])
+
+        # Setting to True must survive a save+load cycle.
+        cfg = config_manager.get_default_config()
+        cfg["Audio"]["Retrigger_On_Track_Change"] = True
+        self.assertTrue(config_manager.save_config(cfg))
+        loaded = config_manager.load_config()
+        self.assertTrue(loaded["Audio"]["Retrigger_On_Track_Change"])
+
 
 class TestDiscoveryConfig(unittest.TestCase):
     def test_defaults_include_discovery_and_mqtt_enabled(self):
