@@ -87,6 +87,7 @@ runtime = {
     "mqtt_port": 1883,
     "mqtt_user": "",
     "mqtt_pass": "",
+    "retrigger_on_track_change": False,
 }
 
 
@@ -95,6 +96,7 @@ def _populate_runtime(cfg):
     runtime["sample_len"]       = cfg.get('Audio', {}).get('Song_Sample_Length', 5.0)
     runtime["new_song_silence"] = cfg.get('Audio', {}).get('New_Song_Silence_Interval', 2.0)
     runtime["stopped_silence"]  = cfg.get('Audio', {}).get('Stopped_Silence_Interval', 5.0)
+    runtime["retrigger_on_track_change"] = cfg.get('Audio', {}).get('Retrigger_On_Track_Change', False)
     runtime["mic_device"]       = _normalize_mic(cfg)
     runtime["mqtt_host"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Host', '192.168.1.100')
     runtime["mqtt_port"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Port', 1883)
@@ -432,6 +434,14 @@ async def _publish_phase(phase: str) -> None:
     await _write_uds(json.dumps(payload) + "\n")
 
 
+async def _publish_idle_blip() -> None:
+    """Emit one in_song=False live_status frame so WebSocket consumers (the HACS
+    media_player + the dashboard) see a PLAYING->IDLE transition between tracks,
+    re-firing 'started playing' automations. Gated by Retrigger_On_Track_Change."""
+    payload = build_status_payload("listening", state.get("current_rms", 0.0), {"in_song": False})
+    await _write_uds(json.dumps(payload) + "\n")
+
+
 async def fetch_itunes_metadata(artist, title):
     query = urllib.parse.quote_plus(f"{artist} {title}")
     url = f"https://itunes.apple.com/search?term={query}&entity=song&limit=1"
@@ -563,6 +573,8 @@ async def _handle_match(track: dict) -> None:
         print(f"💿 Album:     {album}")
         print(f"🖼️  Art URL:   {art_url}")
         publish_state("stopped")
+        if runtime.get("retrigger_on_track_change"):
+            await _publish_idle_blip()
         await asyncio.sleep(0.5)
         publish_state("playing", artist, title, album, art_url, art_base64)
         state["last_song"] = result_str

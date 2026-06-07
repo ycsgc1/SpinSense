@@ -21,6 +21,7 @@ class AudioConfig(BaseModel):
     Song_Sample_Length: float = 10.0
     New_Song_Silence_Interval: float = 10.0
     Stopped_Silence_Interval: float = 30.0
+    Retrigger_On_Track_Change: bool = False
 
 class MQTTBrokerConfig(BaseModel):
     Host: str = "127.0.0.1"
