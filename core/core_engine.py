@@ -28,8 +28,9 @@ DEFAULT_CONFIG = {
     "Audio": {
         "Volume_Threshold": 0.01,
         "Song_Sample_Length": 5.0,
-        "New_Song_Silence_Interval": 2.0,
+        "New_Song_Silence_Interval": 3.0,
         "Stopped_Silence_Interval": 5.0,
+        "Rescan_Wait_Interval": 5.0,
     },
     "MQTT": {
         "Broker": {
@@ -80,8 +81,9 @@ def _normalize_mic(cfg):
 runtime = {
     "threshold": 0.01,
     "sample_len": 5.0,
-    "new_song_silence": 2.0,
+    "new_song_silence": 3.0,
     "stopped_silence": 5.0,
+    "rescan_wait": 5.0,
     "mic_device": None,
     "mqtt_host": "192.168.1.100",
     "mqtt_port": 1883,
@@ -94,8 +96,9 @@ runtime = {
 def _populate_runtime(cfg):
     runtime["threshold"]        = cfg.get('Audio', {}).get('Volume_Threshold', 0.01)
     runtime["sample_len"]       = cfg.get('Audio', {}).get('Song_Sample_Length', 5.0)
-    runtime["new_song_silence"] = cfg.get('Audio', {}).get('New_Song_Silence_Interval', 2.0)
+    runtime["new_song_silence"] = cfg.get('Audio', {}).get('New_Song_Silence_Interval', 3.0)
     runtime["stopped_silence"]  = cfg.get('Audio', {}).get('Stopped_Silence_Interval', 5.0)
+    runtime["rescan_wait"]      = cfg.get('Audio', {}).get('Rescan_Wait_Interval', 5.0)
     runtime["retrigger_on_track_change"] = cfg.get('Audio', {}).get('Retrigger_On_Track_Change', False)
     runtime["mic_device"]       = _normalize_mic(cfg)
     runtime["mqtt_host"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Host', '192.168.1.100')
