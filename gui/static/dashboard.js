@@ -37,7 +37,7 @@
 
   // dB display window for the input meter on this page. Threshold tick is
   // computed from Audio.Volume_Threshold (linear RMS in config -> dB here).
-  const DB_MIN = -80;
+  const DB_MIN = window.SpinSense.db.FLOOR_DB;
   const DB_MAX = 0;
   const dbUtil = window.SpinSense.db;
   let volumeThresholdDb = -40;  // overwritten by /api/config on load

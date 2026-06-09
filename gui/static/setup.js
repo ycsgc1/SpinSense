@@ -57,7 +57,7 @@
 
   const FINISH_BTN = document.getElementById("wizard-finish");
 
-  const DB_MIN = -80;
+  const DB_MIN = window.SpinSense.db.FLOOR_DB;
   const DB_MAX = 0;
   const dbUtil = window.SpinSense.db;
   // Which slider holds the canonical threshold value for save. "result" = auto

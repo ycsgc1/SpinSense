@@ -13,10 +13,12 @@
   // dB display range. Threshold value posted to the backend is linear RMS;
   // the slider + number input both operate in dB and we convert on the way
   // in/out.
-  const DB_MIN = -80;
+  const DB_MIN = window.SpinSense.db.FLOOR_DB;
   const DB_MAX = 0;
   const dbUtil = window.SpinSense.db;
   const THRESHOLD_NUMBER = document.getElementById("volume-threshold-number");
+  THRESHOLD_NUMBER.min = String(DB_MIN);
+  THRESHOLD_SLIDER.min = String(DB_MIN);
 
   let dirty = false;
   let initialConfig = {};
