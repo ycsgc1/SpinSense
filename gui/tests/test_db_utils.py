@@ -8,8 +8,8 @@ import unittest
 
 def rms_to_db(rms: float) -> float:
     if rms <= 0:
-        return -80.0
-    return max(-80.0, 20.0 * math.log10(rms))
+        return -120.0
+    return max(-120.0, 20.0 * math.log10(rms))
 
 
 def db_to_rms(db: float) -> float:
@@ -22,12 +22,16 @@ def format_db(db: float) -> str:
 
 class DbUtilsTest(unittest.TestCase):
     def test_zero_clamps_to_floor(self):
-        self.assertEqual(rms_to_db(0.0), -80.0)
-        self.assertEqual(rms_to_db(-0.5), -80.0)
+        self.assertEqual(rms_to_db(0.0), -120.0)
+        self.assertEqual(rms_to_db(-0.5), -120.0)
 
     def test_very_small_clamps_to_floor(self):
-        # 10^(-80/20) = 1e-4 — anything quieter than this floors out
-        self.assertEqual(rms_to_db(1e-9), -80.0)
+        # 10^(-120/20) = 1e-6 — anything quieter than this floors out
+        self.assertEqual(rms_to_db(1e-12), -120.0)
+
+    def test_quiet_music_below_old_floor_is_representable(self):
+        # -100 dB (rms 1e-5) used to clamp to -80; now it round-trips.
+        self.assertAlmostEqual(rms_to_db(1e-5), -100.0, places=6)
 
     def test_unity_is_zero_db(self):
         self.assertAlmostEqual(rms_to_db(1.0), 0.0, places=6)

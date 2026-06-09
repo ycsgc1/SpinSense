@@ -28,8 +28,9 @@ DEFAULT_CONFIG = {
     "Audio": {
         "Volume_Threshold": 0.01,
         "Song_Sample_Length": 5.0,
-        "New_Song_Silence_Interval": 2.0,
+        "New_Song_Silence_Interval": 3.0,
         "Stopped_Silence_Interval": 5.0,
+        "Rescan_Wait_Interval": 5.0,
     },
     "MQTT": {
         "Broker": {
@@ -80,8 +81,9 @@ def _normalize_mic(cfg):
 runtime = {
     "threshold": 0.01,
     "sample_len": 5.0,
-    "new_song_silence": 2.0,
+    "new_song_silence": 3.0,
     "stopped_silence": 5.0,
+    "rescan_wait": 5.0,
     "mic_device": None,
     "mqtt_host": "192.168.1.100",
     "mqtt_port": 1883,
@@ -94,8 +96,9 @@ runtime = {
 def _populate_runtime(cfg):
     runtime["threshold"]        = cfg.get('Audio', {}).get('Volume_Threshold', 0.01)
     runtime["sample_len"]       = cfg.get('Audio', {}).get('Song_Sample_Length', 5.0)
-    runtime["new_song_silence"] = cfg.get('Audio', {}).get('New_Song_Silence_Interval', 2.0)
+    runtime["new_song_silence"] = cfg.get('Audio', {}).get('New_Song_Silence_Interval', 3.0)
     runtime["stopped_silence"]  = cfg.get('Audio', {}).get('Stopped_Silence_Interval', 5.0)
+    runtime["rescan_wait"]      = cfg.get('Audio', {}).get('Rescan_Wait_Interval', 5.0)
     runtime["retrigger_on_track_change"] = cfg.get('Audio', {}).get('Retrigger_On_Track_Change', False)
     runtime["mic_device"]       = _normalize_mic(cfg)
     runtime["mqtt_host"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Host', '192.168.1.100')
@@ -372,6 +375,7 @@ def publish_state(status, artist="", title="", album="", art_url="", art_base64=
 # --- 3. Shazam, iTunes, & Audio Logic ---
 shazam = Shazam()
 RECOGNIZE_ATTEMPTS = 3  # 1 initial + 2 auto-retries
+_MAX_SAMPLE_SECONDS = 60.0  # ceiling for the escalating rescan ladder
 state = {
     "in_song": False,
     "last_song": "",
@@ -514,9 +518,11 @@ def _extract_enrichment(track: dict) -> dict:
     return {"isrc": isrc, "genre": genre, "release_year": release_year}
 
 
-async def _capture_sample() -> bytes:
-    """Record sample_len seconds from the mic and return WAV bytes."""
-    sample_len = runtime["sample_len"]
+async def _capture_sample(sample_len: float | None = None) -> bytes:
+    """Record `sample_len` seconds from the mic and return WAV bytes.
+    Falls back to the configured base length when called with no argument."""
+    if sample_len is None:
+        sample_len = runtime["sample_len"]
     mic = runtime["mic_device"]
     print(f"[!] Recording {sample_len}s sample for identification...")
     recording = sd.rec(int(sample_len * 48000), samplerate=48000, channels=1,
@@ -605,15 +611,26 @@ def _clear_track_state(set_backoff: bool) -> None:
     state["back_off"] = set_backoff
 
 
+async def _rescan_pause(seconds: float) -> None:
+    """Wait between escalating rescan attempts. Isolated for testability."""
+    if seconds > 0:
+        await asyncio.sleep(seconds)
+
+
 async def recognize_audio():
     """Sample + identify with up to 2 auto-retries. On total failure, publish
     no_match, clear the track, and set the back-off gate so the monitor loop
     waits for a fresh audio onset before scanning again."""
     print("\n[!] Music detected — identifying...")
+    base = runtime["sample_len"]
+    wait = runtime["rescan_wait"]
     track = None
     for attempt in range(RECOGNIZE_ATTEMPTS):
+        if attempt > 0:
+            await _rescan_pause(wait)
         await _publish_phase("scanning")
-        wav = await _capture_sample()
+        sample_len = min(base * (attempt + 1), _MAX_SAMPLE_SECONDS)
+        wav = await _capture_sample(sample_len)
         await _publish_phase("identifying" if attempt == 0 else "retrying")
         track = await _identify(wav)
         if track:
@@ -655,13 +672,20 @@ def audio_callback(indata, frames, time, status):
         calibration["samples"].append(rms)
 
 
-def _scan_decision(vol, threshold, in_song, silence_counter, back_off):
+def _scan_decision(vol, threshold, in_song, silence_counter, new_song_silence, back_off):
     """Pure: decide what the monitor loop should do this tick.
-    Returns 'scan' | 'tick' | 'wait_gap' | 'silence'."""
+    Returns 'scan' | 'tick' | 'wait_gap' | 'silence'.
+
+    A rescan fires on a fresh onset (not in_song) or after a gap that has
+    lasted at least `new_song_silence` seconds. A briefer sub-threshold dip
+    is treated as the same song still playing (tick), so momentary quiet
+    passages don't re-trigger identification."""
     if vol > threshold:
         if back_off:
             return "wait_gap"
-        if (not in_song) or silence_counter > 0:
+        if not in_song:
+            return "scan"
+        if silence_counter >= new_song_silence:
             return "scan"
         return "tick"
     return "silence"
@@ -716,7 +740,8 @@ async def audio_monitor_loop():
 
         decision = _scan_decision(
             vol, runtime["threshold"], state["in_song"],
-            state["silence_counter"], state.get("back_off", False),
+            state["silence_counter"], runtime["new_song_silence"],
+            state.get("back_off", False),
         )
         if decision == "scan":
             stream.stop()
@@ -727,6 +752,7 @@ async def audio_monitor_loop():
         elif decision == "wait_gap":
             print("b", end="", flush=True)
         elif decision == "tick":
+            state["silence_counter"] = 0  # song resumed before the gap qualified
             print(".", end="", flush=True)
         else:  # silence
             state["back_off"] = False  # gap observed → next onset is fair game

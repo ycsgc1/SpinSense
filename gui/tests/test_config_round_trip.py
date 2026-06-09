@@ -113,6 +113,20 @@ class ConfigRoundTripTest(unittest.TestCase):
         loaded = config_manager.load_config()
         self.assertTrue(loaded["Audio"]["Retrigger_On_Track_Change"])
 
+    def test_new_song_silence_default_is_3(self):
+        defaults = config_manager.get_default_config()
+        self.assertEqual(defaults["Audio"]["New_Song_Silence_Interval"], 3.0)
+
+    def test_rescan_wait_interval_default_and_round_trips(self):
+        defaults = config_manager.get_default_config()
+        self.assertEqual(defaults["Audio"]["Rescan_Wait_Interval"], 5.0)
+
+        cfg = config_manager.get_default_config()
+        cfg["Audio"]["Rescan_Wait_Interval"] = 7.5
+        self.assertTrue(config_manager.save_config(cfg))
+        loaded = config_manager.load_config()
+        self.assertAlmostEqual(loaded["Audio"]["Rescan_Wait_Interval"], 7.5)
+
 
 class TestDiscoveryConfig(unittest.TestCase):
     def test_defaults_include_discovery_and_mqtt_enabled(self):
