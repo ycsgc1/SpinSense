@@ -16,6 +16,17 @@ log = logging.getLogger(__name__)
 SERVICE_TYPE = "_spinsense._tcp.local."
 
 
+def _read_version() -> str:
+    """The app version from the repo-root VERSION file, advertised in the mDNS
+    TXT record. Mirrors backend_main's ASSET_VERSION read."""
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "..", "VERSION")) as f:
+            return f.read().strip() or "dev"
+    except OSError:
+        return "dev"
+
+
 def get_port() -> int:
     try:
         return int(os.environ.get("SPINSENSE_PORT", "3313"))
@@ -73,7 +84,8 @@ def build_service_info(port: int, service_name: str, version: str) -> ServiceInf
 class Advertiser:
     """Owns the AsyncZeroconf instance and the currently-registered service."""
 
-    def __init__(self, version: str = "1.0"):
+    def __init__(self, version: str | None = None):
+        version = version if version is not None else _read_version()
         self._azc: AsyncZeroconf | None = None
         self._info: ServiceInfo | None = None
         self._version = version

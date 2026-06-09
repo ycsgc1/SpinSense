@@ -3,7 +3,6 @@ import io
 import json
 import logging
 import os
-import random
 from typing import TYPE_CHECKING
 
 import play_history
@@ -40,19 +39,29 @@ class ConnectionManager:
     async def broadcast(self, message: dict):
         if message.get("type") == "live_status" and isinstance(message.get("payload"), dict):
             self.last_status = message["payload"]
+        dead = []
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
             except Exception:
-                pass
+                # Send failed (socket closed/broken). Drop it after the loop so
+                # it isn't retried on every future frame.
+                dead.append(connection)
+        for connection in dead:
+            self.disconnect(connection)
 
 
 manager = ConnectionManager()
 
-# Module-level dedupe state: the title of the most recent play we wrote to
-# SQLite. Reset to "" whenever the engine reports silence so the same record
-# played twice in a row gets two rows.
-_last_recorded_title: str = ""
+# Module-level dedupe state: the (artist, title) of the most recent play we
+# wrote to SQLite. Reset to None whenever the engine reports silence so the same
+# record played twice in a row gets two rows. Keyed on artist+title (not title
+# alone) so two different songs that share a title aren't collapsed into one row.
+_last_recorded_key: tuple[str, str] | None = None
+
+# Strong refs to in-flight art-download tasks so the event loop's weak task
+# tracking can't GC them mid-download; each removes itself on completion.
+_art_tasks: set = set()
 
 
 async def _download_and_store_art(play_id: int, art_url: str) -> None:
@@ -94,17 +103,18 @@ async def _record_if_new(track: dict) -> None:
     """Record a new identification if the title differs from the last one we
     saved. On silence (empty title) reset the dedupe state so the next play is
     treated as new."""
-    global _last_recorded_title
+    global _last_recorded_key
     title = (track or {}).get("title", "") or ""
 
     if title == "":
-        _last_recorded_title = ""
-        return
-
-    if title == _last_recorded_title:
+        _last_recorded_key = None
         return
 
     artist = track.get("artist", "") or ""
+    key = (artist, title)
+    if key == _last_recorded_key:
+        return
+
     album = track.get("album") or None
     art_url = track.get("art_url") or None
     isrc = track.get("isrc") or None
@@ -120,27 +130,11 @@ async def _record_if_new(track: dict) -> None:
         log.error("failed to record play %s - %s: %s", artist, title, e)
         return
 
-    _last_recorded_title = title
+    _last_recorded_key = key
 
     if art_url:
-        asyncio.create_task(_download_and_store_art(play_id, art_url))
-
-
-# --- The Mock Generator for UI Development ---
-async def mock_core_engine_stream():
-    while True:
-        fake_rms = random.uniform(0.0, 0.1)
-        payload = {
-            "type": "live_status",
-            "payload": {
-                "rms_level": round(fake_rms, 4),
-                "engine_active": True,
-                "status_msg": "Listening (Mock Data)",
-                "track": {"title": "", "artist": "", "album": "", "art_url": ""},
-            },
-        }
-        await manager.broadcast(payload)
-        await asyncio.sleep(0.2)
+        _art_tasks.add(task := asyncio.create_task(_download_and_store_art(play_id, art_url)))
+        task.add_done_callback(_art_tasks.discard)
 
 
 # --- The Real Unix Domain Socket Listener ---

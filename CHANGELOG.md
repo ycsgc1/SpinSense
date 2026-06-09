@@ -2,6 +2,17 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [Unreleased]
+
+### Fixed
+- **mDNS now advertises the real app version** instead of a hardcoded `1.0` in the service TXT record.
+- **Play history no longer collapses two different songs that share a title** — scrobble dedupe is now keyed on artist + title, not title alone.
+- **Hardened against silently-dropped background tasks** — the config watcher, command listener, MQTT reconnect, calibration finish, and art-download tasks now hold strong references so the event loop can't garbage-collect them mid-run.
+- Dead WebSocket connections are dropped after a failed send instead of being retried on every frame.
+
+### Removed
+- Internal cleanup: deleted the unused `gui/audio_utils.py` module and the dead `mock_core_engine_stream` dev helper; removed the orphaned `System.Engine_Status` config key; reconciled the engine and config-validator default tables (`Song_Sample_Length`, `Stopped_Silence_Interval`, MQTT host, discovery topic) to a single set of values; refreshed a stale log banner and docstring.
+
 ## [1.3.0.0] - 2026-06-09
 
 ### Added

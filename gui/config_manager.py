@@ -10,17 +10,17 @@ CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 # --- Pydantic Models for Strict Type Validation ---
 class SystemConfig(BaseModel):
     Auto_Start: bool = False
-    Engine_Status: str = "stopped"
     Setup_Wizard_State: Literal["pending", "skipped", "completed"] = "pending"
 
 class HardwareConfig(BaseModel):
     Mic_Device: str = "default"
 
 class AudioConfig(BaseModel):
+    # Defaults must match core/core_engine.py DEFAULT_CONFIG["Audio"].
     Volume_Threshold: float = 0.01
-    Song_Sample_Length: float = 10.0
+    Song_Sample_Length: float = 5.0
     New_Song_Silence_Interval: float = 3.0
-    Stopped_Silence_Interval: float = 30.0
+    Stopped_Silence_Interval: float = 5.0
     Rescan_Wait_Interval: float = 5.0
     Retrigger_On_Track_Change: bool = False
 
@@ -32,7 +32,7 @@ class MQTTBrokerConfig(BaseModel):
 
 class MQTTDiscoveryConfig(BaseModel):
     Enabled: bool = True
-    Discovery_Topic: str = "homeassistant/media_player/spin_sense/config"
+    Discovery_Topic: str = "homeassistant/media_player/spinsense/config"
 
 class MQTTTopicsConfig(BaseModel):
     State: str = "home/vinyl/state"
