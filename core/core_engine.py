@@ -722,6 +722,9 @@ async def recognize_audio():
         wav = await _capture_sample(sample_len)
         await _publish_phase("identifying" if attempt == 0 else "retrying")
         track = await _identify_shazam(wav)
+        if (track is None and attempt == 0
+                and runtime["fallback_enabled"] and runtime["audd_token"]):
+            track = await _identify_audd(wav)  # reuse the first sample
         if track:
             break
 

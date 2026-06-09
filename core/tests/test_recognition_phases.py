@@ -378,3 +378,97 @@ class AuddAdapterTest(unittest.TestCase):
         core_engine._audd_post = fake_post
         self.assertIsNone(asyncio.run(core_engine._identify_audd(b"")))
         self.assertFalse(self.called)
+
+
+class AuddFallbackFlowTest(unittest.TestCase):
+    def setUp(self):
+        self.handled = []
+        self.audd_calls = 0
+        self.shazam_calls = 0
+        async def fake_phase(p):
+            return None
+        async def fake_capture(sample_len):
+            return b""
+        async def fake_pause(seconds):
+            return None
+        async def fake_handle(track):
+            self.handled.append(track)
+            core_engine.state["in_song"] = True
+            core_engine.state["back_off"] = False
+        self._orig = (core_engine._publish_phase, core_engine._capture_sample,
+                      core_engine._rescan_pause, core_engine._handle_match,
+                      core_engine._identify_shazam, core_engine._identify_audd)
+        self._orig_flags = (core_engine.runtime["fallback_enabled"],
+                            core_engine.runtime["audd_token"],
+                            core_engine.runtime["rescan_wait"])
+        core_engine._publish_phase = fake_phase
+        core_engine._capture_sample = fake_capture
+        core_engine._rescan_pause = fake_pause
+        core_engine._handle_match = fake_handle
+        core_engine.runtime["rescan_wait"] = 0
+        core_engine.state["back_off"] = False
+        core_engine.state["in_song"] = False
+
+    def tearDown(self):
+        (core_engine._publish_phase, core_engine._capture_sample,
+         core_engine._rescan_pause, core_engine._handle_match,
+         core_engine._identify_shazam, core_engine._identify_audd) = self._orig
+        (core_engine.runtime["fallback_enabled"], core_engine.runtime["audd_token"],
+         core_engine.runtime["rescan_wait"]) = self._orig_flags
+
+    def _set(self, shazam_fn, audd_fn, enabled=True, token="tok"):
+        core_engine._identify_shazam = shazam_fn
+        core_engine._identify_audd = audd_fn
+        core_engine.runtime["fallback_enabled"] = enabled
+        core_engine.runtime["audd_token"] = token
+
+    def test_audd_rescues_after_first_shazam_miss(self):
+        async def shazam(_w):
+            self.shazam_calls += 1
+            return None
+        async def audd(_w):
+            self.audd_calls += 1
+            return {"title": "AudD Hit", "artist": "A"}
+        self._set(shazam, audd)
+        asyncio.run(core_engine.recognize_audio())
+        self.assertEqual(self.handled, [{"title": "AudD Hit", "artist": "A"}])
+        self.assertEqual(self.shazam_calls, 1)   # broke out after attempt 0
+        self.assertEqual(self.audd_calls, 1)
+        self.assertFalse(core_engine.state["back_off"])
+
+    def test_audd_miss_continues_shazam_escalation(self):
+        async def shazam(_w):
+            self.shazam_calls += 1
+            return None
+        async def audd(_w):
+            self.audd_calls += 1
+            return None
+        self._set(shazam, audd)
+        asyncio.run(core_engine.recognize_audio())
+        self.assertEqual(self.handled, [])
+        self.assertEqual(self.shazam_calls, 3)   # full ladder ran
+        self.assertEqual(self.audd_calls, 1)     # AudD only on attempt 0
+        self.assertTrue(core_engine.state["back_off"])
+
+    def test_disabled_never_calls_audd(self):
+        async def shazam(_w):
+            self.shazam_calls += 1
+            return None
+        async def audd(_w):
+            self.audd_calls += 1
+            return {"title": "X", "artist": "Y"}
+        self._set(shazam, audd, enabled=False)
+        asyncio.run(core_engine.recognize_audio())
+        self.assertEqual(self.audd_calls, 0)
+        self.assertEqual(self.handled, [])
+
+    def test_no_token_never_calls_audd(self):
+        async def shazam(_w):
+            self.shazam_calls += 1
+            return None
+        async def audd(_w):
+            self.audd_calls += 1
+            return {"title": "X", "artist": "Y"}
+        self._set(shazam, audd, enabled=True, token="")
+        asyncio.run(core_engine.recognize_audio())
+        self.assertEqual(self.audd_calls, 0)
