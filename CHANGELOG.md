@@ -2,7 +2,7 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
-## [Unreleased]
+## [1.3.0.0] - 2026-06-09
 
 ### Added
 - **Escalating rescans.** When a track can't be identified, SpinSense now waits a configurable `Rescan_Wait_Interval` (default 5 s) and retries with a progressively longer sample — 1×, then 2×, then 3× the sample length (capped at 60 s) — before backing off. New Settings field with help tooltip.
