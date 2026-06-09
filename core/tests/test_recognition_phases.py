@@ -105,23 +105,32 @@ class RecognizeRetryTest(unittest.TestCase):
 
 
 class ScanDecisionTest(unittest.TestCase):
-    def d(self, vol, thr, in_song, sc, back_off):
-        return core_engine._scan_decision(vol, thr, in_song, sc, back_off)
+    def d(self, vol, thr, in_song, sc, new_song_silence, back_off):
+        return core_engine._scan_decision(vol, thr, in_song, sc, new_song_silence, back_off)
 
     def test_loud_idle_scans(self):
-        self.assertEqual(self.d(0.5, 0.1, False, 0, False), "scan")
+        # New onset (not in a song) always scans, regardless of counter.
+        self.assertEqual(self.d(0.5, 0.1, False, 0, 3, False), "scan")
 
     def test_loud_in_song_steady_ticks(self):
-        self.assertEqual(self.d(0.5, 0.1, True, 0, False), "tick")
+        self.assertEqual(self.d(0.5, 0.1, True, 0, 3, False), "tick")
 
-    def test_loud_in_song_after_silence_rescans(self):
-        self.assertEqual(self.d(0.5, 0.1, True, 1, False), "scan")
+    def test_brief_dip_below_interval_does_not_rescan(self):
+        # 2s gap with a 3s interval — treat as the same song, just tick.
+        self.assertEqual(self.d(0.5, 0.1, True, 2, 3, False), "tick")
+
+    def test_gap_at_interval_rescans(self):
+        # Gap reached the interval — a new song may have started.
+        self.assertEqual(self.d(0.5, 0.1, True, 3, 3, False), "scan")
+
+    def test_gap_past_interval_rescans(self):
+        self.assertEqual(self.d(0.5, 0.1, True, 5, 3, False), "scan")
 
     def test_loud_but_backoff_waits_for_gap(self):
-        self.assertEqual(self.d(0.5, 0.1, False, 0, True), "wait_gap")
+        self.assertEqual(self.d(0.5, 0.1, False, 0, 3, True), "wait_gap")
 
     def test_quiet_is_silence(self):
-        self.assertEqual(self.d(0.0, 0.1, True, 0, False), "silence")
+        self.assertEqual(self.d(0.0, 0.1, True, 0, 3, False), "silence")
 
 
 class IdleBlipTest(unittest.TestCase):

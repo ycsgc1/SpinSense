@@ -658,13 +658,20 @@ def audio_callback(indata, frames, time, status):
         calibration["samples"].append(rms)
 
 
-def _scan_decision(vol, threshold, in_song, silence_counter, back_off):
+def _scan_decision(vol, threshold, in_song, silence_counter, new_song_silence, back_off):
     """Pure: decide what the monitor loop should do this tick.
-    Returns 'scan' | 'tick' | 'wait_gap' | 'silence'."""
+    Returns 'scan' | 'tick' | 'wait_gap' | 'silence'.
+
+    A rescan fires on a fresh onset (not in_song) or after a gap that has
+    lasted at least `new_song_silence` seconds. A briefer sub-threshold dip
+    is treated as the same song still playing (tick), so momentary quiet
+    passages don't re-trigger identification."""
     if vol > threshold:
         if back_off:
             return "wait_gap"
-        if (not in_song) or silence_counter > 0:
+        if not in_song:
+            return "scan"
+        if silence_counter >= new_song_silence:
             return "scan"
         return "tick"
     return "silence"
@@ -719,7 +726,8 @@ async def audio_monitor_loop():
 
         decision = _scan_decision(
             vol, runtime["threshold"], state["in_song"],
-            state["silence_counter"], state.get("back_off", False),
+            state["silence_counter"], runtime["new_song_silence"],
+            state.get("back_off", False),
         )
         if decision == "scan":
             stream.stop()
@@ -730,6 +738,7 @@ async def audio_monitor_loop():
         elif decision == "wait_gap":
             print("b", end="", flush=True)
         elif decision == "tick":
+            state["silence_counter"] = 0  # song resumed before the gap qualified
             print(".", end="", flush=True)
         else:  # silence
             state["back_off"] = False  # gap observed → next onset is fair game
