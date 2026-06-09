@@ -532,27 +532,38 @@ async def _capture_sample(sample_len: float | None = None) -> bytes:
     return wav_io.getvalue()
 
 
-async def _identify(wav_bytes: bytes) -> dict | None:
-    """Return the matched Shazam track dict, or None if no match."""
+async def _identify_shazam(wav_bytes: bytes) -> dict | None:
+    """Recognize via Shazam; return a normalized track dict, or None on no match."""
     print("[!] Analyzing with Shazam...")
     out = await shazam.recognize(wav_bytes)
-    if isinstance(out, dict) and 'track' in out:
-        return out['track']
-    return None
+    if not (isinstance(out, dict) and 'track' in out):
+        return None
+    track = out['track'] or {}
+    images = track.get('images', {}) if isinstance(track, dict) else {}
+    enr = _extract_enrichment(track)
+    return {
+        "title": track.get('title', 'Unknown Title'),
+        "artist": track.get('subtitle', 'Unknown Artist'),
+        "album": None,  # Shazam has no reliable album; iTunes supplies it downstream
+        "art_url": images.get('coverarthq') or images.get('coverart') or None,
+        "isrc": enr["isrc"],
+        "genre": enr["genre"],
+        "release_year": enr["release_year"],
+    }
 
 
 async def _handle_match(track: dict) -> None:
-    """Enrich, publish, and record a matched track (the old success branch)."""
-    title = track.get('title', 'Unknown Title')
-    artist = track.get('subtitle', 'Unknown Artist')
+    """Enrich, publish, and record a matched track. `track` is the NORMALIZED shape
+    produced by a backend (_identify_shazam / _identify_audd)."""
+    title = track.get('title') or 'Unknown Title'
+    artist = track.get('artist') or 'Unknown Artist'
 
     print("[!] Fetching high-res metadata from iTunes...")
     album, art_url = await fetch_itunes_metadata(artist, title)
     if not art_url:
-        art_url = track.get('images', {}).get('coverarthq',
-                  track.get('images', {}).get('coverart', ''))
+        art_url = track.get('art_url') or ''   # backend-supplied fallback art
     if not album:
-        album = "Unknown Album"
+        album = track.get('album') or "Unknown Album"
 
     art_base64 = ""
     if art_url:
@@ -564,10 +575,9 @@ async def _handle_match(track: dict) -> None:
     state["title"] = title
     state["album"] = album
     state["art_url"] = art_url
-    enrichment = _extract_enrichment(track)
-    state["isrc"] = enrichment["isrc"]
-    state["genre"] = enrichment["genre"]
-    state["release_year"] = enrichment["release_year"]
+    state["isrc"] = track.get('isrc')
+    state["genre"] = track.get('genre')
+    state["release_year"] = track.get('release_year')
 
     if result_str != state["last_song"]:
         print(f"🎵 NEW TRACK: {result_str}")
@@ -629,7 +639,7 @@ async def recognize_audio():
         sample_len = min(base * (attempt + 1), _MAX_SAMPLE_SECONDS)
         wav = await _capture_sample(sample_len)
         await _publish_phase("identifying" if attempt == 0 else "retrying")
-        track = await _identify(wav)
+        track = await _identify_shazam(wav)
         if track:
             break
 

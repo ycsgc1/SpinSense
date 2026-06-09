@@ -67,7 +67,7 @@ class RecognizeRetryTest(unittest.TestCase):
             core_engine.state["in_song"] = True
             core_engine.state["back_off"] = False
         self._orig = (core_engine._publish_phase, core_engine._capture_sample,
-                      core_engine._handle_match, core_engine._identify)
+                      core_engine._handle_match, core_engine._identify_shazam)
         core_engine._publish_phase = fake_publish
         core_engine._capture_sample = fake_capture
         core_engine._handle_match = fake_handle
@@ -78,13 +78,13 @@ class RecognizeRetryTest(unittest.TestCase):
 
     def tearDown(self):
         (core_engine._publish_phase, core_engine._capture_sample,
-         core_engine._handle_match, core_engine._identify) = self._orig
+         core_engine._handle_match, core_engine._identify_shazam) = self._orig
         core_engine.runtime["rescan_wait"] = self._orig_wait
 
     def test_all_miss_sets_no_match_and_backoff(self):
         async def always_none(_wav):
             return None
-        core_engine._identify = always_none
+        core_engine._identify_shazam = always_none
         asyncio.run(core_engine.recognize_audio())
         self.assertEqual(
             self.phases,
@@ -100,7 +100,7 @@ class RecognizeRetryTest(unittest.TestCase):
         async def third(_wav):
             self.calls += 1
             return {"title": "Hit"} if self.calls == 3 else None
-        core_engine._identify = third
+        core_engine._identify_shazam = third
         asyncio.run(core_engine.recognize_audio())
         self.assertEqual(self.handled, [{"title": "Hit"}])
         self.assertFalse(core_engine.state["back_off"])
@@ -161,17 +161,104 @@ class IdleBlipTest(unittest.TestCase):
 
     def test_blip_between_stop_and_play_when_flag_on(self):
         core_engine.runtime["retrigger_on_track_change"] = True
-        asyncio.run(core_engine._handle_match({"title": "T", "subtitle": "A"}))
+        asyncio.run(core_engine._handle_match({"title": "T", "artist": "A"}))
         self.assertIn("idle_blip", self.events)
         self.assertLess(self.events.index("mqtt:stopped"), self.events.index("idle_blip"))
         self.assertLess(self.events.index("idle_blip"), self.events.index("mqtt:playing"))
 
     def test_no_blip_when_flag_off(self):
         core_engine.runtime["retrigger_on_track_change"] = False
-        asyncio.run(core_engine._handle_match({"title": "T2", "subtitle": "A"}))
+        asyncio.run(core_engine._handle_match({"title": "T2", "artist": "A"}))
         self.assertNotIn("idle_blip", self.events)
         self.assertNotIn("mqtt:stopped", self.events)
         self.assertIn("mqtt:playing", self.events)
+
+
+class ShazamNormalizeTest(unittest.TestCase):
+    def setUp(self):
+        self._orig = core_engine.shazam.recognize
+
+    def tearDown(self):
+        core_engine.shazam.recognize = self._orig
+
+    def test_maps_shazam_dict_to_normalized(self):
+        async def fake_recognize(_wav):
+            return {"track": {
+                "title": "Song", "subtitle": "Band",
+                "images": {"coverarthq": "hq.jpg", "coverart": "lq.jpg"},
+                "isrc": "US1234567890",
+                "genres": {"primary": "Rock"},
+                "sections": [{"metadata": [{"title": "Released", "text": "1979"}]}],
+            }}
+        core_engine.shazam.recognize = fake_recognize
+        n = asyncio.run(core_engine._identify_shazam(b""))
+        self.assertEqual(n["title"], "Song")
+        self.assertEqual(n["artist"], "Band")
+        self.assertEqual(n["art_url"], "hq.jpg")     # coverarthq preferred
+        self.assertEqual(n["isrc"], "US1234567890")
+        self.assertEqual(n["genre"], "Rock")
+        self.assertEqual(n["release_year"], 1979)
+        self.assertIsNone(n["album"])                # Shazam gives no reliable album
+
+    def test_no_track_returns_none(self):
+        async def fake_recognize(_wav):
+            return {"matches": []}
+        core_engine.shazam.recognize = fake_recognize
+        self.assertIsNone(asyncio.run(core_engine._identify_shazam(b"")))
+
+
+class HandleMatchArtTest(unittest.TestCase):
+    def setUp(self):
+        self.published = []
+        async def fake_itunes(artist, title):
+            return self.itunes_return
+        async def fake_img(url):
+            return "b64" if url else ""
+        async def fake_phase(p):
+            return None
+        async def fake_blip():
+            return None
+        def fake_publish(status, artist="", title="", album="", art_url="", art_base64=""):
+            self.published.append(dict(status=status, album=album, art_url=art_url))
+        self._orig = (core_engine.fetch_itunes_metadata, core_engine.fetch_image_base64,
+                      core_engine._publish_phase, core_engine._publish_idle_blip,
+                      core_engine.publish_state)
+        core_engine.fetch_itunes_metadata = fake_itunes
+        core_engine.fetch_image_base64 = fake_img
+        core_engine._publish_phase = fake_phase
+        core_engine._publish_idle_blip = fake_blip
+        core_engine.publish_state = fake_publish
+        core_engine.state["last_song"] = ""
+        self.itunes_return = (None, None)
+
+    def tearDown(self):
+        (core_engine.fetch_itunes_metadata, core_engine.fetch_image_base64,
+         core_engine._publish_phase, core_engine._publish_idle_blip,
+         core_engine.publish_state) = self._orig
+
+    def test_itunes_art_is_primary(self):
+        self.itunes_return = ("iTunes Album", "itunes_art.jpg")
+        n = {"title": "T", "artist": "A", "album": "Backend Album",
+             "art_url": "backend_art.jpg", "isrc": None, "genre": None, "release_year": None}
+        asyncio.run(core_engine._handle_match(n))
+        self.assertEqual(core_engine.state["art_url"], "itunes_art.jpg")
+        self.assertEqual(core_engine.state["album"], "iTunes Album")
+
+    def test_backend_art_used_when_itunes_has_none(self):
+        self.itunes_return = (None, None)
+        n = {"title": "T", "artist": "A", "album": "Backend Album",
+             "art_url": "backend_art.jpg", "isrc": None, "genre": None, "release_year": None}
+        asyncio.run(core_engine._handle_match(n))
+        self.assertEqual(core_engine.state["art_url"], "backend_art.jpg")
+        self.assertEqual(core_engine.state["album"], "Backend Album")
+
+    def test_falls_back_to_unknown_album_and_empty_art(self):
+        self.itunes_return = (None, None)
+        n = {"title": "T", "artist": "A", "album": None,
+             "art_url": None, "isrc": None, "genre": None, "release_year": None}
+        asyncio.run(core_engine._handle_match(n))
+        self.assertEqual(core_engine.state["art_url"], "")
+        self.assertEqual(core_engine.state["album"], "Unknown Album")
 
 
 class EscalatingSampleTest(unittest.TestCase):
@@ -193,12 +280,12 @@ class EscalatingSampleTest(unittest.TestCase):
             self.sleeps.append(seconds)
 
         self._orig = (core_engine._publish_phase, core_engine._capture_sample,
-                      core_engine._identify, core_engine._rescan_pause)
+                      core_engine._identify_shazam, core_engine._rescan_pause)
         self._orig_base = core_engine.runtime["sample_len"]
         self._orig_wait = core_engine.runtime["rescan_wait"]
         core_engine._publish_phase = fake_phase
         core_engine._capture_sample = fake_capture
-        core_engine._identify = always_none
+        core_engine._identify_shazam = always_none
         core_engine._rescan_pause = fake_pause
         core_engine.runtime["sample_len"] = 5.0
         core_engine.runtime["rescan_wait"] = 5.0
@@ -207,7 +294,7 @@ class EscalatingSampleTest(unittest.TestCase):
 
     def tearDown(self):
         (core_engine._publish_phase, core_engine._capture_sample,
-         core_engine._identify, core_engine._rescan_pause) = self._orig
+         core_engine._identify_shazam, core_engine._rescan_pause) = self._orig
         core_engine.runtime["sample_len"] = self._orig_base
         core_engine.runtime["rescan_wait"] = self._orig_wait
 
