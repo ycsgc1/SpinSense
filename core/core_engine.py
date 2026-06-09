@@ -39,10 +39,6 @@ DEFAULT_CONFIG = {
             "User": "vinylrecord",
             "Password": "",
         },
-        "Discovery": {
-            "Enabled": True,
-            "Discovery_Topic": "homeassistant/media_player/spinsense/config",
-        },
         "Topics": {
             "State": "home/vinyl/state",
             "Title": "home/vinyl/title",
@@ -128,12 +124,11 @@ TOPIC_ARTIST = f"{BASE_TOPIC}/artist"
 TOPIC_ALBUM = f"{BASE_TOPIC}/album"
 TOPIC_ARTART = f"{BASE_TOPIC}/album_art"
 LEGACY_TOPIC = f"{BASE_TOPIC}/now_playing"
-DISCOVERY_TOPIC = "homeassistant/media_player/spinsense/config"
 
 # --- 2. MQTT Setup ---
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 # Runtime connection-state flag: True only once a broker connection is live.
-# connect_mqtt_loop() flips it; publish_state()/announce_to_ha() gate on it.
+# connect_mqtt_loop() flips it; publish_state() gates on it.
 MQTT_ENABLED = False
 
 # Cross-task signal: the config watcher sets this when the mic device changes
@@ -323,7 +318,6 @@ async def connect_mqtt_loop():
             mqtt_client.loop_start()
             MQTT_ENABLED = True
             print("✅ MQTT Connected!")
-            announce_to_ha()
         except Exception as e:
             print(f"⚠️ MQTT Connection Failed: {e}. Retrying in 10s...")
             await asyncio.sleep(10)
@@ -350,20 +344,6 @@ async def _reconnect_mqtt():
         print(f"⚠️ MQTT disconnect failed (continuing): {e}")
     MQTT_ENABLED = False
     _mqtt_task = asyncio.create_task(connect_mqtt_loop())
-
-
-def announce_to_ha():
-    payload = {
-        "name": "Vinyl Record Player",
-        "state_state_topic": TOPIC_STATE,
-        "state_title_topic": TOPIC_TITLE,
-        "state_artist_topic": TOPIC_ARTIST,
-        "state_album_topic": TOPIC_ALBUM,
-        "state_albumart_topic": TOPIC_ARTART,
-    }
-    if MQTT_ENABLED:
-        mqtt_client.publish(DISCOVERY_TOPIC, json.dumps(payload), retain=True)
-        print("📡 Sent HACS Auto-Discovery Payload.")
 
 
 def publish_state(status, artist="", title="", album="", art_url="", art_base64=""):
