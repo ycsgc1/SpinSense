@@ -30,6 +30,8 @@ DEFAULT_CONFIG = {
         "New_Song_Silence_Interval": 3.0,
         "Stopped_Silence_Interval": 5.0,
         "Rescan_Wait_Interval": 5.0,
+        "Fallback_Enabled": False,
+        "AudD_API_Token": "",
         # NOTE: keep these defaults in sync with gui/config_manager.AudioConfig.
     },
     "MQTT": {
@@ -80,6 +82,8 @@ runtime = {
     "new_song_silence": 3.0,
     "stopped_silence": 5.0,
     "rescan_wait": 5.0,
+    "fallback_enabled": False,
+    "audd_token": "",
     "mic_device": None,
     "mqtt_host": "127.0.0.1",
     "mqtt_port": 1883,
@@ -96,6 +100,8 @@ def _populate_runtime(cfg):
     runtime["stopped_silence"]  = cfg.get('Audio', {}).get('Stopped_Silence_Interval', 5.0)
     runtime["rescan_wait"]      = cfg.get('Audio', {}).get('Rescan_Wait_Interval', 5.0)
     runtime["retrigger_on_track_change"] = cfg.get('Audio', {}).get('Retrigger_On_Track_Change', False)
+    runtime["fallback_enabled"] = cfg.get('Audio', {}).get('Fallback_Enabled', False)
+    runtime["audd_token"]       = cfg.get('Audio', {}).get('AudD_API_Token', '')
     runtime["mic_device"]       = _normalize_mic(cfg)
     runtime["mqtt_host"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Host', '127.0.0.1')
     runtime["mqtt_port"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Port', 1883)
@@ -532,27 +538,114 @@ async def _capture_sample(sample_len: float | None = None) -> bytes:
     return wav_io.getvalue()
 
 
-async def _identify(wav_bytes: bytes) -> dict | None:
-    """Return the matched Shazam track dict, or None if no match."""
+async def _identify_shazam(wav_bytes: bytes) -> dict | None:
+    """Recognize via Shazam; return a normalized track dict, or None on no match."""
     print("[!] Analyzing with Shazam...")
     out = await shazam.recognize(wav_bytes)
-    if isinstance(out, dict) and 'track' in out:
-        return out['track']
-    return None
+    if not (isinstance(out, dict) and 'track' in out):
+        return None
+    track = out['track'] or {}
+    images = track.get('images', {}) if isinstance(track, dict) else {}
+    enr = _extract_enrichment(track)
+    return {
+        "title": track.get('title', 'Unknown Title'),
+        "artist": track.get('subtitle', 'Unknown Artist'),
+        "album": None,  # Shazam has no reliable album; iTunes supplies it downstream
+        "art_url": images.get('coverarthq') or images.get('coverart') or None,
+        "isrc": enr["isrc"],
+        "genre": enr["genre"],
+        "release_year": enr["release_year"],
+    }
+
+
+def _audd_to_normalized(result: dict) -> dict:
+    """Pure: map an AudD `result` object to the normalized track shape."""
+    result = result or {}
+    am = result.get("apple_music") or {}
+    sp = result.get("spotify") or {}
+
+    release_year = None
+    rd = str(result.get("release_date") or "")
+    if len(rd) >= 4 and rd[:4].isdigit():
+        release_year = int(rd[:4])
+
+    genre = None
+    genres = am.get("genreNames")
+    if isinstance(genres, list) and genres:
+        genre = genres[0] or None
+
+    isrc = am.get("isrc") or result.get("isrc") or None
+
+    # Fallback art only (iTunes is primary downstream): resolve Apple's {w}x{h}
+    # artwork template, else a Spotify album image.
+    art_url = None
+    art = am.get("artwork")
+    if isinstance(art, dict) and art.get("url"):
+        art_url = str(art["url"]).replace("{w}", "600").replace("{h}", "600")
+    elif isinstance(sp.get("album"), dict):
+        imgs = sp["album"].get("images")
+        if isinstance(imgs, list) and imgs and isinstance(imgs[0], dict):
+            art_url = imgs[0].get("url") or None
+
+    return {
+        "title": result.get("title", "Unknown Title"),
+        "artist": result.get("artist", "Unknown Artist"),
+        "album": result.get("album") or None,
+        "art_url": art_url,
+        "isrc": isrc,
+        "genre": genre,
+        "release_year": release_year,
+    }
+
+
+async def _audd_post(wav_bytes: bytes, token: str) -> dict | None:
+    """POST the sample to AudD; return the parsed JSON body, or None on any
+    HTTP/timeout/parse error. Isolated so the recognize-flow tests can stub it."""
+    try:
+        data = aiohttp.FormData()
+        data.add_field("api_token", token)
+        data.add_field("return", "apple_music,spotify")
+        data.add_field("file", wav_bytes, filename="sample.wav", content_type="audio/wav")
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post("https://api.audd.io/", data=data) as resp:
+                if resp.status != 200:
+                    print(f"⚠️ AudD HTTP {resp.status}")
+                    return None
+                return await resp.json(content_type=None)
+    except Exception as e:
+        print(f"⚠️ AudD request failed: {e}")
+        return None
+
+
+async def _identify_audd(wav_bytes: bytes) -> dict | None:
+    """Recognize via AudD; return a normalized track dict, or None. No-ops without
+    a configured token. Any error is treated as a clean miss."""
+    token = runtime["audd_token"]
+    if not token:
+        return None
+    print("[!] Trying AudD fallback...")
+    body = await _audd_post(wav_bytes, token)
+    if not isinstance(body, dict) or body.get("status") != "success":
+        return None
+    result = body.get("result")
+    if not result:
+        return None
+    return _audd_to_normalized(result)
 
 
 async def _handle_match(track: dict) -> None:
-    """Enrich, publish, and record a matched track (the old success branch)."""
-    title = track.get('title', 'Unknown Title')
-    artist = track.get('subtitle', 'Unknown Artist')
+    """Enrich, publish, and record a matched track. `track` is the NORMALIZED shape
+    produced by a backend (_identify_shazam / _identify_audd)."""
+    title = track.get('title') or 'Unknown Title'
+    artist = track.get('artist') or 'Unknown Artist'
 
     print("[!] Fetching high-res metadata from iTunes...")
     album, art_url = await fetch_itunes_metadata(artist, title)
     if not art_url:
-        art_url = track.get('images', {}).get('coverarthq',
-                  track.get('images', {}).get('coverart', ''))
+        art_url = track.get('art_url') or ''   # backend-supplied fallback art
     if not album:
-        album = "Unknown Album"
+        album = track.get('album') or "Unknown Album"
 
     art_base64 = ""
     if art_url:
@@ -564,10 +657,9 @@ async def _handle_match(track: dict) -> None:
     state["title"] = title
     state["album"] = album
     state["art_url"] = art_url
-    enrichment = _extract_enrichment(track)
-    state["isrc"] = enrichment["isrc"]
-    state["genre"] = enrichment["genre"]
-    state["release_year"] = enrichment["release_year"]
+    state["isrc"] = track.get('isrc')
+    state["genre"] = track.get('genre')
+    state["release_year"] = track.get('release_year')
 
     if result_str != state["last_song"]:
         print(f"🎵 NEW TRACK: {result_str}")
@@ -629,7 +721,10 @@ async def recognize_audio():
         sample_len = min(base * (attempt + 1), _MAX_SAMPLE_SECONDS)
         wav = await _capture_sample(sample_len)
         await _publish_phase("identifying" if attempt == 0 else "retrying")
-        track = await _identify(wav)
+        track = await _identify_shazam(wav)
+        if (track is None and attempt == 0
+                and runtime["fallback_enabled"] and runtime["audd_token"]):
+            track = await _identify_audd(wav)  # reuse the first sample
         if track:
             break
 

@@ -127,6 +127,20 @@ class ConfigRoundTripTest(unittest.TestCase):
         loaded = config_manager.load_config()
         self.assertAlmostEqual(loaded["Audio"]["Rescan_Wait_Interval"], 7.5)
 
+    def test_fallback_defaults_off_and_empty_token(self):
+        defaults = config_manager.get_default_config()
+        self.assertEqual(defaults["Audio"]["Fallback_Enabled"], False)
+        self.assertEqual(defaults["Audio"]["AudD_API_Token"], "")
+
+    def test_fallback_settings_round_trip(self):
+        cfg = config_manager.get_default_config()
+        cfg["Audio"]["Fallback_Enabled"] = True
+        cfg["Audio"]["AudD_API_Token"] = "tok_abc123"
+        self.assertTrue(config_manager.save_config(cfg))
+        loaded = config_manager.load_config()
+        self.assertEqual(loaded["Audio"]["Fallback_Enabled"], True)
+        self.assertEqual(loaded["Audio"]["AudD_API_Token"], "tok_abc123")
+
 
 class TestDiscoveryConfig(unittest.TestCase):
     def test_defaults_include_discovery_and_mqtt_enabled(self):
