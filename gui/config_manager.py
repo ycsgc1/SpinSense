@@ -30,10 +30,6 @@ class MQTTBrokerConfig(BaseModel):
     User: str = ""
     Password: str = ""
 
-class MQTTDiscoveryConfig(BaseModel):
-    Enabled: bool = True
-    Discovery_Topic: str = "homeassistant/media_player/spinsense/config"
-
 class MQTTTopicsConfig(BaseModel):
     State: str = "home/vinyl/state"
     Title: str = "home/vinyl/title"
@@ -43,7 +39,6 @@ class MQTTTopicsConfig(BaseModel):
 class MQTTConfig(BaseModel):
     Enabled: bool = False
     Broker: MQTTBrokerConfig = MQTTBrokerConfig()
-    Discovery: MQTTDiscoveryConfig = MQTTDiscoveryConfig()
     Topics: MQTTTopicsConfig = MQTTTopicsConfig()
 
 class MDNSConfig(BaseModel):

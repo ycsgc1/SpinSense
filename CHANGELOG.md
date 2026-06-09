@@ -2,7 +2,7 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
-## [Unreleased]
+## [1.4.0.0] - 2026-06-09
 
 ### Fixed
 - **mDNS now advertises the real app version** instead of a hardcoded `1.0` in the service TXT record.
@@ -11,6 +11,7 @@ All notable changes to SpinSense are recorded here. The format follows [Keep a C
 - Dead WebSocket connections are dropped after a failed send instead of being retried on every frame.
 
 ### Removed
+- **Removed the non-functional MQTT auto-discovery payload** (`announce_to_ha`) and its dead `MQTT.Discovery` config. The companion Home Assistant integration discovers SpinSense over mDNS/zeroconf, not MQTT, and the payload used non-standard discovery keys that stock HA ignored — so it never created an entity. (The plain MQTT state topics under `home/vinyl/*` are unchanged.)
 - Internal cleanup: deleted the unused `gui/audio_utils.py` module and the dead `mock_core_engine_stream` dev helper; removed the orphaned `System.Engine_Status` config key; reconciled the engine and config-validator default tables (`Song_Sample_Length`, `Stopped_Silence_Interval`, MQTT host, discovery topic) to a single set of values; refreshed a stale log banner and docstring.
 
 ## [1.3.0.0] - 2026-06-09
