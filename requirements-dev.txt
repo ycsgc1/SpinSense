@@ -1,0 +1,13 @@
+# Development + CI tooling. NOT installed into the production Docker image —
+# docker/Dockerfile only installs requirements.txt (runtime deps). Install the
+# full dev environment with:  pip install -r requirements-dev.txt
+-r requirements.txt
+
+# Test runner (used by core/tests and gui/tests)
+pytest==7.4.4
+
+# Static analysis used for the backend audit:
+#   ruff check core/ gui/          — unused imports/vars + correctness lints
+#   vulture core/ gui/             — dead functions/attributes
+ruff==0.15.16
+vulture==2.16
