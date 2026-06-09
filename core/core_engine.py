@@ -375,6 +375,7 @@ def publish_state(status, artist="", title="", album="", art_url="", art_base64=
 # --- 3. Shazam, iTunes, & Audio Logic ---
 shazam = Shazam()
 RECOGNIZE_ATTEMPTS = 3  # 1 initial + 2 auto-retries
+_MAX_SAMPLE_SECONDS = 60.0  # ceiling for the escalating rescan ladder
 state = {
     "in_song": False,
     "last_song": "",
@@ -517,9 +518,11 @@ def _extract_enrichment(track: dict) -> dict:
     return {"isrc": isrc, "genre": genre, "release_year": release_year}
 
 
-async def _capture_sample() -> bytes:
-    """Record sample_len seconds from the mic and return WAV bytes."""
-    sample_len = runtime["sample_len"]
+async def _capture_sample(sample_len: float | None = None) -> bytes:
+    """Record `sample_len` seconds from the mic and return WAV bytes.
+    Falls back to the configured base length when called with no argument."""
+    if sample_len is None:
+        sample_len = runtime["sample_len"]
     mic = runtime["mic_device"]
     print(f"[!] Recording {sample_len}s sample for identification...")
     recording = sd.rec(int(sample_len * 48000), samplerate=48000, channels=1,
@@ -608,15 +611,26 @@ def _clear_track_state(set_backoff: bool) -> None:
     state["back_off"] = set_backoff
 
 
+async def _rescan_pause(seconds: float) -> None:
+    """Wait between escalating rescan attempts. Isolated for testability."""
+    if seconds > 0:
+        await asyncio.sleep(seconds)
+
+
 async def recognize_audio():
     """Sample + identify with up to 2 auto-retries. On total failure, publish
     no_match, clear the track, and set the back-off gate so the monitor loop
     waits for a fresh audio onset before scanning again."""
     print("\n[!] Music detected — identifying...")
+    base = runtime["sample_len"]
+    wait = runtime["rescan_wait"]
     track = None
     for attempt in range(RECOGNIZE_ATTEMPTS):
+        if attempt > 0:
+            await _rescan_pause(wait)
         await _publish_phase("scanning")
-        wav = await _capture_sample()
+        sample_len = min(base * (attempt + 1), _MAX_SAMPLE_SECONDS)
+        wav = await _capture_sample(sample_len)
         await _publish_phase("identifying" if attempt == 0 else "retrying")
         track = await _identify(wav)
         if track:

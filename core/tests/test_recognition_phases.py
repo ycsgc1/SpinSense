@@ -60,7 +60,7 @@ class RecognizeRetryTest(unittest.TestCase):
         # Capture phase publishes instead of hitting the socket.
         async def fake_publish(phase):
             self.phases.append(phase)
-        async def fake_capture():
+        async def fake_capture(sample_len):
             return b""
         async def fake_handle(track):
             self.handled.append(track)
@@ -73,10 +73,13 @@ class RecognizeRetryTest(unittest.TestCase):
         core_engine._handle_match = fake_handle
         core_engine.state["back_off"] = False
         core_engine.state["in_song"] = False
+        self._orig_wait = core_engine.runtime["rescan_wait"]
+        core_engine.runtime["rescan_wait"] = 0  # don't sleep in tests
 
     def tearDown(self):
         (core_engine._publish_phase, core_engine._capture_sample,
          core_engine._handle_match, core_engine._identify) = self._orig
+        core_engine.runtime["rescan_wait"] = self._orig_wait
 
     def test_all_miss_sets_no_match_and_backoff(self):
         async def always_none(_wav):
@@ -169,3 +172,56 @@ class IdleBlipTest(unittest.TestCase):
         self.assertNotIn("idle_blip", self.events)
         self.assertNotIn("mqtt:stopped", self.events)
         self.assertIn("mqtt:playing", self.events)
+
+
+class EscalatingSampleTest(unittest.TestCase):
+    def setUp(self):
+        self.lengths = []
+        self.sleeps = []
+
+        async def fake_phase(p):
+            return None
+
+        async def fake_capture(sample_len):
+            self.lengths.append(sample_len)
+            return b""
+
+        async def always_none(_wav):
+            return None
+
+        async def fake_pause(seconds):
+            self.sleeps.append(seconds)
+
+        self._orig = (core_engine._publish_phase, core_engine._capture_sample,
+                      core_engine._identify, core_engine._rescan_pause)
+        self._orig_base = core_engine.runtime["sample_len"]
+        self._orig_wait = core_engine.runtime["rescan_wait"]
+        core_engine._publish_phase = fake_phase
+        core_engine._capture_sample = fake_capture
+        core_engine._identify = always_none
+        core_engine._rescan_pause = fake_pause
+        core_engine.runtime["sample_len"] = 5.0
+        core_engine.runtime["rescan_wait"] = 5.0
+        core_engine.state["back_off"] = False
+        core_engine.state["in_song"] = False
+
+    def tearDown(self):
+        (core_engine._publish_phase, core_engine._capture_sample,
+         core_engine._identify, core_engine._rescan_pause) = self._orig
+        core_engine.runtime["sample_len"] = self._orig_base
+        core_engine.runtime["rescan_wait"] = self._orig_wait
+
+    def test_sample_length_escalates_1x_2x_3x(self):
+        asyncio.run(core_engine.recognize_audio())
+        # base 5s -> 5, 10, 15 across the three attempts.
+        self.assertEqual(self.lengths, [5.0, 10.0, 15.0])
+
+    def test_wait_runs_between_attempts_not_after_last(self):
+        asyncio.run(core_engine.recognize_audio())
+        # Two gaps between three attempts; no trailing sleep.
+        self.assertEqual(self.sleeps, [5.0, 5.0])
+
+    def test_cap_limits_runaway_length(self):
+        core_engine.runtime["sample_len"] = 30.0  # 3x would be 90s
+        asyncio.run(core_engine.recognize_audio())
+        self.assertEqual(self.lengths, [30.0, 60.0, 60.0])  # capped at 60
