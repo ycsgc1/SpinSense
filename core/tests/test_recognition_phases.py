@@ -312,3 +312,69 @@ class EscalatingSampleTest(unittest.TestCase):
         core_engine.runtime["sample_len"] = 30.0  # 3x would be 90s
         asyncio.run(core_engine.recognize_audio())
         self.assertEqual(self.lengths, [30.0, 60.0, 60.0])  # capped at 60
+
+
+class AuddAdapterTest(unittest.TestCase):
+    def setUp(self):
+        self._orig_post = core_engine._audd_post
+        self._orig_token = core_engine.runtime["audd_token"]
+        core_engine.runtime["audd_token"] = "tok"
+
+    def tearDown(self):
+        core_engine._audd_post = self._orig_post
+        core_engine.runtime["audd_token"] = self._orig_token
+
+    def test_maps_audd_result_to_normalized(self):
+        result = {
+            "artist": "Band", "title": "Song", "album": "The Album",
+            "release_date": "1979-10-12",
+            "apple_music": {
+                "genreNames": ["Rock", "Pop"], "isrc": "US1234567890",
+                "artwork": {"url": "https://art/{w}x{h}bb.jpg"},
+            },
+        }
+        n = core_engine._audd_to_normalized(result)
+        self.assertEqual(n["title"], "Song")
+        self.assertEqual(n["artist"], "Band")
+        self.assertEqual(n["album"], "The Album")
+        self.assertEqual(n["release_year"], 1979)
+        self.assertEqual(n["isrc"], "US1234567890")
+        self.assertEqual(n["genre"], "Rock")
+        self.assertEqual(n["art_url"], "https://art/600x600bb.jpg")  # {w}/{h} resolved
+
+    def test_maps_missing_fields_to_none(self):
+        n = core_engine._audd_to_normalized({"artist": "A", "title": "T"})
+        self.assertIsNone(n["album"])
+        self.assertIsNone(n["isrc"])
+        self.assertIsNone(n["genre"])
+        self.assertIsNone(n["release_year"])
+        self.assertIsNone(n["art_url"])
+
+    def test_identify_success(self):
+        async def fake_post(_wav, _token):
+            return {"status": "success", "result": {"artist": "A", "title": "T"}}
+        core_engine._audd_post = fake_post
+        n = asyncio.run(core_engine._identify_audd(b""))
+        self.assertEqual(n["title"], "T")
+
+    def test_identify_no_match_returns_none(self):
+        async def fake_post(_wav, _token):
+            return {"status": "success", "result": None}
+        core_engine._audd_post = fake_post
+        self.assertIsNone(asyncio.run(core_engine._identify_audd(b"")))
+
+    def test_identify_network_error_returns_none(self):
+        async def fake_post(_wav, _token):
+            return None  # _audd_post swallows errors -> None
+        core_engine._audd_post = fake_post
+        self.assertIsNone(asyncio.run(core_engine._identify_audd(b"")))
+
+    def test_identify_no_token_skips_post(self):
+        core_engine.runtime["audd_token"] = ""
+        self.called = False
+        async def fake_post(_wav, _token):
+            self.called = True
+            return None
+        core_engine._audd_post = fake_post
+        self.assertIsNone(asyncio.run(core_engine._identify_audd(b"")))
+        self.assertFalse(self.called)

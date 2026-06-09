@@ -558,6 +558,82 @@ async def _identify_shazam(wav_bytes: bytes) -> dict | None:
     }
 
 
+def _audd_to_normalized(result: dict) -> dict:
+    """Pure: map an AudD `result` object to the normalized track shape."""
+    result = result or {}
+    am = result.get("apple_music") or {}
+    sp = result.get("spotify") or {}
+
+    release_year = None
+    rd = str(result.get("release_date") or "")
+    if len(rd) >= 4 and rd[:4].isdigit():
+        release_year = int(rd[:4])
+
+    genre = None
+    genres = am.get("genreNames")
+    if isinstance(genres, list) and genres:
+        genre = genres[0] or None
+
+    isrc = am.get("isrc") or result.get("isrc") or None
+
+    # Fallback art only (iTunes is primary downstream): resolve Apple's {w}x{h}
+    # artwork template, else a Spotify album image.
+    art_url = None
+    art = am.get("artwork")
+    if isinstance(art, dict) and art.get("url"):
+        art_url = str(art["url"]).replace("{w}", "600").replace("{h}", "600")
+    elif isinstance(sp.get("album"), dict):
+        imgs = sp["album"].get("images")
+        if isinstance(imgs, list) and imgs and isinstance(imgs[0], dict):
+            art_url = imgs[0].get("url") or None
+
+    return {
+        "title": result.get("title", "Unknown Title"),
+        "artist": result.get("artist", "Unknown Artist"),
+        "album": result.get("album") or None,
+        "art_url": art_url,
+        "isrc": isrc,
+        "genre": genre,
+        "release_year": release_year,
+    }
+
+
+async def _audd_post(wav_bytes: bytes, token: str) -> dict | None:
+    """POST the sample to AudD; return the parsed JSON body, or None on any
+    HTTP/timeout/parse error. Isolated so the recognize-flow tests can stub it."""
+    try:
+        data = aiohttp.FormData()
+        data.add_field("api_token", token)
+        data.add_field("return", "apple_music,spotify")
+        data.add_field("file", wav_bytes, filename="sample.wav", content_type="audio/wav")
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post("https://api.audd.io/", data=data) as resp:
+                if resp.status != 200:
+                    print(f"⚠️ AudD HTTP {resp.status}")
+                    return None
+                return await resp.json(content_type=None)
+    except Exception as e:
+        print(f"⚠️ AudD request failed: {e}")
+        return None
+
+
+async def _identify_audd(wav_bytes: bytes) -> dict | None:
+    """Recognize via AudD; return a normalized track dict, or None. No-ops without
+    a configured token. Any error is treated as a clean miss."""
+    token = runtime["audd_token"]
+    if not token:
+        return None
+    print("[!] Trying AudD fallback...")
+    body = await _audd_post(wav_bytes, token)
+    if not isinstance(body, dict) or body.get("status") != "success":
+        return None
+    result = body.get("result")
+    if not result:
+        return None
+    return _audd_to_normalized(result)
+
+
 async def _handle_match(track: dict) -> None:
     """Enrich, publish, and record a matched track. `track` is the NORMALIZED shape
     produced by a backend (_identify_shazam / _identify_audd)."""
