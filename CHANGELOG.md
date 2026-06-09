@@ -2,6 +2,18 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [Unreleased]
+
+### Added
+- **Escalating rescans.** When a track can't be identified, SpinSense now waits a configurable `Rescan_Wait_Interval` (default 5 s) and retries with a progressively longer sample — 1×, then 2×, then 3× the sample length (capped at 60 s) — before backing off. New Settings field with help tooltip.
+
+### Changed
+- **dB threshold floor lowered from −80 dB to −120 dB** across the threshold slider, level meters, and auto-calibration, so quiet music on low-noise-floor line-level hardware can be distinguished from silence. The floor is now a single `FLOOR_DB` constant in `db_utils.js`.
+- **`New_Song_Silence_Interval` default aligned to 3 s** across the engine and the config validator (previously 2 s vs 10 s).
+
+### Fixed
+- **Brief audio dips no longer re-trigger identification.** A momentary drop below the threshold (e.g. a quiet passage) was rescanning the track almost immediately, ignoring the configured silence interval. Rescans now fire only after a gap lasting at least `New_Song_Silence_Interval` seconds; `New_Song_Silence_Interval` previously had no effect at all.
+
 ## [1.2.1.0] - 2026-06-07
 
 ### Fixed
