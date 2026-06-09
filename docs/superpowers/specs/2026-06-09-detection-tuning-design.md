@@ -111,8 +111,8 @@ unchanged; `recognize_audio()` already resets `silence_counter` at its end, and 
 
 **Default alignment:** `New_Song_Silence_Interval` now has teeth, so reconcile the
 disagreeing code defaults — `core_engine.DEFAULT_CONFIG` (2.0) and the Pydantic
-`config_manager` model (10.0) — to a single agreed value. Existing user `config.json`
-values are left as-is.
+`config_manager` model (10.0) — to a single agreed default of **3.0 s**. Existing user
+`config.json` values are left as-is.
 
 ### 3. Escalating rescans after a failed ID (Approach A — reuse the retry loop)
 
@@ -122,7 +122,7 @@ The existing `RECOGNIZE_ATTEMPTS = 3` loop becomes an escalating ladder:
 - attempt 0 → `base × 1` seconds
 - attempt 1 → `base × 2` seconds
 - attempt 2 → `base × 3` seconds
-- a configurable `Rescan_Wait_Interval` (default **3.0 s**) `await asyncio.sleep` runs
+- a configurable `Rescan_Wait_Interval` (default **5.0 s**) `await asyncio.sleep` runs
   *between* attempts (not before the first, not after the last).
 
 `_capture_sample()` takes an explicit sample length (instead of reading
@@ -138,7 +138,7 @@ Behavior:
   + `no_match` publish runs as today; the `back_off` gate then waits for a fresh onset.
 
 **Accepted trade-off:** Approach A blocks the monitor loop longer on a *failing* track
-(≈ `5 + 10 + 15` s recording + 2 × 3 s waits ≈ 36 s at base 5 s) because the input
+(≈ `5 + 10 + 15` s recording + 2 × 5 s waits ≈ 40 s at base 5 s) because the input
 stream is stopped during recognition. This was chosen over Approach B (across-time,
 non-blocking escalation via monitor-loop state) for simplicity and because it directly
 matches "consecutive scans with waits and growing samples." Approach B is rejected for
