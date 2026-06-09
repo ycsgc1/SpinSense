@@ -30,6 +30,8 @@ DEFAULT_CONFIG = {
         "New_Song_Silence_Interval": 3.0,
         "Stopped_Silence_Interval": 5.0,
         "Rescan_Wait_Interval": 5.0,
+        "Fallback_Enabled": False,
+        "AudD_API_Token": "",
         # NOTE: keep these defaults in sync with gui/config_manager.AudioConfig.
     },
     "MQTT": {
@@ -80,6 +82,8 @@ runtime = {
     "new_song_silence": 3.0,
     "stopped_silence": 5.0,
     "rescan_wait": 5.0,
+    "fallback_enabled": False,
+    "audd_token": "",
     "mic_device": None,
     "mqtt_host": "127.0.0.1",
     "mqtt_port": 1883,
@@ -96,6 +100,8 @@ def _populate_runtime(cfg):
     runtime["stopped_silence"]  = cfg.get('Audio', {}).get('Stopped_Silence_Interval', 5.0)
     runtime["rescan_wait"]      = cfg.get('Audio', {}).get('Rescan_Wait_Interval', 5.0)
     runtime["retrigger_on_track_change"] = cfg.get('Audio', {}).get('Retrigger_On_Track_Change', False)
+    runtime["fallback_enabled"] = cfg.get('Audio', {}).get('Fallback_Enabled', False)
+    runtime["audd_token"]       = cfg.get('Audio', {}).get('AudD_API_Token', '')
     runtime["mic_device"]       = _normalize_mic(cfg)
     runtime["mqtt_host"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Host', '127.0.0.1')
     runtime["mqtt_port"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Port', 1883)

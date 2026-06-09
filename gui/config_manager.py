@@ -23,6 +23,8 @@ class AudioConfig(BaseModel):
     Stopped_Silence_Interval: float = 5.0
     Rescan_Wait_Interval: float = 5.0
     Retrigger_On_Track_Change: bool = False
+    Fallback_Enabled: bool = False
+    AudD_API_Token: str = ""
 
 class MQTTBrokerConfig(BaseModel):
     Host: str = "127.0.0.1"
