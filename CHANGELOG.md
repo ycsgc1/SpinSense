@@ -2,7 +2,7 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
-## [Unreleased]
+## [1.5.0.0] - 2026-06-09
 
 ### Added
 - **AudD backup recognizer.** When Shazam can't identify a track on its first try, SpinSense now retries the *same* sample against [AudD](https://audd.io) before falling back to its longer-sample retries — improving the hard-to-identify tail. Opt-in: enable it and paste an API token in Settings (off by default; nothing changes until configured). Album art is still sourced iTunes-first, so artwork quality is unchanged.
