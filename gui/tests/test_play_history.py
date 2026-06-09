@@ -97,11 +97,11 @@ class IPCDedupeTest(unittest.TestCase):
         # _record_if_new (which doesn't pass db_path) writes into our temp DB.
         self._orig_db_path = play_history.DB_PATH
         play_history.DB_PATH = self.db_path
-        ipc_manager._last_recorded_title = ""
+        ipc_manager._last_recorded_key = None
 
     def tearDown(self):
         play_history.DB_PATH = self._orig_db_path
-        ipc_manager._last_recorded_title = ""
+        ipc_manager._last_recorded_key = None
         try:
             os.remove(self.db_path)
         except OSError:
@@ -134,6 +134,20 @@ class IPCDedupeTest(unittest.TestCase):
     def test_empty_title_alone_records_nothing(self):
         self._feed("", "", "")
         self.assertEqual(play_history.recent_plays(db_path=self.db_path), [])
+
+    def test_same_title_different_artist_records_each(self):
+        # Two distinct songs that happen to share a title must not collapse into
+        # one row — dedupe is keyed on (artist, title), not title alone.
+        async def run():
+            await ipc_manager._record_if_new(
+                {"title": "Intro", "artist": "Band One", "album": None, "art_url": ""}
+            )
+            await ipc_manager._record_if_new(
+                {"title": "Intro", "artist": "Band Two", "album": None, "art_url": ""}
+            )
+        asyncio.run(run())
+        rows = play_history.recent_plays(db_path=self.db_path)
+        self.assertEqual(len(rows), 2)
 
 
 class TestEnrichmentColumns(unittest.TestCase):

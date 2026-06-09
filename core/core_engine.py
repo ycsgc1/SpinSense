@@ -19,7 +19,6 @@ CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 DEFAULT_CONFIG = {
     "System": {
         "Auto_Start": False,
-        "Engine_Status": "stopped",
         "Setup_Wizard_State": "pending",
     },
     "Hardware": {
@@ -31,10 +30,11 @@ DEFAULT_CONFIG = {
         "New_Song_Silence_Interval": 3.0,
         "Stopped_Silence_Interval": 5.0,
         "Rescan_Wait_Interval": 5.0,
+        # NOTE: keep these defaults in sync with gui/config_manager.AudioConfig.
     },
     "MQTT": {
         "Broker": {
-            "Host": "192.168.1.100",
+            "Host": "127.0.0.1",
             "Port": 1883,
             "User": "vinylrecord",
             "Password": "",
@@ -85,7 +85,7 @@ runtime = {
     "stopped_silence": 5.0,
     "rescan_wait": 5.0,
     "mic_device": None,
-    "mqtt_host": "192.168.1.100",
+    "mqtt_host": "127.0.0.1",
     "mqtt_port": 1883,
     "mqtt_user": "",
     "mqtt_pass": "",
@@ -101,7 +101,7 @@ def _populate_runtime(cfg):
     runtime["rescan_wait"]      = cfg.get('Audio', {}).get('Rescan_Wait_Interval', 5.0)
     runtime["retrigger_on_track_change"] = cfg.get('Audio', {}).get('Retrigger_On_Track_Change', False)
     runtime["mic_device"]       = _normalize_mic(cfg)
-    runtime["mqtt_host"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Host', '192.168.1.100')
+    runtime["mqtt_host"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Host', '127.0.0.1')
     runtime["mqtt_port"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Port', 1883)
     runtime["mqtt_user"]        = cfg.get('MQTT', {}).get('Broker', {}).get('User', '')
     runtime["mqtt_pass"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Password', '')
@@ -220,7 +220,7 @@ async def _handle_command(payload: dict) -> dict:
             "stats": None,
         }
         calibration = session
-        asyncio.create_task(_finish_calibration(session))
+        _spawn_bg(_finish_calibration(session))
         return {"ok": True, "duration_s": 5.0}
 
     if cmd == "get_calibration":
@@ -286,6 +286,20 @@ async def command_listener_loop():
 # Single-flight handle on the connect loop so a broker change doesn't spawn
 # parallel connect attempts on the same paho Client.
 _mqtt_task: asyncio.Task | None = None
+# Strong refs to the other long-lived loops (config watcher, command listener),
+# so the event loop's weak task tracking can't GC them mid-run.
+_config_task: asyncio.Task | None = None
+_command_task: asyncio.Task | None = None
+# Strong refs to short-lived fire-and-forget tasks (calibration finish, MQTT
+# reconnect) for the same reason; discarded automatically when each completes.
+_bg_tasks: set = set()
+
+
+def _spawn_bg(coro) -> None:
+    """create_task + hold a strong ref until done, so the task can't be GC'd."""
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
 
 async def connect_mqtt_loop():
@@ -376,6 +390,7 @@ def publish_state(status, artist="", title="", album="", art_url="", art_base64=
 shazam = Shazam()
 RECOGNIZE_ATTEMPTS = 3  # 1 initial + 2 auto-retries
 _MAX_SAMPLE_SECONDS = 60.0  # ceiling for the escalating rescan ladder
+SAMPLE_RATE = 48000  # mic capture + recognition sample rate (Hz)
 state = {
     "in_song": False,
     "last_song": "",
@@ -423,7 +438,7 @@ async def _write_uds(line: str) -> None:
     try:
         if not os.path.exists('/tmp/spinsense.sock'):
             return
-        reader, writer = await asyncio.open_unix_connection('/tmp/spinsense.sock')
+        _, writer = await asyncio.open_unix_connection('/tmp/spinsense.sock')
         writer.write(line.encode())
         await writer.drain()
         writer.close()
@@ -525,14 +540,14 @@ async def _capture_sample(sample_len: float | None = None) -> bytes:
         sample_len = runtime["sample_len"]
     mic = runtime["mic_device"]
     print(f"[!] Recording {sample_len}s sample for identification...")
-    recording = sd.rec(int(sample_len * 48000), samplerate=48000, channels=1,
+    recording = sd.rec(int(sample_len * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1,
                        dtype='int16', device=mic)
     await asyncio.to_thread(sd.wait)
     wav_io = io.BytesIO()
     with wave.open(wav_io, 'wb') as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
-        wf.setframerate(48000)
+        wf.setframerate(SAMPLE_RATE)
         wf.writeframes(recording.tobytes())
     return wav_io.getvalue()
 
@@ -618,7 +633,9 @@ async def _rescan_pause(seconds: float) -> None:
 
 
 async def recognize_audio():
-    """Sample + identify with up to 2 auto-retries. On total failure, publish
+    """Sample + identify with up to 2 auto-retries, lengthening the sample on
+    each retry (1x/2x/3x the base length, capped at _MAX_SAMPLE_SECONDS) with a
+    Rescan_Wait_Interval pause between attempts. On total failure, publish
     no_match, clear the track, and set the back-off gate so the monitor loop
     waits for a fresh audio onset before scanning again."""
     print("\n[!] Music detected — identifying...")
@@ -655,7 +672,7 @@ def _open_input_stream(callback):
     out of audio_monitor_loop() so the same code handles fresh startup, the
     post-recognition relock, and the mic-changed rebuild."""
     stream = sd.InputStream(
-        samplerate=48000, channels=1, callback=callback, device=runtime["mic_device"],
+        samplerate=SAMPLE_RATE, channels=1, callback=callback, device=runtime["mic_device"],
     )
     stream.start()
     return stream
@@ -692,11 +709,14 @@ def _scan_decision(vol, threshold, in_song, silence_counter, new_song_silence, b
 
 
 async def audio_monitor_loop():
-    global _mqtt_task
+    global _mqtt_task, _config_task, _command_task
+    # Hold strong references to these long-lived tasks: the event loop only
+    # keeps a weak ref, so an unreferenced create_task() can be garbage-collected
+    # mid-run, silently killing config hot-reload / the command socket.
     _mqtt_task = asyncio.create_task(connect_mqtt_loop())
-    asyncio.create_task(config_watch_loop())
-    asyncio.create_task(command_listener_loop())
-    print("--- VINYL SCROBBLER ALPHA ACTIVE ---")
+    _config_task = asyncio.create_task(config_watch_loop())
+    _command_task = asyncio.create_task(command_listener_loop())
+    print("--- SpinSense engine active ---")
 
     stream = _open_input_stream(audio_callback)
 
@@ -828,7 +848,7 @@ def _apply_config_diff(new_cfg):
         mic_change_event.set()
 
     if _should_reapply_mqtt(old_wanted, MQTT_WANTED, old_mqtt != new_mqtt):
-        asyncio.create_task(_reconnect_mqtt())
+        _spawn_bg(_reconnect_mqtt())
 
 
 if __name__ == "__main__":
