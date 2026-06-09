@@ -2,6 +2,11 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [1.4.0.1] - 2026-06-09
+
+### Added
+- **`requirements-dev.txt`** documenting the dev/CI tooling (pytest, ruff, vulture), kept separate from the runtime `requirements.txt` so the production Docker image stays lean. No runtime change.
+
 ## [1.4.0.0] - 2026-06-09
 
 ### Fixed
