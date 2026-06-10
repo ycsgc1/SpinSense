@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     libsndfile1 \
     gcc \
     ffmpeg \
+    libchromaprint-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements from the main folder
