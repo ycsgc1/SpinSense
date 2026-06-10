@@ -78,14 +78,17 @@
           <span class="relative shrink-0 w-11 h-6 rounded-full bg-surface-container-highest border border-outline-variant/40 peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-on-surface after:transition-transform peer-checked:after:translate-x-5"></span>
         </label>
 
-        <label class="flex items-center justify-between gap-md cursor-pointer">
-          <span class="text-body-sm text-on-surface">Use AudD as a backup recognizer<span class="help-tip" tabindex="0" role="note" aria-label="Help: AudD backup recognizer"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">When Shazam can't identify a track, SpinSense retries the same sample against AudD (a second online music database) before giving up. Off by default. Requires an AudD API token below.</span></span></span>
-          <input type="checkbox" name="Audio.Fallback_Enabled" class="sr-only peer">
-          <span class="relative shrink-0 w-11 h-6 rounded-full bg-surface-container-highest border border-outline-variant/40 peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-on-surface after:transition-transform peer-checked:after:translate-x-5"></span>
+        <label class="block">
+          <span class="text-body-sm text-on-surface mb-1 block">Backup recognizer<span class="help-tip" tabindex="0" role="note" aria-label="Help: Backup recognizer"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">When Shazam can't identify a track on its first try, SpinSense retries the same sample against this backup before giving up. Shazam stays the primary. AudD needs an API token below; AcoustID is free and needs nothing.</span></span></span>
+          <select name="Audio.Fallback_Provider" class="form-input">
+            <option value="none">None (Shazam only)</option>
+            <option value="audd">AudD</option>
+            <option value="acoustid">AcoustID (free)</option>
+          </select>
         </label>
 
         <label class="block">
-          <span class="text-body-sm text-on-surface mb-1 block">AudD API token<span class="help-tip" tabindex="0" role="note" aria-label="Help: AudD API token"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Your API token from audd.io, used only for the backup lookup above. Stored in config.json in plaintext (like the MQTT password) — fine for a self-hosted LAN box. Leave blank to disable the fallback.</span></span></span>
+          <span class="text-body-sm text-on-surface mb-1 block">AudD API token<span class="help-tip" tabindex="0" role="note" aria-label="Help: AudD API token"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Your API token from audd.io — only needed when "Backup recognizer" is set to AudD. Stored in config.json in plaintext (like the MQTT password), fine for a self-hosted LAN box.</span></span></span>
           <input type="password" name="Audio.AudD_API_Token" autocomplete="off" class="form-input">
         </label>
       </div>
