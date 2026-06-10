@@ -573,3 +573,25 @@ class AcoustidAdapterTest(unittest.TestCase):
         core_engine.ACOUSTID_CLIENT_KEY = ""
         self.assertIsNone(asyncio.run(core_engine._identify_acoustid(b"")))
         self.assertFalse(self.fp_called)
+
+
+class SilenceStepTest(unittest.TestCase):
+    def s(self, sc, in_song, back_off, ns=3, stop=5):
+        return core_engine._silence_step(sc, in_song, back_off, ns, stop)
+
+    def test_backoff_survives_brief_dip(self):
+        # The phantom post-scan zero / a 1-tick dip: below the interval -> stays armed.
+        self.assertEqual(self.s(0, False, True), (1, True, False))
+
+    def test_backoff_clears_after_qualifying_gap(self):
+        # silence_counter reaches new_song_silence (3) -> back_off clears.
+        self.assertEqual(self.s(2, False, True), (3, False, False))
+
+    def test_in_song_stops_at_stopped_silence(self):
+        self.assertEqual(self.s(4, True, False), (5, False, True))
+
+    def test_in_song_below_stop_does_not_stop(self):
+        self.assertEqual(self.s(3, True, False), (4, False, False))
+
+    def test_not_in_song_never_stops(self):
+        self.assertEqual(self.s(10, False, False), (11, False, False))

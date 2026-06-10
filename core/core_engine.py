@@ -878,6 +878,20 @@ def audio_callback(indata, frames, time, status):
         calibration["samples"].append(rms)
 
 
+def _silence_step(silence_counter, in_song, back_off, new_song_silence, stopped_silence):
+    """Pure: process one below-threshold (silence) tick. Returns
+    (silence_counter, back_off, stop). `stop` True => clear the track + publish 'stopped'.
+
+    back_off clears only after a *qualifying* gap (>= new_song_silence), so a
+    momentary dip or the phantom zero-RMS tick the loop injects right after a scan
+    can't re-arm scanning on an unidentifiable track that keeps playing."""
+    silence_counter += 1
+    if back_off and silence_counter >= new_song_silence:
+        back_off = False
+    stop = in_song and silence_counter >= stopped_silence
+    return silence_counter, back_off, stop
+
+
 def _scan_decision(vol, threshold, in_song, silence_counter, new_song_silence, back_off):
     """Pure: decide what the monitor loop should do this tick.
     Returns 'scan' | 'tick' | 'wait_gap' | 'silence'.
@@ -964,15 +978,19 @@ async def audio_monitor_loop():
             state["silence_counter"] = 0  # song resumed before the gap qualified
             print(".", end="", flush=True)
         else:  # silence
-            state["back_off"] = False  # gap observed → next onset is fair game
+            new_sc, new_bo, stop = _silence_step(
+                state["silence_counter"], state["in_song"], state.get("back_off", False),
+                runtime["new_song_silence"], runtime["stopped_silence"],
+            )
             if state["in_song"]:
-                state["silence_counter"] += 1
                 print("s", end="", flush=True)
-                if state["silence_counter"] >= runtime["stopped_silence"]:
-                    print(f"\n[ STOPPED ] {runtime['stopped_silence']}s silence limit reached.")
-                    publish_state("stopped")
-                    _clear_track_state(set_backoff=False)
-                    state["silence_counter"] = 0
+            state["silence_counter"] = new_sc
+            state["back_off"] = new_bo
+            if stop:
+                print(f"\n[ STOPPED ] {runtime['stopped_silence']}s silence limit reached.")
+                publish_state("stopped")
+                _clear_track_state(set_backoff=False)
+                state["silence_counter"] = 0
 
         await asyncio.sleep(1)
 
