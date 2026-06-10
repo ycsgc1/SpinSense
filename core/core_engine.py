@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import subprocess
+import tempfile
 import io
 import wave
 import urllib.parse
@@ -30,7 +32,7 @@ DEFAULT_CONFIG = {
         "New_Song_Silence_Interval": 3.0,
         "Stopped_Silence_Interval": 5.0,
         "Rescan_Wait_Interval": 5.0,
-        "Fallback_Enabled": False,
+        "Fallback_Provider": "none",
         "AudD_API_Token": "",
         # NOTE: keep these defaults in sync with gui/config_manager.AudioConfig.
     },
@@ -82,7 +84,7 @@ runtime = {
     "new_song_silence": 3.0,
     "stopped_silence": 5.0,
     "rescan_wait": 5.0,
-    "fallback_enabled": False,
+    "fallback_provider": "none",
     "audd_token": "",
     "mic_device": None,
     "mqtt_host": "127.0.0.1",
@@ -100,7 +102,7 @@ def _populate_runtime(cfg):
     runtime["stopped_silence"]  = cfg.get('Audio', {}).get('Stopped_Silence_Interval', 5.0)
     runtime["rescan_wait"]      = cfg.get('Audio', {}).get('Rescan_Wait_Interval', 5.0)
     runtime["retrigger_on_track_change"] = cfg.get('Audio', {}).get('Retrigger_On_Track_Change', False)
-    runtime["fallback_enabled"] = cfg.get('Audio', {}).get('Fallback_Enabled', False)
+    runtime["fallback_provider"] = cfg.get('Audio', {}).get('Fallback_Provider', 'none')
     runtime["audd_token"]       = cfg.get('Audio', {}).get('AudD_API_Token', '')
     runtime["mic_device"]       = _normalize_mic(cfg)
     runtime["mqtt_host"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Host', '127.0.0.1')
@@ -634,6 +636,119 @@ async def _identify_audd(wav_bytes: bytes) -> dict | None:
     return _audd_to_normalized(result)
 
 
+ACOUSTID_CLIENT_KEY = os.environ.get("SPINSENSE_ACOUSTID_KEY", "UGhMOSOjGb")
+ACOUSTID_LOOKUP_URL = "https://api.acoustid.org/v2/lookup"
+
+
+def _acoustid_to_normalized(results: list) -> dict | None:
+    """Pure: map AcoustID lookup `results` to the normalized track shape, or None."""
+    if not results:
+        return None
+    best = max(results, key=lambda r: r.get("score", 0) if isinstance(r, dict) else 0)
+    recordings = best.get("recordings") or []
+    if not recordings or not isinstance(recordings[0], dict):
+        return None
+    rec = recordings[0]
+    title = rec.get("title")
+    if not title:
+        return None
+    artists = rec.get("artists") or []
+    names = [a.get("name", "") for a in artists if isinstance(a, dict) and a.get("name")]
+    artist = ", ".join(names) or "Unknown Artist"
+    album = None
+    rgs = rec.get("releasegroups") or []
+    if rgs and isinstance(rgs[0], dict):
+        album = rgs[0].get("title") or None
+    return {
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "art_url": None,   # iTunes enrichment supplies art downstream
+        "isrc": None,
+        "genre": None,
+        "release_year": None,
+    }
+
+
+def _run_fpcalc(wav_bytes: bytes) -> tuple[int, str] | None:
+    """Blocking: write the WAV to a temp file, run `fpcalc -json`, return
+    (duration_seconds, fingerprint). None on missing binary / error."""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav") as f:
+            f.write(wav_bytes)
+            f.flush()
+            out = subprocess.run(
+                ["fpcalc", "-json", f.name],
+                capture_output=True, text=True, timeout=15,
+            )
+        if out.returncode != 0:
+            print(f"⚠️ fpcalc exited {out.returncode}: {out.stderr.strip()}")
+            return None
+        data = json.loads(out.stdout)
+        return (int(round(float(data["duration"]))), data["fingerprint"])
+    except FileNotFoundError:
+        print("⚠️ fpcalc not installed — AcoustID unavailable")
+        return None
+    except Exception as e:
+        print(f"⚠️ fpcalc failed: {e}")
+        return None
+
+
+async def _chromaprint_fingerprint(wav_bytes: bytes) -> tuple[int, str] | None:
+    """Compute a Chromaprint fingerprint via fpcalc, off the event loop."""
+    return await asyncio.to_thread(_run_fpcalc, wav_bytes)
+
+
+async def _acoustid_lookup(duration: int, fingerprint: str) -> dict | None:
+    """POST to the AcoustID lookup API; return parsed JSON, or None on any error."""
+    try:
+        data = aiohttp.FormData()
+        data.add_field("client", ACOUSTID_CLIENT_KEY)
+        data.add_field("duration", str(duration))
+        data.add_field("fingerprint", fingerprint)
+        data.add_field("meta", "recordings+releasegroups")
+        data.add_field("format", "json")
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(ACOUSTID_LOOKUP_URL, data=data) as resp:
+                if resp.status != 200:
+                    print(f"⚠️ AcoustID HTTP {resp.status}")
+                    return None
+                return await resp.json(content_type=None)
+    except Exception as e:
+        print(f"⚠️ AcoustID request failed: {e}")
+        return None
+
+
+async def _identify_acoustid(wav_bytes: bytes) -> dict | None:
+    """Recognize via AcoustID (Chromaprint fingerprint + lookup); normalized dict
+    or None. No-ops without a client key; any error is a clean miss."""
+    if not ACOUSTID_CLIENT_KEY:
+        return None
+    fp = await _chromaprint_fingerprint(wav_bytes)
+    if not fp:
+        return None
+    duration, fingerprint = fp
+    print("[!] Trying AcoustID fallback...")
+    body = await _acoustid_lookup(duration, fingerprint)
+    if not isinstance(body, dict) or body.get("status") != "ok":
+        return None
+    results = body.get("results") or []
+    if not results:
+        return None
+    return _acoustid_to_normalized(results)
+
+
+async def _identify_fallback(wav_bytes: bytes) -> dict | None:
+    """Route the attempt-0 fallback to the configured backup recognizer."""
+    provider = runtime["fallback_provider"]
+    if provider == "audd":
+        return await _identify_audd(wav_bytes)
+    if provider == "acoustid":
+        return await _identify_acoustid(wav_bytes)
+    return None
+
+
 async def _handle_match(track: dict) -> None:
     """Enrich, publish, and record a matched track. `track` is the NORMALIZED shape
     produced by a backend (_identify_shazam / _identify_audd)."""
@@ -722,9 +837,8 @@ async def recognize_audio():
         wav = await _capture_sample(sample_len)
         await _publish_phase("identifying" if attempt == 0 else "retrying")
         track = await _identify_shazam(wav)
-        if (track is None and attempt == 0
-                and runtime["fallback_enabled"] and runtime["audd_token"]):
-            track = await _identify_audd(wav)  # reuse the first sample
+        if track is None and attempt == 0:
+            track = await _identify_fallback(wav)  # reuse the first sample
         if track:
             break
 
@@ -762,6 +876,20 @@ def audio_callback(indata, frames, time, status):
     state["current_rms"] = rms
     if calibration is not None and calibration["status"] == "running":
         calibration["samples"].append(rms)
+
+
+def _silence_step(silence_counter, in_song, back_off, new_song_silence, stopped_silence):
+    """Pure: process one below-threshold (silence) tick. Returns
+    (silence_counter, back_off, stop). `stop` True => clear the track + publish 'stopped'.
+
+    back_off clears only after a *qualifying* gap (>= new_song_silence), so a
+    momentary dip or the phantom zero-RMS tick the loop injects right after a scan
+    can't re-arm scanning on an unidentifiable track that keeps playing."""
+    silence_counter += 1
+    if back_off and silence_counter >= new_song_silence:
+        back_off = False
+    stop = in_song and silence_counter >= stopped_silence
+    return silence_counter, back_off, stop
 
 
 def _scan_decision(vol, threshold, in_song, silence_counter, new_song_silence, back_off):
@@ -850,15 +978,19 @@ async def audio_monitor_loop():
             state["silence_counter"] = 0  # song resumed before the gap qualified
             print(".", end="", flush=True)
         else:  # silence
-            state["back_off"] = False  # gap observed → next onset is fair game
+            new_sc, new_bo, stop = _silence_step(
+                state["silence_counter"], state["in_song"], state.get("back_off", False),
+                runtime["new_song_silence"], runtime["stopped_silence"],
+            )
             if state["in_song"]:
-                state["silence_counter"] += 1
                 print("s", end="", flush=True)
-                if state["silence_counter"] >= runtime["stopped_silence"]:
-                    print(f"\n[ STOPPED ] {runtime['stopped_silence']}s silence limit reached.")
-                    publish_state("stopped")
-                    _clear_track_state(set_backoff=False)
-                    state["silence_counter"] = 0
+            state["silence_counter"] = new_sc
+            state["back_off"] = new_bo
+            if stop:
+                print(f"\n[ STOPPED ] {runtime['stopped_silence']}s silence limit reached.")
+                publish_state("stopped")
+                _clear_track_state(set_backoff=False)
+                state["silence_counter"] = 0
 
         await asyncio.sleep(1)
 

@@ -228,7 +228,7 @@
 
   // Checkboxes emit `change`, not `input` — wire dirty tracking for them.
   FORM.addEventListener("change", (ev) => {
-    if (ev.target.type === "checkbox") setDirty(true);
+    if (ev.target.type === "checkbox" || ev.target.tagName === "SELECT") setDirty(true);
   });
 
   FORM.addEventListener("submit", onSubmit);

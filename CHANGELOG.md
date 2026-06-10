@@ -2,6 +2,17 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [1.5.0.5] - 2026-06-10
+
+### Added
+- **AcoustID backup recognizer + a "Backup recognizer" menu in Settings.** Shazam stays the always-on primary; you can now pick a backup from **None / AudD / AcoustID**. AcoustID is free (no subscription, no signup — an app key ships embedded), using on-device Chromaprint fingerprints against the MusicBrainz-linked AcoustID database. Off by default.
+
+### Fixed
+- **Endless rescan loop on unidentifiable tracks.** A track that Shazam (and the backup) couldn't identify would re-scan over and over while it kept playing, because the post-scan RMS reset was misread as a silence gap that cleared the back-off. The back-off now holds until a genuine between-song gap, so a failed track settles quietly instead of looping.
+
+### Changed
+- The 1.5.0.0 `Audio.Fallback_Enabled` boolean is replaced by `Audio.Fallback_Provider` (`none`/`audd`/`acoustid`). Existing configs default to `none`.
+
 ## [1.5.0.0] - 2026-06-09
 
 ### Added

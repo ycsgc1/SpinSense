@@ -398,7 +398,7 @@ class AuddFallbackFlowTest(unittest.TestCase):
         self._orig = (core_engine._publish_phase, core_engine._capture_sample,
                       core_engine._rescan_pause, core_engine._handle_match,
                       core_engine._identify_shazam, core_engine._identify_audd)
-        self._orig_flags = (core_engine.runtime["fallback_enabled"],
+        self._orig_flags = (core_engine.runtime["fallback_provider"],
                             core_engine.runtime["audd_token"],
                             core_engine.runtime["rescan_wait"])
         core_engine._publish_phase = fake_phase
@@ -413,14 +413,14 @@ class AuddFallbackFlowTest(unittest.TestCase):
         (core_engine._publish_phase, core_engine._capture_sample,
          core_engine._rescan_pause, core_engine._handle_match,
          core_engine._identify_shazam, core_engine._identify_audd) = self._orig
-        (core_engine.runtime["fallback_enabled"], core_engine.runtime["audd_token"],
+        (core_engine.runtime["fallback_provider"], core_engine.runtime["audd_token"],
          core_engine.runtime["rescan_wait"]) = self._orig_flags
 
-    def _set(self, shazam_fn, audd_fn, enabled=True, token="tok"):
+    def _set(self, shazam_fn, audd_fn, provider="audd"):
         core_engine._identify_shazam = shazam_fn
         core_engine._identify_audd = audd_fn
-        core_engine.runtime["fallback_enabled"] = enabled
-        core_engine.runtime["audd_token"] = token
+        core_engine.runtime["fallback_provider"] = provider
+        core_engine.runtime["audd_token"] = "tok"
 
     def test_audd_rescues_after_first_shazam_miss(self):
         async def shazam(_w):
@@ -457,18 +457,141 @@ class AuddFallbackFlowTest(unittest.TestCase):
         async def audd(_w):
             self.audd_calls += 1
             return {"title": "X", "artist": "Y"}
-        self._set(shazam, audd, enabled=False)
+        self._set(shazam, audd, provider="none")
         asyncio.run(core_engine.recognize_audio())
         self.assertEqual(self.audd_calls, 0)
         self.assertEqual(self.handled, [])
 
-    def test_no_token_never_calls_audd(self):
-        async def shazam(_w):
-            self.shazam_calls += 1
+class FallbackDispatchTest(unittest.TestCase):
+    def setUp(self):
+        self._orig = (core_engine._identify_audd, core_engine._identify_acoustid,
+                      core_engine.runtime["fallback_provider"])
+        self.calls = []
+        async def fake_audd(_w):
+            self.calls.append("audd"); return {"title": "AudD", "artist": "A"}
+        async def fake_acoustid(_w):
+            self.calls.append("acoustid"); return {"title": "AcoustID", "artist": "A"}
+        core_engine._identify_audd = fake_audd
+        core_engine._identify_acoustid = fake_acoustid
+
+    def tearDown(self):
+        (core_engine._identify_audd, core_engine._identify_acoustid,
+         core_engine.runtime["fallback_provider"]) = self._orig
+
+    def test_none_routes_to_nothing(self):
+        core_engine.runtime["fallback_provider"] = "none"
+        self.assertIsNone(asyncio.run(core_engine._identify_fallback(b"")))
+        self.assertEqual(self.calls, [])
+
+    def test_audd_routes_to_audd(self):
+        core_engine.runtime["fallback_provider"] = "audd"
+        n = asyncio.run(core_engine._identify_fallback(b""))
+        self.assertEqual(n["title"], "AudD")
+        self.assertEqual(self.calls, ["audd"])
+
+    def test_acoustid_routes_to_acoustid(self):
+        core_engine.runtime["fallback_provider"] = "acoustid"
+        n = asyncio.run(core_engine._identify_fallback(b""))
+        self.assertEqual(n["title"], "AcoustID")
+        self.assertEqual(self.calls, ["acoustid"])
+
+
+class AcoustidAdapterTest(unittest.TestCase):
+    def setUp(self):
+        self._orig = (core_engine._chromaprint_fingerprint, core_engine._acoustid_lookup,
+                      core_engine.ACOUSTID_CLIENT_KEY)
+
+    def tearDown(self):
+        (core_engine._chromaprint_fingerprint, core_engine._acoustid_lookup,
+         core_engine.ACOUSTID_CLIENT_KEY) = self._orig
+
+    def test_maps_best_score_result(self):
+        results = [
+            {"score": 0.3, "recordings": [{"title": "Wrong", "artists": [{"name": "X"}]}]},
+            {"score": 0.9, "recordings": [{
+                "title": "Right", "artists": [{"name": "Tones and I"}],
+                "releasegroups": [{"title": "The Album"}]}]},
+        ]
+        n = core_engine._acoustid_to_normalized(results)
+        self.assertEqual(n["title"], "Right")
+        self.assertEqual(n["artist"], "Tones and I")
+        self.assertEqual(n["album"], "The Album")
+        self.assertIsNone(n["art_url"])
+
+    def test_joins_multiple_artists(self):
+        results = [{"score": 1.0, "recordings": [{
+            "title": "T", "artists": [{"name": "A"}, {"name": "B"}]}]}]
+        self.assertEqual(core_engine._acoustid_to_normalized(results)["artist"], "A, B")
+
+    def test_no_recordings_or_title_returns_none(self):
+        self.assertIsNone(core_engine._acoustid_to_normalized([]))
+        self.assertIsNone(core_engine._acoustid_to_normalized([{"score": 1.0, "recordings": []}]))
+        self.assertIsNone(core_engine._acoustid_to_normalized(
+            [{"score": 1.0, "recordings": [{"artists": [{"name": "A"}]}]}]))  # no title
+
+    def test_identify_success(self):
+        async def fake_fp(_w):
+            return (180, "AQADtMk")
+        async def fake_lookup(_d, _f):
+            return {"status": "ok", "results": [
+                {"score": 1.0, "recordings": [{"title": "T", "artists": [{"name": "A"}]}]}]}
+        core_engine._chromaprint_fingerprint = fake_fp
+        core_engine._acoustid_lookup = fake_lookup
+        core_engine.ACOUSTID_CLIENT_KEY = "key"
+        n = asyncio.run(core_engine._identify_acoustid(b""))
+        self.assertEqual(n["title"], "T")
+
+    def test_identify_no_results_returns_none(self):
+        async def fake_fp(_w):
+            return (180, "fp")
+        async def fake_lookup(_d, _f):
+            return {"status": "ok", "results": []}
+        core_engine._chromaprint_fingerprint = fake_fp
+        core_engine._acoustid_lookup = fake_lookup
+        core_engine.ACOUSTID_CLIENT_KEY = "key"
+        self.assertIsNone(asyncio.run(core_engine._identify_acoustid(b"")))
+
+    def test_identify_fingerprint_failure_skips_lookup(self):
+        self.lookup_called = False
+        async def fake_fp(_w):
             return None
-        async def audd(_w):
-            self.audd_calls += 1
-            return {"title": "X", "artist": "Y"}
-        self._set(shazam, audd, enabled=True, token="")
-        asyncio.run(core_engine.recognize_audio())
-        self.assertEqual(self.audd_calls, 0)
+        async def fake_lookup(_d, _f):
+            self.lookup_called = True
+            return {}
+        core_engine._chromaprint_fingerprint = fake_fp
+        core_engine._acoustid_lookup = fake_lookup
+        core_engine.ACOUSTID_CLIENT_KEY = "key"
+        self.assertIsNone(asyncio.run(core_engine._identify_acoustid(b"")))
+        self.assertFalse(self.lookup_called)
+
+    def test_identify_no_key_skips_fingerprint(self):
+        self.fp_called = False
+        async def fake_fp(_w):
+            self.fp_called = True
+            return (1, "x")
+        core_engine._chromaprint_fingerprint = fake_fp
+        core_engine.ACOUSTID_CLIENT_KEY = ""
+        self.assertIsNone(asyncio.run(core_engine._identify_acoustid(b"")))
+        self.assertFalse(self.fp_called)
+
+
+class SilenceStepTest(unittest.TestCase):
+    def s(self, sc, in_song, back_off, ns=3, stop=5):
+        return core_engine._silence_step(sc, in_song, back_off, ns, stop)
+
+    def test_backoff_survives_brief_dip(self):
+        # The phantom post-scan zero / a 1-tick dip: below the interval -> stays armed.
+        self.assertEqual(self.s(0, False, True), (1, True, False))
+
+    def test_backoff_clears_after_qualifying_gap(self):
+        # silence_counter reaches new_song_silence (3) -> back_off clears.
+        self.assertEqual(self.s(2, False, True), (3, False, False))
+
+    def test_in_song_stops_at_stopped_silence(self):
+        self.assertEqual(self.s(4, True, False), (5, False, True))
+
+    def test_in_song_below_stop_does_not_stop(self):
+        self.assertEqual(self.s(3, True, False), (4, False, False))
+
+    def test_not_in_song_never_stops(self):
+        self.assertEqual(self.s(10, False, False), (11, False, False))

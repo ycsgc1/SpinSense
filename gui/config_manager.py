@@ -23,7 +23,7 @@ class AudioConfig(BaseModel):
     Stopped_Silence_Interval: float = 5.0
     Rescan_Wait_Interval: float = 5.0
     Retrigger_On_Track_Change: bool = False
-    Fallback_Enabled: bool = False
+    Fallback_Provider: Literal["none", "audd", "acoustid"] = "none"
     AudD_API_Token: str = ""
 
 class MQTTBrokerConfig(BaseModel):
