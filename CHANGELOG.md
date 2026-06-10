@@ -2,7 +2,7 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
-## [Unreleased]
+## [1.5.0.5] - 2026-06-10
 
 ### Added
 - **AcoustID backup recognizer + a "Backup recognizer" menu in Settings.** Shazam stays the always-on primary; you can now pick a backup from **None / AudD / AcoustID**. AcoustID is free (no subscription, no signup — an app key ships embedded), using on-device Chromaprint fingerprints against the MusicBrainz-linked AcoustID database. Off by default.
