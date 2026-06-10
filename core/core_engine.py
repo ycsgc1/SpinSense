@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import subprocess
+import tempfile
 import io
 import wave
 import urllib.parse
@@ -632,6 +634,109 @@ async def _identify_audd(wav_bytes: bytes) -> dict | None:
     if not result:
         return None
     return _audd_to_normalized(result)
+
+
+ACOUSTID_CLIENT_KEY = os.environ.get("SPINSENSE_ACOUSTID_KEY", "UGhMOSOjGb")
+ACOUSTID_LOOKUP_URL = "https://api.acoustid.org/v2/lookup"
+
+
+def _acoustid_to_normalized(results: list) -> dict | None:
+    """Pure: map AcoustID lookup `results` to the normalized track shape, or None."""
+    if not results:
+        return None
+    best = max(results, key=lambda r: r.get("score", 0) if isinstance(r, dict) else 0)
+    recordings = best.get("recordings") or []
+    if not recordings or not isinstance(recordings[0], dict):
+        return None
+    rec = recordings[0]
+    title = rec.get("title")
+    if not title:
+        return None
+    artists = rec.get("artists") or []
+    names = [a.get("name", "") for a in artists if isinstance(a, dict) and a.get("name")]
+    artist = ", ".join(names) or "Unknown Artist"
+    album = None
+    rgs = rec.get("releasegroups") or []
+    if rgs and isinstance(rgs[0], dict):
+        album = rgs[0].get("title") or None
+    return {
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "art_url": None,   # iTunes enrichment supplies art downstream
+        "isrc": None,
+        "genre": None,
+        "release_year": None,
+    }
+
+
+def _run_fpcalc(wav_bytes: bytes) -> tuple[int, str] | None:
+    """Blocking: write the WAV to a temp file, run `fpcalc -json`, return
+    (duration_seconds, fingerprint). None on missing binary / error."""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav") as f:
+            f.write(wav_bytes)
+            f.flush()
+            out = subprocess.run(
+                ["fpcalc", "-json", f.name],
+                capture_output=True, text=True, timeout=15,
+            )
+        if out.returncode != 0:
+            print(f"⚠️ fpcalc exited {out.returncode}: {out.stderr.strip()}")
+            return None
+        data = json.loads(out.stdout)
+        return (int(round(float(data["duration"]))), data["fingerprint"])
+    except FileNotFoundError:
+        print("⚠️ fpcalc not installed — AcoustID unavailable")
+        return None
+    except Exception as e:
+        print(f"⚠️ fpcalc failed: {e}")
+        return None
+
+
+async def _chromaprint_fingerprint(wav_bytes: bytes) -> tuple[int, str] | None:
+    """Compute a Chromaprint fingerprint via fpcalc, off the event loop."""
+    return await asyncio.to_thread(_run_fpcalc, wav_bytes)
+
+
+async def _acoustid_lookup(duration: int, fingerprint: str) -> dict | None:
+    """POST to the AcoustID lookup API; return parsed JSON, or None on any error."""
+    try:
+        data = aiohttp.FormData()
+        data.add_field("client", ACOUSTID_CLIENT_KEY)
+        data.add_field("duration", str(duration))
+        data.add_field("fingerprint", fingerprint)
+        data.add_field("meta", "recordings+releasegroups")
+        data.add_field("format", "json")
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(ACOUSTID_LOOKUP_URL, data=data) as resp:
+                if resp.status != 200:
+                    print(f"⚠️ AcoustID HTTP {resp.status}")
+                    return None
+                return await resp.json(content_type=None)
+    except Exception as e:
+        print(f"⚠️ AcoustID request failed: {e}")
+        return None
+
+
+async def _identify_acoustid(wav_bytes: bytes) -> dict | None:
+    """Recognize via AcoustID (Chromaprint fingerprint + lookup); normalized dict
+    or None. No-ops without a client key; any error is a clean miss."""
+    if not ACOUSTID_CLIENT_KEY:
+        return None
+    fp = await _chromaprint_fingerprint(wav_bytes)
+    if not fp:
+        return None
+    duration, fingerprint = fp
+    print("[!] Trying AcoustID fallback...")
+    body = await _acoustid_lookup(duration, fingerprint)
+    if not isinstance(body, dict) or body.get("status") != "ok":
+        return None
+    results = body.get("results") or []
+    if not results:
+        return None
+    return _acoustid_to_normalized(results)
 
 
 async def _handle_match(track: dict) -> None:

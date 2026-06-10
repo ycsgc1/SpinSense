@@ -472,3 +472,83 @@ class AuddFallbackFlowTest(unittest.TestCase):
         self._set(shazam, audd, enabled=True, token="")
         asyncio.run(core_engine.recognize_audio())
         self.assertEqual(self.audd_calls, 0)
+        self.assertEqual(self.handled, [])
+
+
+class AcoustidAdapterTest(unittest.TestCase):
+    def setUp(self):
+        self._orig = (core_engine._chromaprint_fingerprint, core_engine._acoustid_lookup,
+                      core_engine.ACOUSTID_CLIENT_KEY)
+
+    def tearDown(self):
+        (core_engine._chromaprint_fingerprint, core_engine._acoustid_lookup,
+         core_engine.ACOUSTID_CLIENT_KEY) = self._orig
+
+    def test_maps_best_score_result(self):
+        results = [
+            {"score": 0.3, "recordings": [{"title": "Wrong", "artists": [{"name": "X"}]}]},
+            {"score": 0.9, "recordings": [{
+                "title": "Right", "artists": [{"name": "Tones and I"}],
+                "releasegroups": [{"title": "The Album"}]}]},
+        ]
+        n = core_engine._acoustid_to_normalized(results)
+        self.assertEqual(n["title"], "Right")
+        self.assertEqual(n["artist"], "Tones and I")
+        self.assertEqual(n["album"], "The Album")
+        self.assertIsNone(n["art_url"])
+
+    def test_joins_multiple_artists(self):
+        results = [{"score": 1.0, "recordings": [{
+            "title": "T", "artists": [{"name": "A"}, {"name": "B"}]}]}]
+        self.assertEqual(core_engine._acoustid_to_normalized(results)["artist"], "A, B")
+
+    def test_no_recordings_or_title_returns_none(self):
+        self.assertIsNone(core_engine._acoustid_to_normalized([]))
+        self.assertIsNone(core_engine._acoustid_to_normalized([{"score": 1.0, "recordings": []}]))
+        self.assertIsNone(core_engine._acoustid_to_normalized(
+            [{"score": 1.0, "recordings": [{"artists": [{"name": "A"}]}]}]))  # no title
+
+    def test_identify_success(self):
+        async def fake_fp(_w):
+            return (180, "AQADtMk")
+        async def fake_lookup(_d, _f):
+            return {"status": "ok", "results": [
+                {"score": 1.0, "recordings": [{"title": "T", "artists": [{"name": "A"}]}]}]}
+        core_engine._chromaprint_fingerprint = fake_fp
+        core_engine._acoustid_lookup = fake_lookup
+        core_engine.ACOUSTID_CLIENT_KEY = "key"
+        n = asyncio.run(core_engine._identify_acoustid(b""))
+        self.assertEqual(n["title"], "T")
+
+    def test_identify_no_results_returns_none(self):
+        async def fake_fp(_w):
+            return (180, "fp")
+        async def fake_lookup(_d, _f):
+            return {"status": "ok", "results": []}
+        core_engine._chromaprint_fingerprint = fake_fp
+        core_engine._acoustid_lookup = fake_lookup
+        core_engine.ACOUSTID_CLIENT_KEY = "key"
+        self.assertIsNone(asyncio.run(core_engine._identify_acoustid(b"")))
+
+    def test_identify_fingerprint_failure_skips_lookup(self):
+        self.lookup_called = False
+        async def fake_fp(_w):
+            return None
+        async def fake_lookup(_d, _f):
+            self.lookup_called = True
+            return {}
+        core_engine._chromaprint_fingerprint = fake_fp
+        core_engine._acoustid_lookup = fake_lookup
+        core_engine.ACOUSTID_CLIENT_KEY = "key"
+        self.assertIsNone(asyncio.run(core_engine._identify_acoustid(b"")))
+        self.assertFalse(self.lookup_called)
+
+    def test_identify_no_key_skips_fingerprint(self):
+        self.fp_called = False
+        async def fake_fp(_w):
+            self.fp_called = True
+            return (1, "x")
+        core_engine._chromaprint_fingerprint = fake_fp
+        core_engine.ACOUSTID_CLIENT_KEY = ""
+        self.assertIsNone(asyncio.run(core_engine._identify_acoustid(b"")))
+        self.assertFalse(self.fp_called)
