@@ -398,7 +398,7 @@ class AuddFallbackFlowTest(unittest.TestCase):
         self._orig = (core_engine._publish_phase, core_engine._capture_sample,
                       core_engine._rescan_pause, core_engine._handle_match,
                       core_engine._identify_shazam, core_engine._identify_audd)
-        self._orig_flags = (core_engine.runtime["fallback_enabled"],
+        self._orig_flags = (core_engine.runtime["fallback_provider"],
                             core_engine.runtime["audd_token"],
                             core_engine.runtime["rescan_wait"])
         core_engine._publish_phase = fake_phase
@@ -413,14 +413,14 @@ class AuddFallbackFlowTest(unittest.TestCase):
         (core_engine._publish_phase, core_engine._capture_sample,
          core_engine._rescan_pause, core_engine._handle_match,
          core_engine._identify_shazam, core_engine._identify_audd) = self._orig
-        (core_engine.runtime["fallback_enabled"], core_engine.runtime["audd_token"],
+        (core_engine.runtime["fallback_provider"], core_engine.runtime["audd_token"],
          core_engine.runtime["rescan_wait"]) = self._orig_flags
 
-    def _set(self, shazam_fn, audd_fn, enabled=True, token="tok"):
+    def _set(self, shazam_fn, audd_fn, provider="audd"):
         core_engine._identify_shazam = shazam_fn
         core_engine._identify_audd = audd_fn
-        core_engine.runtime["fallback_enabled"] = enabled
-        core_engine.runtime["audd_token"] = token
+        core_engine.runtime["fallback_provider"] = provider
+        core_engine.runtime["audd_token"] = "tok"
 
     def test_audd_rescues_after_first_shazam_miss(self):
         async def shazam(_w):
@@ -457,22 +457,43 @@ class AuddFallbackFlowTest(unittest.TestCase):
         async def audd(_w):
             self.audd_calls += 1
             return {"title": "X", "artist": "Y"}
-        self._set(shazam, audd, enabled=False)
+        self._set(shazam, audd, provider="none")
         asyncio.run(core_engine.recognize_audio())
         self.assertEqual(self.audd_calls, 0)
         self.assertEqual(self.handled, [])
 
-    def test_no_token_never_calls_audd(self):
-        async def shazam(_w):
-            self.shazam_calls += 1
-            return None
-        async def audd(_w):
-            self.audd_calls += 1
-            return {"title": "X", "artist": "Y"}
-        self._set(shazam, audd, enabled=True, token="")
-        asyncio.run(core_engine.recognize_audio())
-        self.assertEqual(self.audd_calls, 0)
-        self.assertEqual(self.handled, [])
+class FallbackDispatchTest(unittest.TestCase):
+    def setUp(self):
+        self._orig = (core_engine._identify_audd, core_engine._identify_acoustid,
+                      core_engine.runtime["fallback_provider"])
+        self.calls = []
+        async def fake_audd(_w):
+            self.calls.append("audd"); return {"title": "AudD", "artist": "A"}
+        async def fake_acoustid(_w):
+            self.calls.append("acoustid"); return {"title": "AcoustID", "artist": "A"}
+        core_engine._identify_audd = fake_audd
+        core_engine._identify_acoustid = fake_acoustid
+
+    def tearDown(self):
+        (core_engine._identify_audd, core_engine._identify_acoustid,
+         core_engine.runtime["fallback_provider"]) = self._orig
+
+    def test_none_routes_to_nothing(self):
+        core_engine.runtime["fallback_provider"] = "none"
+        self.assertIsNone(asyncio.run(core_engine._identify_fallback(b"")))
+        self.assertEqual(self.calls, [])
+
+    def test_audd_routes_to_audd(self):
+        core_engine.runtime["fallback_provider"] = "audd"
+        n = asyncio.run(core_engine._identify_fallback(b""))
+        self.assertEqual(n["title"], "AudD")
+        self.assertEqual(self.calls, ["audd"])
+
+    def test_acoustid_routes_to_acoustid(self):
+        core_engine.runtime["fallback_provider"] = "acoustid"
+        n = asyncio.run(core_engine._identify_fallback(b""))
+        self.assertEqual(n["title"], "AcoustID")
+        self.assertEqual(self.calls, ["acoustid"])
 
 
 class AcoustidAdapterTest(unittest.TestCase):

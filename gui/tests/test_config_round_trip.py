@@ -127,18 +127,29 @@ class ConfigRoundTripTest(unittest.TestCase):
         loaded = config_manager.load_config()
         self.assertAlmostEqual(loaded["Audio"]["Rescan_Wait_Interval"], 7.5)
 
-    def test_fallback_defaults_off_and_empty_token(self):
+    def test_fallback_provider_defaults_none(self):
         defaults = config_manager.get_default_config()
-        self.assertEqual(defaults["Audio"]["Fallback_Enabled"], False)
+        self.assertEqual(defaults["Audio"]["Fallback_Provider"], "none")
         self.assertEqual(defaults["Audio"]["AudD_API_Token"], "")
 
-    def test_fallback_settings_round_trip(self):
+    def test_fallback_provider_round_trips(self):
+        for provider in ("audd", "acoustid", "none"):
+            cfg = config_manager.get_default_config()
+            cfg["Audio"]["Fallback_Provider"] = provider
+            self.assertTrue(config_manager.save_config(cfg), f"{provider} should validate")
+            loaded = config_manager.load_config()
+            self.assertEqual(loaded["Audio"]["Fallback_Provider"], provider)
+
+    def test_fallback_provider_rejects_unknown(self):
         cfg = config_manager.get_default_config()
-        cfg["Audio"]["Fallback_Enabled"] = True
+        cfg["Audio"]["Fallback_Provider"] = "spotify"
+        self.assertFalse(config_manager.save_config(cfg))
+
+    def test_audd_token_round_trips(self):
+        cfg = config_manager.get_default_config()
         cfg["Audio"]["AudD_API_Token"] = "tok_abc123"
         self.assertTrue(config_manager.save_config(cfg))
         loaded = config_manager.load_config()
-        self.assertEqual(loaded["Audio"]["Fallback_Enabled"], True)
         self.assertEqual(loaded["Audio"]["AudD_API_Token"], "tok_abc123")
 
 

@@ -32,7 +32,7 @@ DEFAULT_CONFIG = {
         "New_Song_Silence_Interval": 3.0,
         "Stopped_Silence_Interval": 5.0,
         "Rescan_Wait_Interval": 5.0,
-        "Fallback_Enabled": False,
+        "Fallback_Provider": "none",
         "AudD_API_Token": "",
         # NOTE: keep these defaults in sync with gui/config_manager.AudioConfig.
     },
@@ -84,7 +84,7 @@ runtime = {
     "new_song_silence": 3.0,
     "stopped_silence": 5.0,
     "rescan_wait": 5.0,
-    "fallback_enabled": False,
+    "fallback_provider": "none",
     "audd_token": "",
     "mic_device": None,
     "mqtt_host": "127.0.0.1",
@@ -102,7 +102,7 @@ def _populate_runtime(cfg):
     runtime["stopped_silence"]  = cfg.get('Audio', {}).get('Stopped_Silence_Interval', 5.0)
     runtime["rescan_wait"]      = cfg.get('Audio', {}).get('Rescan_Wait_Interval', 5.0)
     runtime["retrigger_on_track_change"] = cfg.get('Audio', {}).get('Retrigger_On_Track_Change', False)
-    runtime["fallback_enabled"] = cfg.get('Audio', {}).get('Fallback_Enabled', False)
+    runtime["fallback_provider"] = cfg.get('Audio', {}).get('Fallback_Provider', 'none')
     runtime["audd_token"]       = cfg.get('Audio', {}).get('AudD_API_Token', '')
     runtime["mic_device"]       = _normalize_mic(cfg)
     runtime["mqtt_host"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Host', '127.0.0.1')
@@ -739,6 +739,16 @@ async def _identify_acoustid(wav_bytes: bytes) -> dict | None:
     return _acoustid_to_normalized(results)
 
 
+async def _identify_fallback(wav_bytes: bytes) -> dict | None:
+    """Route the attempt-0 fallback to the configured backup recognizer."""
+    provider = runtime["fallback_provider"]
+    if provider == "audd":
+        return await _identify_audd(wav_bytes)
+    if provider == "acoustid":
+        return await _identify_acoustid(wav_bytes)
+    return None
+
+
 async def _handle_match(track: dict) -> None:
     """Enrich, publish, and record a matched track. `track` is the NORMALIZED shape
     produced by a backend (_identify_shazam / _identify_audd)."""
@@ -827,9 +837,8 @@ async def recognize_audio():
         wav = await _capture_sample(sample_len)
         await _publish_phase("identifying" if attempt == 0 else "retrying")
         track = await _identify_shazam(wav)
-        if (track is None and attempt == 0
-                and runtime["fallback_enabled"] and runtime["audd_token"]):
-            track = await _identify_audd(wav)  # reuse the first sample
+        if track is None and attempt == 0:
+            track = await _identify_fallback(wav)  # reuse the first sample
         if track:
             break
 
