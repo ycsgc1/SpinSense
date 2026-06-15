@@ -2,6 +2,11 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [1.5.1.0] - 2026-06-15
+
+### Added
+- **SpinSense now has a logo.** A vinyl-and-soundwaves mark (vector source in `art/logo.svg`) ships as the browser favicon and Apple touch icon, sits beside the "SpinSense" wordmark in the desktop sidebar and mobile header, and heads the README. Colours match the existing app palette; no functional change.
+
 ## [1.5.0.5] - 2026-06-10
 
 ### Added
