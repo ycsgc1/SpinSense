@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta content="width=device-width, initial-scale=1.0" name="viewport">
 <title>{% block title %}SpinSense{% endblock %}</title>
+<link rel="icon" href="/static/favicon.svg?v={{ asset_v }}" type="image/svg+xml">
+<link rel="icon" href="/static/favicon-32.png?v={{ asset_v }}" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v={{ asset_v }}">
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@600;700&display=swap" rel="stylesheet">
@@ -94,7 +97,10 @@ tailwind.config = {
 <!-- Desktop sidebar -->
 <nav class="hidden md:flex flex-col fixed left-0 top-0 h-full py-md px-sm bg-surface/30 backdrop-blur-[20px] border-r border-white/10 w-64 z-50">
   <div class="mb-xl">
-    <h1 class="font-headline text-headline-md text-primary tracking-tight">SpinSense</h1>
+    <div class="flex items-center gap-xs">
+      <img src="/static/favicon.svg?v={{ asset_v }}" alt="" width="32" height="32" class="flex-shrink-0">
+      <h1 class="font-headline text-headline-md text-primary tracking-tight">SpinSense</h1>
+    </div>
     <p class="text-body-sm text-on-surface-variant mt-1">Hi-Fi Scrobbler</p>
   </div>
 
@@ -122,7 +128,10 @@ tailwind.config = {
 
 <!-- Mobile top bar -->
 <header class="md:hidden fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile h-16 bg-surface/40 backdrop-blur-[20px] border-b border-white/10">
-  <a href="/" class="font-headline text-headline-md text-primary tracking-tight">SpinSense</a>
+  <a href="/" class="flex items-center gap-xs font-headline text-headline-md text-primary tracking-tight">
+    <img src="/static/favicon.svg?v={{ asset_v }}" alt="" width="28" height="28" class="flex-shrink-0">
+    SpinSense
+  </a>
   <div id="engine-pill-mobile"
        data-state="idle"
        class="engine-pill flex items-center gap-xs px-3 py-1.5 rounded-full border border-outline-variant/40 bg-surface-container/40">

@@ -1,4 +1,8 @@
-# 💿 SpinSense
+<p align="center">
+  <img src="docs/images/spinsense-logo.png" alt="SpinSense logo" width="160" />
+</p>
+
+<h1 align="center">SpinSense</h1>
 
 Integrate your analogue record player into your digital life. SpinSense listens to your turntable, identifies the track that's playing with audio recognition, and surfaces it in Home Assistant as a `media_player` — so the song spinning on your deck shows up alongside the rest of your smart home.
 
