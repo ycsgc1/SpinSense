@@ -69,7 +69,7 @@ Advertises SpinSense on the LAN so the [companion HACS integration](https://gith
 
 ### MQTT (advanced)
 
-Publishes track state to your own MQTT broker; Home Assistant's MQTT integration then picks SpinSense up via MQTT discovery. Off by default.
+Publishes track state to your own MQTT broker on plain topics (`home/vinyl/*`) — wire them into Home Assistant with [manual MQTT sensors](https://www.home-assistant.io/integrations/sensor.mqtt/). Off by default.
 
 | Setting | What it does | Default |
 |---|---|---|
@@ -78,7 +78,7 @@ Publishes track state to your own MQTT broker; Home Assistant's MQTT integration
 | **Port** | Broker port. | `1883` |
 | **Username** / **Password** | Broker credentials (leave blank for anonymous). Password stored in plaintext in `config.json`. | *(empty)* |
 
-The Settings page has a **Test connection** button to verify host/port/credentials before saving.
+In Settings the broker fields stay collapsed until **Enable MQTT** is switched on; a **Test connection** button verifies host/port/credentials before saving.
 
 ---
 

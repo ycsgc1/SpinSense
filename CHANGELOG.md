@@ -2,6 +2,18 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [Unreleased]
+
+### Added
+- **"Enable MQTT" toggle in Settings.** The MQTT broker fields (host/port/credentials + Test connection) now sit collapsed behind an Enable MQTT switch — out of the way for the mDNS-discovery majority. This also makes MQTT toggleable after setup: previously the on/off switch only existed in the setup wizard.
+
+### Changed
+- Refreshed the two Home Assistant wizard screenshots (`Connection_Selection.png`, `MQTT_Interface.png`), which still showed pre-1.0 copy.
+- Docs: corrected the MQTT sections in the README and configuration reference — SpinSense publishes plain `home/vinyl/*` state topics for manual MQTT sensors (the non-functional HA MQTT-discovery payload was removed back in 1.4.0.0).
+
+### Removed
+- Build-time scaffolding: the `stitch/` design mockups, the committed `.DS_Store` files, and the empty `.env.example`. `.DS_Store` is now gitignored.
+
 ## [1.5.1.1] - 2026-07-05
 
 ### Fixed

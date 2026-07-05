@@ -9,7 +9,7 @@ Integrate your analogue record player into your digital life. SpinSense listens 
 ## ✨ Features
 
 - **Automatic track ID** — a Shazam-compatible recognizer identifies whatever's on the platter, with an optional **free AcoustID** (or AudD) backup for the tracks Shazam can't get.
-- **Zero-config Home Assistant discovery** — auto-appears as a `media_player` via **mDNS** (no broker, recommended) or **MQTT** discovery.
+- **Zero-config Home Assistant discovery** — auto-appears as a `media_player` via **mDNS** (no broker, recommended), or publish state over **MQTT** to your own broker.
 - **Runs where your deck is** — Docker-first; works on a Raspberry Pi (ARM) next to the turntable or on your x64 NAS.
 - **Guided onboarding** — a built-in web wizard walks you through mic selection and "silence vs. music" calibration.
 - **Local & private** — recognition and history stay on your hardware.
@@ -76,7 +76,7 @@ Install the companion integration so Home Assistant can discover SpinSense:
 1. In **HACS → Custom repositories**, add `https://github.com/ycsgc1/homeassistant-spinsense` with category **Integration**, then install it and restart Home Assistant.
 2. With SpinSense running (host networking), it's auto-discovered under **Settings → Devices & Services → Discovered** — accept it to add the `media_player` entity. No IP or port to type in.
 
-Prefer MQTT? Skip the integration, enable MQTT in the setup wizard, and Home Assistant's MQTT integration will pick SpinSense up via MQTT discovery.
+Prefer MQTT? Skip the integration, enable MQTT in the setup wizard (or later in **Settings → MQTT Broker**), and SpinSense publishes state on plain `home/vinyl/*` topics you can wire up with manual MQTT sensors.
 
 ---
 

@@ -209,3 +209,5 @@ __marimo__/
 # SpinSense Custom Ignores
 config.json
 data/
+.gstack/
+.DS_Store

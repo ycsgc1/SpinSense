@@ -9,6 +9,8 @@
   const THRESHOLD_SLIDER = document.getElementById("volume-threshold");
   const RMS_BAR = document.getElementById("rms-preview-bar");
   const RMS_TICK = document.getElementById("rms-threshold-tick");
+  const MQTT_ENABLED = document.getElementById("mqtt-enabled");
+  const MQTT_FIELDS = document.getElementById("mqtt-fields");
 
   // dB display range. Threshold value posted to the backend is linear RMS;
   // the slider + number input both operate in dB and we convert on the way
@@ -67,6 +69,14 @@
     TOAST.dataset.kind = kind || "";
   }
 
+  // Broker fields are clutter for the mDNS-discovery majority: keep them
+  // collapsed unless MQTT is actually enabled (mirrors the setup wizard).
+  function syncMqttFieldsVisibility() {
+    if (MQTT_ENABLED && MQTT_FIELDS) {
+      MQTT_FIELDS.classList.toggle("hidden", !MQTT_ENABLED.checked);
+    }
+  }
+
   function updateThresholdTick() {
     const db = Number(THRESHOLD_SLIDER.value);
     const pct = ((db - DB_MIN) / (DB_MAX - DB_MIN)) * 100;
@@ -96,6 +106,7 @@
       THRESHOLD_NUMBER.value = db.toFixed(1);
     }
     updateThresholdTick();
+    syncMqttFieldsVisibility();
     setDirty(false);
     setToast("");
   }
@@ -229,6 +240,7 @@
   // Checkboxes emit `change`, not `input` — wire dirty tracking for them.
   FORM.addEventListener("change", (ev) => {
     if (ev.target.type === "checkbox" || ev.target.tagName === "SELECT") setDirty(true);
+    if (ev.target === MQTT_ENABLED) syncMqttFieldsVisibility();
   });
 
   FORM.addEventListener("submit", onSubmit);

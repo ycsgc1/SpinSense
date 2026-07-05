@@ -97,6 +97,13 @@
     <section class="glass-panel rounded-xl p-md md:p-lg">
       <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">MQTT Broker</h3>
 
+      <label class="flex items-center justify-between gap-md cursor-pointer">
+        <span class="text-body-sm text-on-surface">Enable MQTT<span class="help-tip" tabindex="0" role="note" aria-label="Help: Enable MQTT"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Publish now-playing state to your own MQTT broker (plain topics under home/vinyl/*) instead of — or in addition to — mDNS discovery. Most setups use the zero-config mDNS integration and can leave this off.</span></span></span>
+        <input type="checkbox" name="MQTT.Enabled" id="mqtt-enabled" class="sr-only peer">
+        <span class="relative shrink-0 w-11 h-6 rounded-full bg-surface-container-highest border border-outline-variant/40 peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-on-surface after:transition-transform peer-checked:after:translate-x-5"></span>
+      </label>
+
+      <div id="mqtt-fields" class="hidden mt-md">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-md">
         <label class="block md:col-span-2">
           <span class="text-body-sm text-on-surface mb-1 block">Host</span>
@@ -121,6 +128,7 @@
           Test connection
         </button>
         <span id="mqtt-test-status" class="text-body-sm" aria-live="polite"></span>
+      </div>
       </div>
     </section>
 
