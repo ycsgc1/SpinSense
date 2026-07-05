@@ -32,6 +32,7 @@ DEFAULT_CONFIG = {
         "New_Song_Silence_Interval": 3.0,
         "Stopped_Silence_Interval": 5.0,
         "Rescan_Wait_Interval": 5.0,
+        "Retrigger_On_Track_Change": False,
         "Fallback_Provider": "none",
         "AudD_API_Token": "",
         # NOTE: keep these defaults in sync with gui/config_manager.AudioConfig.
@@ -541,9 +542,16 @@ async def _capture_sample(sample_len: float | None = None) -> bytes:
 
 
 async def _identify_shazam(wav_bytes: bytes) -> dict | None:
-    """Recognize via Shazam; return a normalized track dict, or None on no match."""
+    """Recognize via Shazam; return a normalized track dict, or None on no match.
+    Any request error is a clean miss (matches AudD/AcoustID) — an unhandled
+    exception here would propagate up through recognize_audio() and kill the
+    monitor loop."""
     print("[!] Analyzing with Shazam...")
-    out = await shazam.recognize(wav_bytes)
+    try:
+        out = await shazam.recognize(wav_bytes)
+    except Exception as e:
+        print(f"⚠️ Shazam request failed: {e}")
+        return None
     if not (isinstance(out, dict) and 'track' in out):
         return None
     track = out['track'] or {}

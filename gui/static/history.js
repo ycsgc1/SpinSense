@@ -73,11 +73,30 @@
     if (rows.length === 0) return;
     // Group by date as we go. Each date header gets its own section so styling
     // is simple and re-rendering doesn't need to know about prior pages.
+    //
+    // Rows that continue the date group already rendered by the previous page
+    // are appended into that section's <ul> directly — string-stripping the
+    // closing tags off LIST.innerHTML can't reopen them (the parser rebalances
+    // the markup on assignment, so the new rows would land outside the list).
+    let i = 0;
+    if (lastDateLabel != null) {
+      const lastUl = LIST.querySelector("section:last-of-type ul");
+      if (lastUl) {
+        let continuation = "";
+        while (i < rows.length && dateLabelForRow(rows[i]) === lastDateLabel) {
+          continuation += rowHtml(rows[i]);
+          i++;
+        }
+        if (continuation) lastUl.insertAdjacentHTML("beforeend", continuation);
+      }
+    }
+
     let buffer = "";
     let currentDate = lastDateLabel;
-    let listOpen = lastDateLabel != null;
+    let listOpen = false;
 
-    for (const row of rows) {
+    for (; i < rows.length; i++) {
+      const row = rows[i];
       const label = dateLabelForRow(row);
       if (label !== currentDate) {
         if (listOpen) buffer += "</ul></section>";
@@ -93,19 +112,7 @@
     }
     if (listOpen) buffer += "</ul></section>";
 
-    // If we already had an open section from the previous page and the first
-    // row of this page falls under the same date, the section tag we just
-    // opened above would create a duplicate header. Merge by stripping the
-    // last "</ul></section>" from existing markup and the leading new section
-    // opening when their date labels match.
-    if (lastDateLabel != null && rows[0] && dateLabelForRow(rows[0]) === lastDateLabel) {
-      // Remove the closing tags from the previous render to keep the list open
-      LIST.innerHTML = LIST.innerHTML.replace(/<\/ul><\/section>\s*$/, "");
-      // Strip the leading section open from our buffer
-      buffer = buffer.replace(/^\s*<section[^>]*>\s*<h3[^>]*>[^<]*<\/h3>\s*<ul[^>]*>/, "");
-    }
-
-    LIST.insertAdjacentHTML("beforeend", buffer);
+    if (buffer) LIST.insertAdjacentHTML("beforeend", buffer);
     lastDateLabel = currentDate;
   }
 

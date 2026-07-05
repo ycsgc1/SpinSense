@@ -206,6 +206,14 @@ class ShazamNormalizeTest(unittest.TestCase):
         core_engine.shazam.recognize = fake_recognize
         self.assertIsNone(asyncio.run(core_engine._identify_shazam(b"")))
 
+    def test_request_error_is_clean_miss(self):
+        # A network/API failure must not propagate — it would kill the
+        # monitor loop. It's a miss, so the retry ladder + fallback still run.
+        async def fake_recognize(_wav):
+            raise OSError("connection reset")
+        core_engine.shazam.recognize = fake_recognize
+        self.assertIsNone(asyncio.run(core_engine._identify_shazam(b"")))
+
 
 class HandleMatchArtTest(unittest.TestCase):
     def setUp(self):
