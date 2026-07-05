@@ -2,6 +2,13 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [1.5.1.1] - 2026-07-05
+
+### Fixed
+- **A network hiccup during identification could permanently silence the engine.** Shazam was the only recognizer whose request errors weren't handled — one failed request crashed the audio monitor loop, leaving the web UI running but nothing ever identified again until a container restart. A failed request is now treated as a miss (matching the AudD/AcoustID backends), so the escalating retries and the backup recognizer still run.
+- **History rows loaded by infinite scroll could render outside their date group.** With more than 50 plays in one date group, the next page's rows for that same date were inserted as bare, unstyled list items below the group's panel instead of inside it.
+- Internal: reconciled the engine's default-config table with the config validator (`Retrigger_On_Track_Change`); no runtime change.
+
 ## [1.5.1.0] - 2026-06-15
 
 ### Added
