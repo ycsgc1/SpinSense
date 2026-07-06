@@ -340,5 +340,60 @@ class EndedAtAndDurationTest(unittest.TestCase):
         self.assertEqual(cols.count("duration_secs"), 1)
 
 
+class EndedAtStampingTest(unittest.TestCase):
+    """Feed frames through _record_if_new; assert ended_at stamping."""
+
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        play_history.init_db(db_path=self.db_path)
+        self._orig_db = play_history.DB_PATH
+        play_history.DB_PATH = self.db_path  # _record_if_new writes here
+        ipc_manager._last_recorded_key = None
+        ipc_manager._last_play_id = None
+
+    def tearDown(self):
+        play_history.DB_PATH = self._orig_db
+        ipc_manager._last_recorded_key = None
+        ipc_manager._last_play_id = None
+        try:
+            os.remove(self.db_path)
+        except OSError:
+            pass
+
+    def _rows(self):
+        import sqlite3
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM plays ORDER BY id").fetchall()
+        conn.close()
+        return rows
+
+    def test_next_track_stamps_previous(self):
+        asyncio.run(ipc_manager._record_if_new({"title": "One", "artist": "A"}))
+        asyncio.run(ipc_manager._record_if_new({"title": "Two", "artist": "A"}))
+        rows = self._rows()
+        self.assertEqual(len(rows), 2)
+        self.assertIsNotNone(rows[0]["ended_at"])   # closed by track change
+        self.assertIsNone(rows[1]["ended_at"])      # still playing
+
+    def test_silence_stamps_current(self):
+        asyncio.run(ipc_manager._record_if_new({"title": "One", "artist": "A"}))
+        asyncio.run(ipc_manager._record_if_new({"title": "", "artist": ""}))
+        rows = self._rows()
+        self.assertIsNotNone(rows[0]["ended_at"])
+        self.assertIsNone(ipc_manager._last_play_id)
+
+    def test_repeated_frames_do_not_stamp(self):
+        asyncio.run(ipc_manager._record_if_new({"title": "One", "artist": "A"}))
+        asyncio.run(ipc_manager._record_if_new({"title": "One", "artist": "A"}))
+        self.assertIsNone(self._rows()[0]["ended_at"])
+
+    def test_duration_passes_through(self):
+        asyncio.run(ipc_manager._record_if_new(
+            {"title": "One", "artist": "A", "duration_secs": 245}))
+        self.assertEqual(self._rows()[0]["duration_secs"], 245)
+
+
 if __name__ == "__main__":
     unittest.main()

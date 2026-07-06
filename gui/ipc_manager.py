@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import time
 from typing import TYPE_CHECKING
 
 import play_history
@@ -59,6 +60,12 @@ manager = ConnectionManager()
 # alone) so two different songs that share a title aren't collapsed into one row.
 _last_recorded_key: tuple[str, str] | None = None
 
+# The row id of the most recent play we recorded, still "open" (no ended_at).
+# Stamped when the next track starts or the engine reports silence; a GUI
+# restart mid-play simply leaves the row's ended_at NULL (excluded from
+# listening-time stats — never estimated).
+_last_play_id: int | None = None
+
 # Strong refs to in-flight art-download tasks so the event loop's weak task
 # tracking can't GC them mid-download; each removes itself on completion.
 _art_tasks: set = set()
@@ -99,14 +106,26 @@ async def _download_and_store_art(play_id: int, art_url: str) -> None:
         log.warning("art download failed for play %s: %s", play_id, e)
 
 
+async def _stamp_last_play_ended() -> None:
+    global _last_play_id
+    if _last_play_id is None:
+        return
+    try:
+        await asyncio.to_thread(play_history.set_ended_at, _last_play_id, int(time.time()))
+    except Exception as e:
+        log.warning("failed to stamp ended_at for play %s: %s", _last_play_id, e)
+    _last_play_id = None
+
+
 async def _record_if_new(track: dict) -> None:
     """Record a new identification if the title differs from the last one we
     saved. On silence (empty title) reset the dedupe state so the next play is
-    treated as new."""
-    global _last_recorded_key
+    treated as new, and close the open play's ended_at."""
+    global _last_recorded_key, _last_play_id
     title = (track or {}).get("title", "") or ""
 
     if title == "":
+        await _stamp_last_play_ended()
         _last_recorded_key = None
         return
 
@@ -120,17 +139,23 @@ async def _record_if_new(track: dict) -> None:
     isrc = track.get("isrc") or None
     genre = track.get("genre") or None
     release_year = track.get("release_year") or None
+    duration_secs = track.get("duration_secs") or None
+
+    # A different track is starting: the previous one just ended.
+    await _stamp_last_play_ended()
 
     try:
         play_id = await asyncio.to_thread(
             play_history.record_play, title, artist, album, art_url,
             isrc=isrc, genre=genre, release_year=release_year,
+            duration_secs=duration_secs,
         )
     except Exception as e:
         log.error("failed to record play %s - %s: %s", artist, title, e)
         return
 
     _last_recorded_key = key
+    _last_play_id = play_id
 
     if art_url:
         _art_tasks.add(task := asyncio.create_task(_download_and_store_art(play_id, art_url)))
