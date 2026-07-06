@@ -17,6 +17,8 @@ def _period_bounds(period: str, year: int | None, month: int | None,
                    now: int | None = None) -> tuple[int, int]:
     """(start, end) unix seconds in server-local time; end is exclusive.
     'all' -> (0, just past now). Raises ValueError on bad period/month."""
+    if month is not None and not 1 <= month <= 12:
+        raise ValueError(f"invalid month: {month!r}")
     now_dt = (datetime.datetime.fromtimestamp(now) if now is not None
               else datetime.datetime.now())
     if period == "all":
@@ -28,8 +30,6 @@ def _period_bounds(period: str, year: int | None, month: int | None,
     if period == "month":
         y = year if year is not None else now_dt.year
         m = month if month is not None else now_dt.month
-        if not 1 <= m <= 12:
-            raise ValueError(f"invalid month: {m!r}")
         start = datetime.datetime(y, m, 1)
         end = (datetime.datetime(y + 1, 1, 1) if m == 12
                else datetime.datetime(y, m + 1, 1))
@@ -157,12 +157,11 @@ def _decades(conn, start, end, total) -> dict:
 
 def compute_stats(period: str, year: int | None = None, month: int | None = None,
                   db_path: str | None = None, now: int | None = None) -> dict:
-    start, end = _period_bounds(period, year, month, now=now)
-    now_dt = (datetime.datetime.fromtimestamp(now) if now is not None
-              else datetime.datetime.now())
-    now_secs = now if now is not None else int(now_dt.timestamp())
-    resolved_year = year
-    resolved_month = month
+    now_secs = now if now is not None else int(datetime.datetime.now().timestamp())
+    start, end = _period_bounds(period, year, month, now=now_secs)
+    now_dt = datetime.datetime.fromtimestamp(now_secs)
+    resolved_year = None
+    resolved_month = None
     if period in ("year", "month"):
         resolved_year = year if year is not None else now_dt.year
         if period == "month":

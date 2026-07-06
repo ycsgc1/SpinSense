@@ -79,6 +79,12 @@ class PeriodBoundsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             stats._period_bounds("month", 2026, 13, now=NOW)
 
+    def test_month_validated_for_any_period(self):
+        with self.assertRaises(ValueError):
+            stats._period_bounds("year", 2025, 13, now=NOW)
+        with self.assertRaises(ValueError):
+            stats._period_bounds("all", None, 0, now=NOW)
+
 
 class TotalsTest(StatsTestBase):
     def test_counts_and_uniques(self):
@@ -211,3 +217,11 @@ class PeriodEchoTest(StatsTestBase):
         out = stats.compute_stats("month", 2025, 12, db_path=self.db, now=NOW)
         self.assertEqual(out["period"]["year"], 2025)
         self.assertEqual(out["period"]["month"], 12)
+
+    def test_irrelevant_fields_nulled(self):
+        out = stats.compute_stats("year", 2025, 5, db_path=self.db, now=NOW)
+        self.assertEqual(out["period"]["year"], 2025)
+        self.assertIsNone(out["period"]["month"])
+        out = stats.compute_stats("all", 2020, 5, db_path=self.db, now=NOW)
+        self.assertIsNone(out["period"]["year"])
+        self.assertIsNone(out["period"]["month"])

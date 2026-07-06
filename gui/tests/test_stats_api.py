@@ -51,3 +51,7 @@ class StatsApiTest(unittest.TestCase):
     def test_invalid_month_400(self):
         self.assertEqual(
             self.client.get("/api/stats?period=month&month=13").status_code, 400)
+
+    def test_invalid_month_400_for_year_period(self):
+        self.assertEqual(
+            self.client.get("/api/stats?period=year&month=13").status_code, 400)
