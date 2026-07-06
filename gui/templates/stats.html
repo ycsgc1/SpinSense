@@ -1,0 +1,91 @@
+{% extends "_layout.html" %}
+
+{% block title %}SpinSense — Stats{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto flex flex-col gap-lg">
+
+  <header class="flex flex-wrap items-center justify-between gap-md">
+    <div>
+      <h2 class="font-headline text-headline-lg text-on-background">Stats</h2>
+      <p class="text-body-sm text-on-surface-variant mt-1">Your listening, by the numbers.</p>
+    </div>
+    <div id="stats-period" class="flex items-center gap-1 bg-surface-container/60 border border-outline-variant/40 rounded-full p-1" role="tablist" aria-label="Period">
+      <button type="button" data-period="month" class="stats-period-btn px-4 py-1.5 rounded-full text-label-md transition-colors" role="tab">This month</button>
+      <button type="button" data-period="year" class="stats-period-btn px-4 py-1.5 rounded-full text-label-md transition-colors" role="tab">This year</button>
+      <button type="button" data-period="all" class="stats-period-btn px-4 py-1.5 rounded-full text-label-md transition-colors" role="tab">All time</button>
+    </div>
+  </header>
+
+  <div id="stats-empty" class="hidden glass-panel rounded-xl p-lg text-center flex flex-col items-center gap-xs">
+    <span class="material-symbols-outlined text-on-surface-variant" style="font-size: 48px;">insights</span>
+    <p class="font-headline text-headline-md text-on-background">No plays in this period</p>
+    <p class="text-body-sm text-on-surface-variant max-w-sm">Spin some records and your stats will build up here.</p>
+  </div>
+
+  <div id="stats-body" class="flex flex-col gap-lg">
+
+    <!-- Headline tiles -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-gutter">
+      <div class="glass-panel rounded-xl p-md">
+        <p class="text-label-md text-on-surface-variant uppercase tracking-widest">Plays</p>
+        <p id="stat-plays" class="font-headline text-headline-lg text-on-background mt-1 tabular-nums">—</p>
+      </div>
+      <div class="glass-panel rounded-xl p-md">
+        <p class="text-label-md text-on-surface-variant uppercase tracking-widest">Artists</p>
+        <p id="stat-artists" class="font-headline text-headline-lg text-on-background mt-1 tabular-nums">—</p>
+      </div>
+      <div class="glass-panel rounded-xl p-md">
+        <p class="text-label-md text-on-surface-variant uppercase tracking-widest">Tracks</p>
+        <p id="stat-tracks" class="font-headline text-headline-lg text-on-background mt-1 tabular-nums">—</p>
+      </div>
+      <div class="glass-panel rounded-xl p-md">
+        <p class="text-label-md text-on-surface-variant uppercase tracking-widest">Listening</p>
+        <p id="stat-listening" class="font-headline text-headline-lg text-on-background mt-1 tabular-nums">—</p>
+        <p id="stat-listening-note" class="text-label-sm text-on-surface-variant mt-0.5"></p>
+      </div>
+    </div>
+
+    <!-- Top artists / top tracks -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-gutter">
+      <section class="glass-panel rounded-xl p-md">
+        <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Top artists</h3>
+        <ol id="stats-top-artists" class="flex flex-col gap-2"></ol>
+      </section>
+      <section class="glass-panel rounded-xl p-md">
+        <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Top tracks</h3>
+        <ol id="stats-top-tracks" class="flex flex-col gap-2"></ol>
+      </section>
+    </div>
+
+    <!-- Plays over time -->
+    <section class="glass-panel rounded-xl p-md">
+      <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Plays over time</h3>
+      <div id="stats-chart" class="flex items-end gap-px h-40" role="img" aria-label="Plays per period"></div>
+      <div class="flex justify-between mt-2 text-label-sm text-on-surface-variant">
+        <span id="stats-chart-start"></span>
+        <span id="stats-chart-end"></span>
+      </div>
+    </section>
+
+    <!-- Genres + decades -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-gutter">
+      <section class="glass-panel rounded-xl p-md">
+        <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Genres</h3>
+        <div id="stats-genres" class="flex flex-col gap-2"></div>
+        <p id="stats-genres-note" class="text-label-sm text-on-surface-variant mt-sm"></p>
+      </section>
+      <section class="glass-panel rounded-xl p-md">
+        <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Decades</h3>
+        <div id="stats-decades" class="flex flex-col gap-2"></div>
+        <p id="stats-decades-note" class="text-label-sm text-on-surface-variant mt-sm"></p>
+      </section>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/stats.js?v={{ asset_v }}"></script>
+{% endblock %}
