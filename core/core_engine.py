@@ -392,6 +392,7 @@ state = {
     "isrc": None,
     "genre": None,
     "release_year": None,
+    "duration_secs": None,
     "back_off": False,
     "force_scan": False,
 }
@@ -416,6 +417,7 @@ def build_status_payload(phase: str, rms: float, st: dict) -> dict:
                 "isrc": st.get("isrc"),
                 "genre": st.get("genre"),
                 "release_year": st.get("release_year"),
+                "duration_secs": st.get("duration_secs"),
             },
         },
     }
@@ -451,6 +453,7 @@ async def _publish_idle_blip() -> None:
 
 
 async def fetch_itunes_metadata(artist, title):
+    """Return (album, art_url, duration_secs) from the iTunes Search API."""
     query = urllib.parse.quote_plus(f"{artist} {title}")
     url = f"https://itunes.apple.com/search?term={query}&entity=song&limit=1"
     try:
@@ -462,10 +465,14 @@ async def fetch_itunes_metadata(artist, title):
                         result = data["results"][0]
                         album = result.get("collectionName", "")
                         art_url = result.get("artworkUrl100", "").replace("100x100bb", "1000x1000bb")
-                        return album, art_url
+                        duration_secs = None
+                        ms = result.get("trackTimeMillis")
+                        if isinstance(ms, (int, float)) and ms > 0:
+                            duration_secs = int(round(ms / 1000))
+                        return album, art_url, duration_secs
     except Exception as e:
         print(f"⚠️ iTunes API error: {e}")
-    return None, None
+    return None, None, None
 
 
 async def fetch_image_base64(url):
@@ -565,6 +572,7 @@ async def _identify_shazam(wav_bytes: bytes) -> dict | None:
         "isrc": enr["isrc"],
         "genre": enr["genre"],
         "release_year": enr["release_year"],
+        "duration_secs": None,  # Shazam gives no reliable length
     }
 
 
@@ -597,6 +605,11 @@ def _audd_to_normalized(result: dict) -> dict:
         if isinstance(imgs, list) and imgs and isinstance(imgs[0], dict):
             art_url = imgs[0].get("url") or None
 
+    duration_secs = None
+    dm = am.get("durationInMillis")
+    if isinstance(dm, (int, float)) and dm > 0:
+        duration_secs = int(round(dm / 1000))
+
     return {
         "title": result.get("title", "Unknown Title"),
         "artist": result.get("artist", "Unknown Artist"),
@@ -605,6 +618,7 @@ def _audd_to_normalized(result: dict) -> dict:
         "isrc": isrc,
         "genre": genre,
         "release_year": release_year,
+        "duration_secs": duration_secs,
     }
 
 
@@ -675,6 +689,7 @@ def _acoustid_to_normalized(results: list) -> dict | None:
         "isrc": None,
         "genre": None,
         "release_year": None,
+        "duration_secs": None,
     }
 
 
@@ -764,11 +779,13 @@ async def _handle_match(track: dict) -> None:
     artist = track.get('artist') or 'Unknown Artist'
 
     print("[!] Fetching high-res metadata from iTunes...")
-    album, art_url = await fetch_itunes_metadata(artist, title)
+    album, art_url, duration_secs = await fetch_itunes_metadata(artist, title)
     if not art_url:
         art_url = track.get('art_url') or ''   # backend-supplied fallback art
     if not album:
         album = track.get('album') or "Unknown Album"
+    if not duration_secs:
+        duration_secs = track.get('duration_secs')
 
     art_base64 = ""
     if art_url:
@@ -783,6 +800,7 @@ async def _handle_match(track: dict) -> None:
     state["isrc"] = track.get('isrc')
     state["genre"] = track.get('genre')
     state["release_year"] = track.get('release_year')
+    state["duration_secs"] = duration_secs
 
     if result_str != state["last_song"]:
         print(f"🎵 NEW TRACK: {result_str}")
@@ -818,6 +836,7 @@ def _clear_track_state(set_backoff: bool) -> None:
     state["isrc"] = None
     state["genre"] = None
     state["release_year"] = None
+    state["duration_secs"] = None
     state["back_off"] = set_backoff
 
 
