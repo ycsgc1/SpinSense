@@ -10,6 +10,7 @@ Integrate your analogue record player into your digital life. SpinSense listens 
 
 - **Automatic track ID** — a Shazam-compatible recognizer identifies whatever's on the platter, with an optional **free AcoustID** (or AudD) backup for the tracks Shazam can't get.
 - **Zero-config Home Assistant discovery** — auto-appears as a `media_player` via **mDNS** (no broker, recommended), or publish state over **MQTT** to your own broker.
+- **Listening stats** — a Wrapped-style Stats page: top artists and tracks, plays over time, genres and decades, filterable by month / year / all-time.
 - **Runs where your deck is** — Docker-first; works on a Raspberry Pi (ARM) next to the turntable or on your x64 NAS.
 - **Guided onboarding** — a built-in web wizard walks you through mic selection and "silence vs. music" calibration.
 - **Local & private** — recognition and history stay on your hardware.
