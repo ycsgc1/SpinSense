@@ -188,3 +188,26 @@ class GenresDecadesTest(StatsTestBase):
         out = stats.compute_stats("month", 2026, 7, db_path=self.db, now=NOW)
         self.assertEqual(out["decades"]["buckets"][0], {"decade": 1970, "plays": 2})
         self.assertEqual(out["decades"]["buckets"][1], {"decade": 1980, "plays": 1})
+
+
+class PeriodEchoTest(StatsTestBase):
+    def test_month_defaults_resolve_in_period_echo(self):
+        out = stats.compute_stats("month", db_path=self.db, now=NOW)
+        self.assertEqual(out["period"]["kind"], "month")
+        self.assertEqual(out["period"]["year"], 2026)
+        self.assertEqual(out["period"]["month"], 7)
+
+    def test_year_default_resolves_year_only(self):
+        out = stats.compute_stats("year", db_path=self.db, now=NOW)
+        self.assertEqual(out["period"]["year"], 2026)
+        self.assertIsNone(out["period"]["month"])
+
+    def test_all_keeps_year_month_none(self):
+        out = stats.compute_stats("all", db_path=self.db, now=NOW)
+        self.assertIsNone(out["period"]["year"])
+        self.assertIsNone(out["period"]["month"])
+
+    def test_explicit_values_echo_unchanged(self):
+        out = stats.compute_stats("month", 2025, 12, db_path=self.db, now=NOW)
+        self.assertEqual(out["period"]["year"], 2025)
+        self.assertEqual(out["period"]["month"], 12)

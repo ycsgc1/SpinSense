@@ -158,12 +158,20 @@ def _decades(conn, start, end, total) -> dict:
 def compute_stats(period: str, year: int | None = None, month: int | None = None,
                   db_path: str | None = None, now: int | None = None) -> dict:
     start, end = _period_bounds(period, year, month, now=now)
-    now_secs = now if now is not None else int(datetime.datetime.now().timestamp())
+    now_dt = (datetime.datetime.fromtimestamp(now) if now is not None
+              else datetime.datetime.now())
+    now_secs = now if now is not None else int(now_dt.timestamp())
+    resolved_year = year
+    resolved_month = month
+    if period in ("year", "month"):
+        resolved_year = year if year is not None else now_dt.year
+        if period == "month":
+            resolved_month = month if month is not None else now_dt.month
     with _connect(db_path) as conn:
         totals = _totals(conn, start, end)
         return {
-            "period": {"kind": period, "year": year, "month": month,
-                        "start": start, "end": end},
+            "period": {"kind": period, "year": resolved_year,
+                        "month": resolved_month, "start": start, "end": end},
             "totals": totals,
             "top_artists": _top_artists(conn, start, end),
             "top_tracks": _top_tracks(conn, start, end),
