@@ -2,7 +2,7 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
-## [Unreleased]
+## [1.6.0.0] - 2026-07-06
 
 ### Added
 - **Stats page ("Wrapped").** A new 4th nav page: top artists and tracks (with art), plays-over-time chart, genres and decades breakdowns, and headline totals — filterable by month / year / all-time. Listening time is measured for real from now on (new `ended_at`/`duration_secs` columns; old plays are counted everywhere except listening time — no estimates). The schema now also satisfies every future Last.fm scrobbling requirement (start timestamp, duration, played-length eligibility), so a scrobbler can be added without another migration.
