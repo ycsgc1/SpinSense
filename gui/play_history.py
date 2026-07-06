@@ -25,6 +25,9 @@ _ENRICHMENT_COLUMNS = {
     "isrc": "TEXT",
     "genre": "TEXT",
     "release_year": "INTEGER",
+    # Listening-time / Last.fm-compat columns (2026-07 stats feature):
+    "ended_at": "INTEGER",        # unix secs the track stopped; NULL = untracked
+    "duration_secs": "INTEGER",   # canonical track length from enrichment
 }
 
 
@@ -62,13 +65,15 @@ def record_play(
     isrc: str | None = None,
     genre: str | None = None,
     release_year: int | None = None,
+    duration_secs: int | None = None,
 ) -> int:
     with _connect(db_path) as conn:
         cur = conn.execute(
             "INSERT INTO plays "
-            "(title, artist, album, art_url, played_at, isrc, genre, release_year) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (title, artist, album, art_url, int(time.time()), isrc, genre, release_year),
+            "(title, artist, album, art_url, played_at, isrc, genre, release_year, duration_secs) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (title, artist, album, art_url, int(time.time()), isrc, genre,
+             release_year, duration_secs),
         )
         return int(cur.lastrowid)
 
@@ -78,6 +83,16 @@ def set_art_path(play_id: int, art_path: str, db_path: str | None = None) -> Non
         conn.execute(
             "UPDATE plays SET art_path = ? WHERE id = ?",
             (art_path, play_id),
+        )
+
+
+def set_ended_at(play_id: int, ended_at: int, db_path: str | None = None) -> None:
+    """Stamp when a play stopped. First write wins (ended_at must be NULL) so
+    a late duplicate stop-frame can't stretch an already-closed play."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE plays SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
+            (ended_at, play_id),
         )
 
 

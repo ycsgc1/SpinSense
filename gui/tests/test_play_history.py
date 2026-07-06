@@ -291,5 +291,54 @@ class PurgeTest(unittest.TestCase):
         self.assertEqual(n, 1)  # no exception
 
 
+class EndedAtAndDurationTest(unittest.TestCase):
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        play_history.init_db(db_path=self.db_path)
+
+    def tearDown(self):
+        try:
+            os.remove(self.db_path)
+        except OSError:
+            pass
+
+    def _row(self, pid):
+        import sqlite3
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM plays WHERE id = ?", (pid,)).fetchone()
+        conn.close()
+        return row
+
+    def test_new_columns_default_null(self):
+        pid = play_history.record_play("T", "A", None, None, db_path=self.db_path)
+        row = self._row(pid)
+        self.assertIsNone(row["ended_at"])
+        self.assertIsNone(row["duration_secs"])
+
+    def test_record_play_stores_duration(self):
+        pid = play_history.record_play("T", "A", None, None,
+                                       db_path=self.db_path, duration_secs=245)
+        self.assertEqual(self._row(pid)["duration_secs"], 245)
+
+    def test_set_ended_at_first_write_wins(self):
+        pid = play_history.record_play("T", "A", None, None, db_path=self.db_path)
+        play_history.set_ended_at(pid, 1000, db_path=self.db_path)
+        self.assertEqual(self._row(pid)["ended_at"], 1000)
+        play_history.set_ended_at(pid, 2000, db_path=self.db_path)  # idempotent: no overwrite
+        self.assertEqual(self._row(pid)["ended_at"], 1000)
+
+    def test_migration_adds_columns_to_existing_db(self):
+        # init_db twice must not fail, and columns exist exactly once.
+        play_history.init_db(db_path=self.db_path)
+        import sqlite3
+        conn = sqlite3.connect(self.db_path)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(plays)")]
+        conn.close()
+        self.assertEqual(cols.count("ended_at"), 1)
+        self.assertEqual(cols.count("duration_secs"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
