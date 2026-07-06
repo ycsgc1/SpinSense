@@ -11,6 +11,7 @@ from pydantic import ValidationError
 import sounddevice as sd
 
 import play_history
+import stats
 from config_manager import SpinSenseConfig, load_config, save_config
 from ipc_manager import ART_DIR, manager, handle_uds_client
 from discovery import advertiser
@@ -156,6 +157,13 @@ async def history(request: Request):
 async def settings(request: Request):
     return templates.TemplateResponse(
         "settings.html", {"request": request, "current_page": "settings"}
+    )
+
+
+@app.get("/stats")
+async def stats_page(request: Request):
+    return templates.TemplateResponse(
+        "stats.html", {"request": request, "current_page": "stats"}
     )
 
 
@@ -345,6 +353,15 @@ async def restore_play_route(play_id: int):
     if not ok:
         return JSONResponse(status_code=404, content={"detail": "not found"})
     return {"status": "restored", "id": play_id}
+
+
+@app.get("/api/stats")
+async def get_stats(period: str = "month", year: int | None = None,
+                    month: int | None = None):
+    try:
+        return await asyncio.to_thread(stats.compute_stats, period, year, month)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
 
 
 @app.get("/api/status")
