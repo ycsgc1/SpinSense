@@ -17,7 +17,7 @@
 - a trailing bracketed group — `(…)` or `[…]` — whose text contains an edition marker, or
 - a trailing dash suffix (` - …`, en/em dash too) whose text contains an edition marker.
 
-**Edition markers** (case-insensitive substring words): `deluxe`, `super deluxe`, `expanded`, `remaster`, `remastered`, `anniversary`, `bonus track`, `bonus tracks`, `special edition`, `collector's edition`, `collectors edition`, `legacy edition`, `definitive edition`, `extended`, `reissue`, `re-issue`, `edition`, `version`. A four-digit year alone also qualifies (e.g. `(2019 Remaster)`, `[2014]`).
+**Edition markers** (case-insensitive, matched as whole words): `deluxe`, `super deluxe`, `expanded`, `remaster`, `remastered`, `anniversary`, `bonus track`, `bonus tracks`, `special edition`, `collector's edition`, `collectors edition`, `legacy edition`, `definitive edition`, `extended`, `reissue`, `re-issue`, `edition`, `version`. A four-digit year alone also qualifies (e.g. `(2019 Remaster)`, `[2014]`).
 
 Deliberately **not** markers: `live`, `acoustic`, `demos`, `unplugged` — those are genuinely different albums and must never merge with the studio release. Likewise **possessive re-recording qualifiers** — any qualifier matching `…'s version` (regex `\w+['’]s\s+version`, e.g. `Taylor's Version`) — are different recordings, not editions, and never merge; this exception is checked BEFORE the generic `version` marker so it wins.
 
