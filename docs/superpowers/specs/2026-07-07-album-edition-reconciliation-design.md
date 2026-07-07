@@ -27,7 +27,7 @@ Examples: `Abbey Road` ≡ `Abbey Road (Super Deluxe Edition)` ≡ `Abbey Road -
 
 ## 2. Session runs and the rewrite
 
-- **Run** = maximal contiguous sequence of plays by the same artist (exact string) where consecutive `played_at` gaps are < `SESSION_GAP_SECS = 1800`, containing the triggering play. Soft-deleted rows are ignored.
+- **Run** = the triggering play plus its same-artist neighbours (exact artist string) chained while the gap between CONSECUTIVE SAME-ARTIST plays is < `SESSION_GAP_SECS = 1800`. An interleaved play by another artist does not split the chain — deliberate, so a one-off misidentification mid-session can't fracture the run. Soft-deleted rows are ignored.
 - `reconcile_album(play_id, db_path=None)` runs after each new play is recorded (`ipc_manager._record_if_new`, via `asyncio.to_thread`, wrapped in try/except — a reconcile failure must never block or crash recording).
 - Within the run, plays are grouped by base title; for the triggering play's group, every play whose album differs from the winner is UPDATEd to it — **except locked rows** (`album_locked = 1`), which neither vote nor get rewritten.
 - Different base titles never merge: two different albums by the same artist in one session stay separate groups.

@@ -286,7 +286,7 @@
     MODAL_TRACK.textContent = `${li.dataset.title} — ${li.dataset.artist}`;
     MODAL_TEXT.value = li.dataset.album || "";
     MODAL_RUN.checked = false;
-    MODAL_SAVE.disabled = false;
+    MODAL_SAVE.disabled = !MODAL_TEXT.value.trim();
     MODAL_LIST.innerHTML =
       '<p class="text-body-sm text-on-surface-variant">Loading suggestions…</p>';
     MODAL.classList.remove("hidden");
@@ -305,6 +305,11 @@
     if (e.target.name !== "album-candidate") return;
     const c = candidates[Number(e.target.value)];
     if (c) MODAL_TEXT.value = c.album;
+    MODAL_SAVE.disabled = false;
+  });
+
+  MODAL_TEXT.addEventListener("input", () => {
+    MODAL_SAVE.disabled = !MODAL_TEXT.value.trim();
   });
 
   async function saveAlbum() {

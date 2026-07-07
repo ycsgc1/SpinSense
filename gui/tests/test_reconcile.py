@@ -1,5 +1,6 @@
-"""Tests for album/edition reconciliation. Pure-function table tests here;
-run/rewrite DB tests are added by a later task in this same file."""
+"""Tests for album/edition reconciliation: pure-function table tests
+(base_title, pick_winner) plus seeded-SQLite tests for run detection and
+album rewriting."""
 import os
 import sys
 import tempfile
@@ -10,7 +11,7 @@ GUI_DIR = os.path.dirname(HERE)
 if GUI_DIR not in sys.path:
     sys.path.insert(0, GUI_DIR)
 
-import play_history  # noqa: E402  (used by DB tests in a later task)
+import play_history  # noqa: E402
 import reconcile  # noqa: E402
 
 
@@ -56,6 +57,16 @@ class BaseTitleTest(unittest.TestCase):
     def test_empty_and_none_safe(self):
         self.assertEqual(reconcile.base_title(""), "")
         self.assertEqual(reconcile.base_title(None), "")
+
+    def test_marker_words_require_word_boundaries(self):
+        # "edition" inside "Expedition" / "version" inside "Aversion" must NOT strip
+        self.assertNotEqual(reconcile.base_title("Journey (Expedition)"),
+                            reconcile.base_title("Journey"))
+        self.assertNotEqual(reconcile.base_title("Hate - Aversion"),
+                            reconcile.base_title("Hate"))
+        # whole-word markers still strip
+        self.assertEqual(reconcile.base_title("Journey (Deluxe Edition)"),
+                         reconcile.base_title("Journey"))
 
 
 class PickWinnerTest(unittest.TestCase):
@@ -169,6 +180,15 @@ class ReconcileAlbumTest(ReconcileDbBase):
     def test_null_album_noop(self):
         p1 = self.seed("A", None, 1000)
         self.assertEqual(reconcile.reconcile_album(p1, db_path=self.db), 0)
+
+    def test_interleaved_other_artist_does_not_split_run(self):
+        self.seed("A", "Abbey Road", 1000)
+        self.seed("B", "Some Other Album", 1500)   # misID mid-session
+        p3 = self.seed("A", "Abbey Road (Deluxe Edition)", 2000)
+        reconcile.reconcile_album(p3, db_path=self.db)
+        albums = self.albums()
+        self.assertEqual(albums[0], "Abbey Road (Deluxe Edition)")  # bridged
+        self.assertEqual(albums[1], "Some Other Album")             # untouched
 
 
 class ApplyToRunTest(ReconcileDbBase):

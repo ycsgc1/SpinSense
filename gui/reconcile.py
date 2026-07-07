@@ -16,13 +16,14 @@ SESSION_GAP_SECS = 1800
 # listening session never spans it.
 _RUN_WINDOW_SECS = 86400
 
-# Substrings that mark a strippable edition qualifier. Deliberately absent:
-# live/acoustic/demos/unplugged — those are different albums, not editions.
-_EDITION_MARKERS = (
-    "super deluxe", "deluxe", "expanded", "remastered", "remaster",
-    "anniversary", "bonus track", "special edition", "collector's edition",
-    "collectors edition", "legacy edition", "definitive edition",
-    "extended", "reissue", "re-issue", "edition", "version",
+# Substrings that mark a strippable edition qualifier (matched as whole
+# words). Deliberately absent: live/acoustic/demos/unplugged — those are
+# different albums, not editions.
+_EDITION_MARKER_RE = re.compile(
+    r"\b(super deluxe|deluxe|expanded|remastered|remaster|anniversary|"
+    r"bonus tracks?|special edition|collector'?s edition|legacy edition|"
+    r"definitive edition|extended|reissue|re-issue|edition|version)\b",
+    re.IGNORECASE,
 )
 # Possessive re-recordings ("Taylor's Version") are different recordings,
 # never editions — checked BEFORE the generic "version" marker.
@@ -39,7 +40,7 @@ def _is_edition_qualifier(text: str) -> bool:
         return False
     if _POSSESSIVE_VERSION_RE.search(t):
         return False
-    if any(marker in t for marker in _EDITION_MARKERS):
+    if _EDITION_MARKER_RE.search(t):
         return True
     return _YEAR_RE.fullmatch(t) is not None
 

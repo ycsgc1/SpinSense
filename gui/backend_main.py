@@ -358,6 +358,21 @@ async def restore_play_route(play_id: int):
     return {"status": "restored", "id": play_id}
 
 
+def _parse_itunes_candidates(data: dict) -> list[dict]:
+    """Pure: iTunes search JSON -> up to 10 distinct {album, art_url}."""
+    out, seen = [], set()
+    for r in (data or {}).get("results", []):
+        album = r.get("collectionName")
+        if not album or album in seen:
+            continue
+        seen.add(album)
+        art = (r.get("artworkUrl100") or "").replace("100x100bb", "1000x1000bb")
+        out.append({"album": album, "art_url": art or None})
+        if len(out) >= 10:
+            break
+    return out
+
+
 async def _itunes_album_candidates(artist: str, title: str) -> list[dict]:
     """Distinct candidate albums for a track from the iTunes Search API.
     Isolated so tests can stub it; any error is an empty list."""
@@ -373,17 +388,7 @@ async def _itunes_album_candidates(artist: str, title: str) -> list[dict]:
     except Exception as e:
         print(f"⚠️ iTunes candidates lookup failed: {e}")
         return []
-    out, seen = [], set()
-    for r in data.get("results", []):
-        album = r.get("collectionName")
-        if not album or album in seen:
-            continue
-        seen.add(album)
-        art = (r.get("artworkUrl100") or "").replace("100x100bb", "1000x1000bb")
-        out.append({"album": album, "art_url": art or None})
-        if len(out) >= 10:
-            break
-    return out
+    return _parse_itunes_candidates(data)
 
 
 @app.get("/api/plays/{play_id}/album-candidates")

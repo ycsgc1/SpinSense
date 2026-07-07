@@ -114,3 +114,22 @@ class SetAlbumTest(AlbumApiBase):
         finally:
             backend_main.spawn_art_download = orig
         self.assertEqual(calls, [])
+
+
+class ParseItunesCandidatesTest(unittest.TestCase):
+    def test_dedupes_caps_and_upscales(self):
+        results = [{"collectionName": f"Album {i}",
+                    "artworkUrl100": f"http://a/{i}/100x100bb.jpg"} for i in range(12)]
+        results.insert(1, {"collectionName": "Album 0",
+                           "artworkUrl100": "http://dup/100x100bb.jpg"})
+        results.insert(2, {"trackName": "no collection name"})
+        out = backend_main._parse_itunes_candidates({"results": results})
+        self.assertEqual(len(out), 10)                       # capped
+        self.assertEqual(out[0]["album"], "Album 0")         # dup skipped
+        self.assertEqual(out[0]["art_url"], "http://a/0/1000x1000bb.jpg")
+
+    def test_missing_art_is_none_and_empty_input_safe(self):
+        out = backend_main._parse_itunes_candidates(
+            {"results": [{"collectionName": "X"}]})
+        self.assertEqual(out, [{"album": "X", "art_url": None}])
+        self.assertEqual(backend_main._parse_itunes_candidates({}), [])
