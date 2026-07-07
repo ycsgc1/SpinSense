@@ -26,7 +26,7 @@ _EDITION_MARKERS = (
 )
 # Possessive re-recordings ("Taylor's Version") are different recordings,
 # never editions — checked BEFORE the generic "version" marker.
-_POSSESSIVE_VERSION_RE = re.compile(r"\w+['']s\s+version", re.IGNORECASE)
+_POSSESSIVE_VERSION_RE = re.compile(r"\w+['’]s\s+version", re.IGNORECASE)
 _YEAR_RE = re.compile(r"(19|20)\d{2}")
 
 _TRAILING_BRACKET_RE = re.compile(r"\s*[(\[]([^()\[\]]*)[)\]]\s*$")

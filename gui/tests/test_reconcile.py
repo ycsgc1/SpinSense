@@ -36,8 +36,8 @@ class BaseTitleTest(unittest.TestCase):
     def test_taylors_version_never_merges(self):
         base = reconcile.base_title("1989")
         self.assertNotEqual(reconcile.base_title("1989 (Taylor's Version)"), base)
-        # curly apostrophe form
-        self.assertNotEqual(reconcile.base_title("1989 (Taylor's Version)"), base)
+        # curly apostrophe form (U+2019, as real music metadata emits)
+        self.assertNotEqual(reconcile.base_title("1989 (Taylor’s Version)"), base)
         # but a deluxe qualifier ON TOP of Taylor's Version still strips
         self.assertEqual(
             reconcile.base_title("1989 (Taylor's Version) [Deluxe]"),
