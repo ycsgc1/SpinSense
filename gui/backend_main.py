@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import urllib.parse
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -9,11 +10,13 @@ from fastapi.templating import Jinja2Templates
 import paho.mqtt.client as mqtt
 from pydantic import ValidationError
 import sounddevice as sd
+import aiohttp
 
 import play_history
 import stats
+import reconcile
 from config_manager import SpinSenseConfig, load_config, save_config
-from ipc_manager import ART_DIR, manager, handle_uds_client
+from ipc_manager import ART_DIR, manager, handle_uds_client, spawn_art_download
 from discovery import advertiser
 
 # Paths that the setup-wizard redirect must let through. Everything outside
@@ -353,6 +356,65 @@ async def restore_play_route(play_id: int):
     if not ok:
         return JSONResponse(status_code=404, content={"detail": "not found"})
     return {"status": "restored", "id": play_id}
+
+
+async def _itunes_album_candidates(artist: str, title: str) -> list[dict]:
+    """Distinct candidate albums for a track from the iTunes Search API.
+    Isolated so tests can stub it; any error is an empty list."""
+    query = urllib.parse.quote_plus(f"{artist} {title}")
+    url = f"https://itunes.apple.com/search?term={query}&entity=song&limit=25"
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json(content_type=None)
+    except Exception as e:
+        print(f"⚠️ iTunes candidates lookup failed: {e}")
+        return []
+    out, seen = [], set()
+    for r in data.get("results", []):
+        album = r.get("collectionName")
+        if not album or album in seen:
+            continue
+        seen.add(album)
+        art = (r.get("artworkUrl100") or "").replace("100x100bb", "1000x1000bb")
+        out.append({"album": album, "art_url": art or None})
+        if len(out) >= 10:
+            break
+    return out
+
+
+@app.get("/api/plays/{play_id}/album-candidates")
+async def album_candidates(play_id: int):
+    play = await asyncio.to_thread(play_history.get_play, play_id)
+    if play is None:
+        return JSONResponse(status_code=404, content={"detail": "not found"})
+    candidates = await _itunes_album_candidates(play["artist"], play["title"])
+    return {"current": play["album"], "candidates": candidates}
+
+
+@app.post("/api/plays/{play_id}/album")
+async def set_album_route(play_id: int, request: Request):
+    body = await request.json()
+    album = str(body.get("album") or "").strip()
+    art_url = body.get("art_url") or None
+    if not album:
+        return JSONResponse(status_code=400, content={"detail": "album is required"})
+    if body.get("apply_to_run"):
+        ids = await asyncio.to_thread(reconcile.apply_album_to_run, play_id, album)
+        if not ids:
+            return JSONResponse(status_code=404, content={"detail": "not found"})
+    else:
+        ok = await asyncio.to_thread(play_history.set_album, play_id, album)
+        if not ok:
+            return JSONResponse(status_code=404, content={"detail": "not found"})
+        ids = [play_id]
+    if art_url:
+        for pid in ids:
+            spawn_art_download(pid, art_url)
+    return {"status": "ok", "updated": len(ids)}
 
 
 @app.get("/api/stats")
