@@ -19,9 +19,9 @@
 
 **Edition markers** (case-insensitive substring words): `deluxe`, `super deluxe`, `expanded`, `remaster`, `remastered`, `anniversary`, `bonus track`, `bonus tracks`, `special edition`, `collector's edition`, `collectors edition`, `legacy edition`, `definitive edition`, `extended`, `reissue`, `re-issue`, `edition`, `version`. A four-digit year alone also qualifies (e.g. `(2019 Remaster)`, `[2014]`).
 
-Deliberately **not** markers: `live`, `acoustic`, `demos`, `unplugged` — those are genuinely different albums and must never merge with the studio release.
+Deliberately **not** markers: `live`, `acoustic`, `demos`, `unplugged` — those are genuinely different albums and must never merge with the studio release. Likewise **possessive re-recording qualifiers** — any qualifier matching `…'s version` (regex `\w+['’]s\s+version`, e.g. `Taylor's Version`) — are different recordings, not editions, and never merge; this exception is checked BEFORE the generic `version` marker so it wins.
 
-Examples: `Abbey Road` ≡ `Abbey Road (Super Deluxe Edition)` ≡ `Abbey Road - 50th Anniversary` ≡ `Abbey Road (Deluxe Edition) [2019 Remaster]`; `At Folsom Prison (Live)` ≢ `At Folsom Prison`.
+Examples: `Abbey Road` ≡ `Abbey Road (Super Deluxe Edition)` ≡ `Abbey Road - 50th Anniversary` ≡ `Abbey Road (Deluxe Edition) [2019 Remaster]`; `At Folsom Prison (Live)` ≢ `At Folsom Prison`; `1989 (Taylor's Version)` ≢ `1989` — but `1989 (Taylor's Version) [Deluxe]` ≡ `1989 (Taylor's Version)` (the deluxe qualifier still strips; the possessive one never does).
 
 **Winner.** Among a run's plays sharing a base title, the winning album string is the one with the greatest raw length (most qualifiers = the superset edition); ties break to the most recently played. Deterministic; no network.
 
@@ -53,7 +53,7 @@ One new nullable column on `plays` via the existing `PRAGMA table_info` migratio
 
 ## 6. Testing
 
-- **Normalizer table tests** (pure): the example equivalences above, the live/acoustic non-merges, repeated-qualifier stripping, dash variants, year-only brackets.
+- **Normalizer table tests** (pure): the example equivalences above, the live/acoustic non-merges, the `Taylor's Version` non-merge (including the curly-apostrophe form and the `[Deluxe]`-on-top-of-Taylor's-Version case), repeated-qualifier stripping, dash variants, year-only brackets.
 - **Winner tests**: longest-wins, tie→most-recent.
 - **Run/rewrite tests** (seeded SQLite): bidirectional rewrite in a run; gap > 30 min splits runs; artist change splits runs; locked rows neither vote nor rewrite; different base titles untouched; soft-deleted ignored; reconcile failure doesn't propagate (stubbed exception).
 - **Endpoint tests**: candidates (iTunes stubbed: dedupe, cap at 10, error → empty), album POST (validation, single vs run scope, lock override on explicit run apply, art task fired when art_url given).
