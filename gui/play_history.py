@@ -28,6 +28,9 @@ _ENRICHMENT_COLUMNS = {
     # Listening-time / Last.fm-compat columns (2026-07 stats feature):
     "ended_at": "INTEGER",        # unix secs the track stopped; NULL = untracked
     "duration_secs": "INTEGER",   # canonical track length from enrichment
+    # Album/edition reconciliation (2026-07): 1 = album set manually, never
+    # auto-rewritten. NULL/0 = auto-managed.
+    "album_locked": "INTEGER",
 }
 
 
@@ -94,6 +97,28 @@ def set_ended_at(play_id: int, ended_at: int, db_path: str | None = None) -> Non
             "UPDATE plays SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
             (ended_at, play_id),
         )
+
+
+def get_play(play_id: int, db_path: str | None = None) -> dict | None:
+    """One live (non-deleted) play row as a dict, or None."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM plays WHERE id = ? AND deleted_at IS NULL", (play_id,)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+
+def set_album(play_id: int, album: str, locked: bool = True,
+              db_path: str | None = None) -> bool:
+    """Set a play's album. `locked` marks it manually-set so auto
+    reconciliation leaves it alone. Returns True if a live row changed."""
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "UPDATE plays SET album = ?, album_locked = ? "
+            "WHERE id = ? AND deleted_at IS NULL",
+            (album, 1 if locked else 0, play_id),
+        )
+        return cur.rowcount > 0
 
 
 def delete_play(play_id: int, db_path: str | None = None) -> bool:

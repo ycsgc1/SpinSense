@@ -395,5 +395,39 @@ class EndedAtStampingTest(unittest.TestCase):
         self.assertEqual(self._rows()[0]["duration_secs"], 245)
 
 
+class AlbumHelpersTest(unittest.TestCase):
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        play_history.init_db(db_path=self.db_path)
+
+    def tearDown(self):
+        try:
+            os.remove(self.db_path)
+        except OSError:
+            pass
+
+    def test_album_locked_defaults_null(self):
+        pid = play_history.record_play("T", "A", "Alb", None, db_path=self.db_path)
+        row = play_history.get_play(pid, db_path=self.db_path)
+        self.assertIsNone(row["album_locked"])
+
+    def test_set_album_updates_and_locks(self):
+        pid = play_history.record_play("T", "A", "Old", None, db_path=self.db_path)
+        ok = play_history.set_album(pid, "New (Deluxe)", db_path=self.db_path)
+        self.assertTrue(ok)
+        row = play_history.get_play(pid, db_path=self.db_path)
+        self.assertEqual(row["album"], "New (Deluxe)")
+        self.assertEqual(row["album_locked"], 1)
+
+    def test_set_album_unknown_id_false(self):
+        self.assertFalse(play_history.set_album(999, "X", db_path=self.db_path))
+
+    def test_get_play_hides_soft_deleted(self):
+        pid = play_history.record_play("T", "A", None, None, db_path=self.db_path)
+        play_history.delete_play(pid, db_path=self.db_path)
+        self.assertIsNone(play_history.get_play(pid, db_path=self.db_path))
+
+
 if __name__ == "__main__":
     unittest.main()
