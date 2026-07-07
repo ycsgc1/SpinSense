@@ -7,6 +7,7 @@ import time
 from typing import TYPE_CHECKING
 
 import play_history
+import reconcile
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -106,6 +107,13 @@ async def _download_and_store_art(play_id: int, art_url: str) -> None:
         log.warning("art download failed for play %s: %s", play_id, e)
 
 
+def spawn_art_download(play_id: int, art_url: str) -> None:
+    """create_task + strong ref until done. Reused by the UDS record path and
+    the album-edit API (art refresh)."""
+    _art_tasks.add(task := asyncio.create_task(_download_and_store_art(play_id, art_url)))
+    task.add_done_callback(_art_tasks.discard)
+
+
 async def _stamp_last_play_ended() -> None:
     global _last_play_id
     if _last_play_id is None:
@@ -158,8 +166,14 @@ async def _record_if_new(track: dict) -> None:
     _last_play_id = play_id
 
     if art_url:
-        _art_tasks.add(task := asyncio.create_task(_download_and_store_art(play_id, art_url)))
-        task.add_done_callback(_art_tasks.discard)
+        spawn_art_download(play_id, art_url)
+
+    # Unify edition variants across this play's session run. Best-effort:
+    # a reconcile failure must never block or crash recording.
+    try:
+        await asyncio.to_thread(reconcile.reconcile_album, play_id)
+    except Exception as e:
+        log.warning("album reconcile failed for play %s: %s", play_id, e)
 
 
 # --- The Real Unix Domain Socket Listener ---
