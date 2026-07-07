@@ -2,6 +2,13 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [Unreleased]
+
+### Added
+- **Album/edition intelligence.** When one listening session mixes edition variants of the same album ("Abbey Road" vs "Abbey Road (Super Deluxe Edition)"), SpinSense now unifies the whole same-artist run to the most-qualified edition — live, in both directions. Re-recordings like "(Taylor's Version)" and live/acoustic albums are deliberately never merged. Runs are bounded by the 30-minute session gap.
+- **Manual album correction.** A pencil on each History row opens a picker with candidate albums from iTunes (plus free text), optional "apply to the whole session run", and album-art refresh. Manual choices are locked against future auto-rewrites.
+- **Top Albums on the Stats page.** A third ranked list between Top Artists and Top Tracks, grouped post-reconciliation so deluxe and regular plays count as one album; plays without album data are excluded with a coverage note.
+
 ## [1.6.0.0] - 2026-07-06
 
 ### Added
