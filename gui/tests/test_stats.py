@@ -225,3 +225,37 @@ class PeriodEchoTest(StatsTestBase):
         out = stats.compute_stats("all", 2020, 5, db_path=self.db, now=NOW)
         self.assertIsNone(out["period"]["year"])
         self.assertIsNone(out["period"]["month"])
+
+
+class TopAlbumsTest(StatsTestBase):
+    def seed_album(self, title, artist, album, played_at, art_path=None):
+        import sqlite3
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "INSERT INTO plays (title, artist, album, played_at, art_path)"
+            " VALUES (?, ?, ?, ?, ?)", (title, artist, album, played_at, art_path))
+        conn.commit()
+        conn.close()
+
+    def test_grouping_and_exclusions(self):
+        t = ts(2026, 7, 1)
+        self.seed_album("S1", "Beatles", "Abbey Road", t, art_path="art/1.jpg")
+        self.seed_album("S2", "Beatles", "Abbey Road", t + 100, art_path="art/2.jpg")
+        self.seed_album("S3", "Doors", "L.A. Woman", t)
+        self.seed_album("S4", "X", None, t)                 # no album: excluded
+        self.seed_album("S5", "Y", "Unknown Album", t)      # sentinel: excluded
+        out = stats.compute_stats("month", 2026, 7, db_path=self.db, now=NOW)
+        ta = out["top_albums"]
+        self.assertEqual(ta["top"][0],
+                         {"album": "Abbey Road", "artist": "Beatles",
+                          "plays": 2, "art_path": "art/2.jpg"})
+        self.assertEqual(len(ta["top"]), 2)
+        self.assertEqual(ta["covered"], 3)
+        self.assertEqual(ta["total"], 5)
+
+    def test_same_album_name_different_artists_separate(self):
+        t = ts(2026, 7, 1)
+        self.seed_album("S1", "A", "Greatest Hits", t)
+        self.seed_album("S2", "B", "Greatest Hits", t)
+        out = stats.compute_stats("month", 2026, 7, db_path=self.db, now=NOW)
+        self.assertEqual(len(out["top_albums"]["top"]), 2)

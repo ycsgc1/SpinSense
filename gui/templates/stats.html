@@ -46,11 +46,16 @@
       </div>
     </div>
 
-    <!-- Top artists / top tracks -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-gutter">
+    <!-- Top artists / top tracks / top albums -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-gutter">
       <section class="glass-panel rounded-xl p-md">
         <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Top artists</h3>
         <ol id="stats-top-artists" class="flex flex-col gap-2"></ol>
+      </section>
+      <section class="glass-panel rounded-xl p-md">
+        <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Top albums</h3>
+        <ol id="stats-top-albums" class="flex flex-col gap-2"></ol>
+        <p id="stats-top-albums-note" class="text-label-sm text-on-surface-variant mt-sm"></p>
       </section>
       <section class="glass-panel rounded-xl p-md">
         <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Top tracks</h3>

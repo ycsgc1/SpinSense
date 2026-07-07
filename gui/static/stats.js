@@ -61,6 +61,14 @@
     $("stats-top-artists").innerHTML = artists.length
       ? artists.map((a, i) => rankRow(i + 1, a.art_path, escapeHtml(a.artist), "", a.plays, maxA)).join("")
       : '<li class="text-body-sm text-on-surface-variant">No plays yet.</li>';
+    const albums = (data.top_albums && data.top_albums.top) || [];
+    const maxAl = albums.length ? albums[0].plays : 0;
+    $("stats-top-albums").innerHTML = albums.length
+      ? albums.map((a, i) => rankRow(i + 1, a.art_path, escapeHtml(a.album), escapeHtml(a.artist), a.plays, maxAl)).join("")
+      : '<li class="text-body-sm text-on-surface-variant">No album data yet.</li>';
+    const ta = data.top_albums || { covered: 0, total: 0 };
+    $("stats-top-albums-note").textContent = (albums.length && ta.covered < ta.total)
+      ? `${ta.covered} of ${ta.total} plays have album data.` : "";
     $("stats-top-tracks").innerHTML = tracks.length
       ? tracks.map((t, i) => rankRow(i + 1, t.art_path, escapeHtml(t.title), escapeHtml(t.artist), t.plays, maxT)).join("")
       : '<li class="text-body-sm text-on-surface-variant">No plays yet.</li>';

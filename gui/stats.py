@@ -80,6 +80,22 @@ def _top_tracks(conn, start, end) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _top_albums(conn, start, end, total) -> dict:
+    art = _latest_art_subquery("p2.album = p.album AND p2.artist = p.artist")
+    where_album = "p.album IS NOT NULL AND p.album != 'Unknown Album'"
+    rows = conn.execute(
+        f"SELECT p.album, p.artist, COUNT(*) AS plays, {art} AS art_path"
+        f" FROM plays p WHERE {_WHERE} AND {where_album}"
+        " GROUP BY p.album, p.artist"
+        " ORDER BY plays DESC, p.album ASC, p.artist ASC LIMIT ?",
+        (start, end, start, end, TOP_N)).fetchall()
+    (covered,) = conn.execute(
+        f"SELECT COUNT(*) FROM plays WHERE {_WHERE}"
+        " AND album IS NOT NULL AND album != 'Unknown Album'",
+        (start, end)).fetchone()
+    return {"covered": covered, "total": total, "top": [dict(r) for r in rows]}
+
+
 def _bucket_starts(start_dt, last_dt, bucket):
     """All bucket keys from start_dt through last_dt inclusive."""
     keys = []
@@ -174,6 +190,7 @@ def compute_stats(period: str, year: int | None = None, month: int | None = None
             "totals": totals,
             "top_artists": _top_artists(conn, start, end),
             "top_tracks": _top_tracks(conn, start, end),
+            "top_albums": _top_albums(conn, start, end, totals["plays"]),
             "plays_over_time": _plays_over_time(conn, period, start, end, now_secs),
             "genres": _genres(conn, start, end, totals["plays"]),
             "decades": _decades(conn, start, end, totals["plays"]),
