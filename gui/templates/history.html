@@ -27,6 +27,28 @@
 
   <div id="history-status" class="text-center text-body-sm text-on-surface-variant py-md" aria-live="polite"></div>
 
+  <div id="album-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div class="glass-panel rounded-xl p-md md:p-lg w-full max-w-md mx-md max-h-[80vh] flex flex-col">
+      <p class="text-body-md text-on-surface font-medium">Change album</p>
+      <p id="album-modal-track" class="text-body-sm text-on-surface-variant mt-1 truncate"></p>
+      <div id="album-modal-list" class="flex flex-col gap-1 mt-md overflow-y-auto min-h-0"></div>
+      <label class="block mt-md">
+        <span class="text-label-sm text-on-surface-variant mb-1 block">Or type an album name</span>
+        <input type="text" id="album-modal-text" class="form-input" autocomplete="off">
+      </label>
+      <label class="flex items-center gap-xs mt-md cursor-pointer">
+        <input type="checkbox" id="album-modal-run" class="form-checkbox h-4 w-4">
+        <span class="text-body-sm text-on-surface">Apply to the whole session run</span>
+      </label>
+      <div class="flex justify-end gap-md mt-md">
+        <button type="button" id="album-modal-cancel"
+                class="text-label-md text-on-surface-variant hover:text-on-surface transition-colors px-md py-2">Cancel</button>
+        <button type="button" id="album-modal-save"
+                class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full hover:opacity-90 transition-opacity disabled:opacity-40">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div id="history-toast"
        role="status" aria-live="polite" aria-atomic="true"
        class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-md
