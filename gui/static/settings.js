@@ -209,15 +209,19 @@
 
   // ---------- Last.fm ----------
   //
-  // Two-step handshake (see gui/lastfm.py): "Connect" mints a request token and
-  // opens last.fm for approval; "I've approved it" trades it for a permanent
-  // session key. The token lives server-side between the two, so nothing about
-  // it needs to survive here.
+  // Default path: "Connect" sends the browser to Last.fm, which signs the user
+  // in, takes their approval, and redirects to /api/lastfm/callback — the server
+  // finishes there and bounces back to /settings?lastfm=... So this page is
+  // *left* mid-flow and re-entered fresh; nothing needs to survive in memory.
+  //
+  // Fallback path, for setups where that redirect can't return: the server also
+  // hands back a manual approval URL backed by a token it holds, and
+  // "I've approved it" trades it in. Same auth.getSession at the end.
 
   const LF_STATE = document.getElementById("lastfm-state");
   const LF_SETUP = document.getElementById("lastfm-setup");
-  const LF_APPROVE = document.getElementById("lastfm-approve");
-  const LF_APPROVE_LINK = document.getElementById("lastfm-approve-link");
+  const LF_MANUAL = document.getElementById("lastfm-manual");
+  const LF_MANUAL_LINK = document.getElementById("lastfm-manual-link");
   const LF_KEY = document.getElementById("lastfm-api-key");
   const LF_SECRET = document.getElementById("lastfm-api-secret");
   const LF_CONNECT = document.getElementById("lastfm-connect");
@@ -303,25 +307,42 @@
       return;
     }
     LF_CONNECT.disabled = true;
-    lfToast("Asking Last.fm for an authorisation link…");
+    lfToast("Checking your credentials with Last.fm…");
     try {
       const res = await fetch("/api/lastfm/auth/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api_key, api_secret }),
+        // The server can't know which address we reached it on — a LAN box has
+        // no fixed one — and Last.fm needs somewhere to send us back to.
+        body: JSON.stringify({ api_key, api_secret, origin: window.location.origin }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         lfToast(body.detail || `Failed (${res.status})`, "error");
+        LF_CONNECT.disabled = false;
         return;
       }
-      LF_APPROVE_LINK.href = body.auth_url;
-      LF_APPROVE.classList.remove("hidden");
-      window.open(body.auth_url, "_blank", "noopener");
-      lfToast("Approve SpinSense in the tab that opened, then finish below.", "ok");
+
+      // Reveal the fallback before leaving, so it's already there if the user
+      // comes back by hand rather than by redirect.
+      if (body.manual_url && LF_MANUAL && LF_MANUAL_LINK) {
+        LF_MANUAL_LINK.href = body.manual_url;
+        LF_MANUAL.classList.remove("hidden");
+      }
+
+      if (body.auth_url) {
+        lfToast("Taking you to Last.fm…");
+        window.location.href = body.auth_url;   // we'll be redirected back
+        return;
+      }
+
+      // No usable callback (unrecognisable origin) — manual is the only route.
+      if (LF_MANUAL) LF_MANUAL.open = true;
+      lfToast("Couldn't build a return address for this URL — approve manually below.",
+              "error");
+      LF_CONNECT.disabled = false;
     } catch (e) {
       lfToast("Network error: " + e.message, "error");
-    } finally {
       LF_CONNECT.disabled = false;
     }
   }
@@ -337,7 +358,7 @@
         lfToast(body.detail || `Failed (${res.status})`, "error");
         return;
       }
-      LF_APPROVE.classList.add("hidden");
+      if (LF_MANUAL) LF_MANUAL.classList.add("hidden");
       LF_KEY.value = "";
       LF_SECRET.value = "";
       lfToast(`Connected as ${body.username}.`, "ok");
@@ -372,6 +393,23 @@
     } catch (e) {
       lfToast("Network error: " + e.message, "error");
     }
+  }
+
+  // The redirect flow finishes server-side and bounces back here with the
+  // outcome in the query string. Report it, then strip it so a refresh doesn't
+  // re-announce a connection that happened minutes ago.
+  function reportRedirectOutcome() {
+    const params = new URLSearchParams(window.location.search);
+    const outcome = params.get("lastfm");
+    if (!outcome) return;
+    if (outcome === "connected") {
+      lfToast(`Connected as ${params.get("user") || "your account"}.`, "ok");
+    } else if (outcome === "denied") {
+      lfToast("Last.fm authorisation was declined.", "error");
+    } else {
+      lfToast(params.get("detail") || "Last.fm authorisation failed.", "error");
+    }
+    window.history.replaceState({}, "", window.location.pathname);
   }
 
   if (LF_CONNECT) LF_CONNECT.addEventListener("click", connectLastFm);
@@ -462,4 +500,5 @@
 
   loadConfig();
   refreshLastFm();
+  reportRedirectOutcome();
 })();

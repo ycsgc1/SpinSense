@@ -13,18 +13,28 @@ Three pieces, in dependency order:
 2. **The HTTP layer** — one `_api_post`, isolated so tests stub a single seam.
 3. **The queue** — a periodic flush that drains eligible, unscrobbled plays.
 
-**Auth model.** Last.fm has no callback-free desktop flow that suits a LAN
-appliance, so we use the web flow in two steps the user drives: we fetch a
-request token and hand them a last.fm URL to approve it, then they come back and
-we trade the approved token for a permanent session key. No public callback URL,
-no inbound connection, nothing to expose. The user brings their own API key and
-secret from last.fm/api/account/create — one account, theirs, rate-limited to
-them.
+**Auth model.** Two routes to the same session key, because a LAN appliance
+has no fixed public address:
+
+- **Redirect (default).** Last.fm's web flow accepts a per-request `cb`
+  parameter overriding the callback registered on the API account, so we build
+  one from the address the browser is *already* using to reach SpinSense. The
+  user clicks once, sees Last.fm's own login page, approves, and lands back on
+  the Settings page connected. Their password never touches SpinSense.
+- **Manual (fallback).** The desktop flow: mint a request token, hand over a
+  URL to approve it, and let the user tell us when they're done. Needed when
+  the redirect can't come back — approving on a phone, or reaching SpinSense
+  through something that rewrites the origin.
+
+Both end at `auth.getSession`, so the difference is only how the token is
+obtained. The user brings their own API key and secret from
+last.fm/api/account/create — one account, theirs, rate-limited to them.
 """
 import asyncio
 import hashlib
 import logging
 import time
+import urllib.parse
 
 import play_history
 from config_manager import load_config, save_config
@@ -79,8 +89,38 @@ def signed(params: dict, secret: str) -> dict:
 
 
 def auth_url(api_key: str, token: str) -> str:
-    """Where the user goes to approve the request token."""
+    """Manual flow: where the user goes to approve a token we minted."""
     return f"{AUTH_URL}?api_key={api_key}&token={token}"
+
+
+def callback_url(origin: str) -> str | None:
+    """Our callback endpoint, at the address the user reaches SpinSense on.
+
+    `origin` comes from the browser, and we hand the result to Last.fm, so it is
+    checked rather than trusted: a bare http(s) scheme and host, nothing else.
+    Returns None if it doesn't look like one.
+    """
+    try:
+        parsed = urllib.parse.urlsplit((origin or "").strip())
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    # A real origin has no path, query or fragment. Anything else is either a
+    # mistake or someone trying to steer the redirect.
+    if parsed.path.strip("/") or parsed.query or parsed.fragment:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}/api/lastfm/callback"
+
+
+def web_auth_url(api_key: str, callback: str) -> str:
+    """Redirect flow: Last.fm mints its own token and hands it to `callback`.
+
+    No token of ours is involved — that's the whole point. Last.fm shows its
+    login page if needed, then returns the user to us already approved.
+    """
+    query = urllib.parse.urlencode({"api_key": api_key, "cb": callback})
+    return f"{AUTH_URL}?{query}"
 
 
 def build_scrobble_params(plays: list[dict]) -> dict:

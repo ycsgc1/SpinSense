@@ -119,8 +119,8 @@
             terms are yours. Create one at
             <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener"
                class="text-primary underline">last.fm/api/account/create</a>
-            (any name and description will do &mdash; leave the callback URL blank), then paste the
-            two values it gives you.
+            (any name and description will do &mdash; you can leave the callback URL blank,
+            SpinSense supplies its own), then paste the two values it gives you.
           </p>
 
           <label class="block">
@@ -135,14 +135,27 @@
 
           <button type="button" id="lastfm-connect" class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">Connect to Last.fm</button>
 
-          <div id="lastfm-approve" class="hidden rounded-lg border border-primary/40 bg-primary/5 p-md space-y-2">
-            <p class="text-body-sm text-on-surface">
-              Step 2 &mdash; <a href="#" id="lastfm-approve-link" target="_blank" rel="noopener"
-                 class="text-primary underline">approve SpinSense on Last.fm</a>,
-              then come back here and finish.
-            </p>
-            <button type="button" id="lastfm-finish" class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">I&rsquo;ve approved it</button>
-          </div>
+          <p class="text-body-sm text-on-surface-variant">
+            Takes you to Last.fm to sign in and approve SpinSense, then brings you straight
+            back here. Your Last.fm password is never seen by SpinSense.
+          </p>
+
+          <details id="lastfm-manual" class="hidden rounded-lg border border-outline-variant/40 bg-surface-container-high p-md">
+            <summary class="text-body-sm text-on-surface cursor-pointer">Didn&rsquo;t come back automatically?</summary>
+            <div class="mt-3 space-y-2">
+              <p class="text-body-sm text-on-surface-variant">
+                Some setups can&rsquo;t redirect back &mdash; approving on a different device, or
+                reaching SpinSense through something that rewrites the address. Approve
+                manually instead:
+              </p>
+              <p class="text-body-sm text-on-surface">
+                1. <a href="#" id="lastfm-manual-link" target="_blank" rel="noopener"
+                      class="text-primary underline">Open the approval page on Last.fm</a>
+              </p>
+              <p class="text-body-sm text-on-surface">2. Approve it there, then come back and:</p>
+              <button type="button" id="lastfm-finish" class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">I&rsquo;ve approved it</button>
+            </div>
+          </details>
         </div>
 
         <p id="lastfm-toast" class="text-body-sm" data-kind=""></p>

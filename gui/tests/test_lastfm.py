@@ -60,6 +60,50 @@ class SignatureTest(unittest.TestCase):
         self.assertEqual(params, {"method": "m"})
 
 
+class CallbackUrlTest(unittest.TestCase):
+    """The origin comes from the browser and ends up inside a URL we hand to
+    Last.fm, so it is validated rather than trusted."""
+
+    def test_builds_the_callback_from_a_plain_origin(self):
+        self.assertEqual(lastfm.callback_url("http://truenas.local:3313"),
+                         "http://truenas.local:3313/api/lastfm/callback")
+
+    def test_https_and_bare_hosts_work(self):
+        self.assertEqual(lastfm.callback_url("https://spinsense.example"),
+                         "https://spinsense.example/api/lastfm/callback")
+
+    def test_a_trailing_slash_is_tolerated(self):
+        self.assertEqual(lastfm.callback_url("http://10.0.0.5:3313/"),
+                         "http://10.0.0.5:3313/api/lastfm/callback")
+
+    def test_surrounding_whitespace_is_tolerated(self):
+        self.assertEqual(lastfm.callback_url("  http://h:3313  "),
+                         "http://h:3313/api/lastfm/callback")
+
+    def test_anything_that_is_not_a_bare_http_origin_is_rejected(self):
+        for bad in ("", "   ", "not a url", "ftp://h", "javascript:alert(1)",
+                    "http://", "//h", "http://h/some/path", "http://h/?a=1",
+                    "http://h/#frag"):
+            with self.subTest(origin=bad):
+                self.assertIsNone(lastfm.callback_url(bad))
+
+
+class WebAuthUrlTest(unittest.TestCase):
+    def test_carries_the_key_and_an_encoded_callback(self):
+        url = lastfm.web_auth_url("KEY", "http://h:3313/api/lastfm/callback")
+        self.assertTrue(url.startswith(lastfm.AUTH_URL))
+        self.assertIn("api_key=KEY", url)
+        # The callback is a URL inside a URL; unencoded it would truncate.
+        self.assertIn("cb=http%3A%2F%2Fh%3A3313%2Fapi%2Flastfm%2Fcallback", url)
+
+    def test_carries_no_token_of_ours(self):
+        # The whole point of the redirect flow: Last.fm mints the token.
+        self.assertNotIn("token=", lastfm.web_auth_url("KEY", "http://h/cb"))
+
+    def test_manual_url_still_carries_a_token(self):
+        self.assertIn("token=TOK", lastfm.auth_url("KEY", "TOK"))
+
+
 class BuildScrobbleParamsTest(unittest.TestCase):
     def play(self, **over):
         base = {"artist": "M83", "title": "Midnight City", "timestamp": 1700000000,

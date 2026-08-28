@@ -342,8 +342,9 @@ The HA integration depends on this surface. Breaking changes here ripple to a se
 | `GET /api/recent?limit=N` | Recent plays for dashboard |
 | `GET /api/plays?limit=N&offset=M` | Paginated history; capped at 100 |
 | `GET /api/lastfm/status` | Connection state, username, pending queue depth |
-| `POST /api/lastfm/auth/start` body `{api_key, api_secret}` | Mints a request token; returns the last.fm approval URL |
-| `POST /api/lastfm/auth/complete` | Trades the approved token for a session key |
+| `POST /api/lastfm/auth/start` body `{api_key, api_secret, origin}` | Validates credentials; returns the redirect URL (built from `origin`) and a manual fallback URL |
+| `GET /api/lastfm/callback?token=` | Where Last.fm returns the user; 303s to `/settings` with the outcome |
+| `POST /api/lastfm/auth/complete` | Manual fallback: trades the pre-minted token for a session key |
 | `POST /api/lastfm/disconnect` | Forgets the session; keeps the API key + secret |
 | `POST /api/lastfm/flush` | Submits the pending queue now instead of on the timer |
 | **`GET /api/status`** | Last cached engine status frame; the HA integration's poll endpoint |
@@ -402,7 +403,11 @@ services:
 
 **Why the user brings their own API key.** One shared application key would put every SpinSense install behind a single rate limit and make the project responsible for Last.fm's terms on the user's behalf. Registering at last.fm/api/account/create takes a minute and makes the account, the limit and the terms theirs.
 
-**Why the handshake is two clicks.** Last.fm's web auth flow wants a callback URL; a box on someone's LAN has none, and exposing one would be a worse trade than a second click. So the flow is user-driven: we mint a request token and hand over a last.fm URL, they approve it, they come back and we trade the token for a permanent session key. Nothing inbound, nothing to expose. The token lives in a module-level variable between the two calls — it is single-use and short-lived, and persisting it would only create a stale key to clean up.
+**How the handshake works.** Last.fm's web flow accepts a per-request `cb` parameter that overrides the callback registered on the API account. That is what makes a redirect viable for a box with no fixed address: the browser tells us the origin it is *already* reaching SpinSense on, we validate it is a bare `http(s)://host` (it goes into a URL we hand to a third party, so it is checked, not trusted), and Last.fm returns the user to `/api/lastfm/callback?token=…`. One click, Last.fm's own login page, and the user's password never touches SpinSense.
+
+The manual desktop flow is kept as a fallback for when the redirect cannot return — approval on a different device, or a proxy that rewrites the origin. It mints a token up front; that token lives in a module-level variable between its two calls, because it is single-use and expires in 60 minutes, and persisting it would only leave a stale key to clean up. `auth.getToken` doubles as the credential check for *both* paths: it is a signed call, so a wrong key or secret fails at the Settings page rather than confusing the user on last.fm.
+
+`/api/lastfm/callback` is a page the user lands on, not an API call, so every outcome — success, denial, error — is a 303 back to `/settings` with the result in the query string. It is unauthenticated, like everything else here; someone on the LAN could link their own account instead, which is the same exposure the rest of the app already carries and not made worse by this route.
 
 **The queue is the interesting part.** Plays are marked with `scrobbled_at` once submitted, and the mark is what makes submission exactly-once. The rule for *when* to mark is the one that matters:
 

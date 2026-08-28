@@ -427,11 +427,15 @@ async def set_album_route(play_id: int, request: Request):
 
 # --- Last.fm ---
 #
-# The auth handshake is two user-driven steps (see gui/lastfm.py): we mint a
-# request token and hand back a last.fm URL to approve it, then the user returns
-# and we trade the approved token for a permanent session key. The token lives
-# in memory between those two calls only — it is single-use, short-lived, and
-# writing it to config.json would just be a stale key to clean up later.
+# Two ways to reach the same session key (see gui/lastfm.py). The default is
+# Last.fm's redirect flow: the user clicks once, approves on last.fm's own page,
+# and is redirected to /api/lastfm/callback with a token. The fallback is the
+# manual flow, for when that redirect can't come back — approving on a phone, or
+# reaching SpinSense through something that rewrites the origin.
+#
+# The manual flow's token lives here between its two calls only: it is
+# single-use, expires in 60 minutes, and persisting it would just leave a stale
+# key to clean up.
 _pending_auth_token: str | None = None
 
 
@@ -442,7 +446,13 @@ async def lastfm_status():
 
 @app.post("/api/lastfm/auth/start")
 async def lastfm_auth_start(request: Request):
-    """Save the credentials the user pasted, then mint a request token."""
+    """Validate and save the credentials, then hand back both auth URLs.
+
+    `auth.getToken` doubles as the credential check: it's a signed call, so a
+    wrong key *or* a wrong secret fails here rather than confusing the user on
+    last.fm's page. The token it returns is what powers the manual fallback, so
+    nothing is wasted either way.
+    """
     global _pending_auth_token
     body = await request.json()
     api_key = str(body.get("api_key") or "").strip()
@@ -463,7 +473,43 @@ async def lastfm_auth_start(request: Request):
             status_code=500,
             content={"ok": False, "detail": "Failed to write config.json"})
     _pending_auth_token = token
-    return {"ok": True, "auth_url": lastfm.auth_url(api_key, token)}
+
+    # The redirect flow needs somewhere to come back to. The browser tells us
+    # which address it is actually reaching SpinSense on — a LAN box has no
+    # fixed one, and this is the only party that knows.
+    callback = lastfm.callback_url(str(body.get("origin") or ""))
+    return {
+        "ok": True,
+        "auth_url": lastfm.web_auth_url(api_key, callback) if callback else None,
+        "manual_url": lastfm.auth_url(api_key, token),
+    }
+
+
+@app.get("/api/lastfm/callback")
+async def lastfm_callback(token: str = "", request: Request = None):
+    """Where Last.fm returns the user after they approve the redirect flow.
+
+    Redirects back to Settings either way, with the outcome in the query string
+    — this is a page the user lands on, not an API call, so it must never answer
+    with raw JSON.
+
+    Anyone on the LAN could call this with a token of their own and link their
+    account instead. That is the same exposure as every other endpoint here (the
+    whole app is unauthenticated by design, on the assumption of a trusted home
+    network) and is not made worse by this route.
+    """
+    if not token:
+        return RedirectResponse(url="/settings?lastfm=denied", status_code=303)
+    cfg = await asyncio.to_thread(lastfm.settings)
+    username, err = await lastfm.complete_auth(
+        cfg.get("API_Key", ""), cfg.get("API_Secret", ""), token)
+    if err:
+        return RedirectResponse(
+            url=f"/settings?lastfm=error&detail={urllib.parse.quote(err)}",
+            status_code=303)
+    return RedirectResponse(
+        url=f"/settings?lastfm=connected&user={urllib.parse.quote(username)}",
+        status_code=303)
 
 
 @app.post("/api/lastfm/auth/complete")

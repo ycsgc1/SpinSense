@@ -54,10 +54,11 @@ Either way, album art is always fetched high-res from iTunes by artist + title, 
 
 Scrobbling uses **your own** Last.fm API application, so the rate limit and the terms are yours, not shared with every SpinSense user. Create one at [last.fm/api/account/create](https://www.last.fm/api/account/create) — any name and description will do, and you can leave the callback URL blank — then paste the **API key** and **shared secret** into Settings → Last.fm.
 
-**Connecting** is two clicks, because Last.fm has no callback-free flow and a LAN box has no public URL to call back to:
+**Connecting** is one click. Hit **Connect to Last.fm** and you go to Last.fm, sign in there if you aren't already, approve SpinSense, and land back on this page connected. Your Last.fm password is only ever typed into Last.fm.
 
-1. **Connect to Last.fm** — SpinSense asks Last.fm for a request token and opens the approval page in a new tab.
-2. Approve it there, come back, and click **I've approved it** — SpinSense trades the token for a permanent session key.
+SpinSense builds the return address from whatever URL your browser is already using, so this works on a LAN with no fixed hostname and nothing registered up front — that's why you can leave the callback URL blank when creating the API account.
+
+If the redirect can't come back — you approved on your phone, or you reach SpinSense through a proxy that rewrites the address — open **"Didn't come back automatically?"** for a manual approval link and a button to finish. Same result, one extra click.
 
 Nothing inbound is ever exposed, and the session key survives restarts.
 
