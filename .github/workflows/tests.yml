@@ -1,0 +1,51 @@
+name: Tests
+
+# Runs the unit suites and static analysis on every push and PR.
+#
+# Both suites must run from inside their own directory: backend_main mounts
+# StaticFiles("static") and Jinja2Templates("templates") by relative path, so
+# pytest launched from the repo root can't find them. That's why this is two
+# steps and not one `pytest core gui`.
+
+on:
+  push:
+    branches: [main, beta]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # matches docker/Dockerfile's base image
+          cache: pip
+
+      - name: Install system audio libraries
+        # sounddevice loads PortAudio at import time; core_engine and
+        # backend_main both import it at module scope.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libportaudio2
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Core engine tests
+        working-directory: core
+        run: python -m pytest -q
+
+      - name: GUI + backend tests
+        working-directory: gui
+        run: python -m pytest -q
+
+      - name: Lint (unused imports, undefined names, correctness)
+        run: ruff check --select E4,E7,E9,F core/ gui/
+
+      - name: Dead code
+        run: vulture core/ gui/ --min-confidence 100

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 import sounddevice as sd
 import aiohttp
 
+import lastfm
 import play_history
 import stats
 import reconcile
@@ -81,6 +82,7 @@ async def lifespan(app: FastAPI):
         print(f"⚠️ startup purge failed: {e}")
     task = asyncio.create_task(start_uds_listener())
     purge_task = asyncio.create_task(_purge_loop())
+    scrobble_task = asyncio.create_task(lastfm.flush_loop())
     try:
         await advertiser.start(load_config())
     except Exception as e:
@@ -89,6 +91,7 @@ async def lifespan(app: FastAPI):
     await advertiser.stop()
     task.cancel()
     purge_task.cancel()
+    scrobble_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -145,35 +148,35 @@ templates.env.globals["asset_v"] = ASSET_VERSION
 @app.get("/")
 async def dashboard(request: Request):
     return templates.TemplateResponse(
-        "dashboard.html", {"request": request, "current_page": "dashboard"}
+        request, "dashboard.html", {"current_page": "dashboard"}
     )
 
 
 @app.get("/history")
 async def history(request: Request):
     return templates.TemplateResponse(
-        "history.html", {"request": request, "current_page": "history"}
+        request, "history.html", {"current_page": "history"}
     )
 
 
 @app.get("/settings")
 async def settings(request: Request):
     return templates.TemplateResponse(
-        "settings.html", {"request": request, "current_page": "settings"}
+        request, "settings.html", {"current_page": "settings"}
     )
 
 
 @app.get("/stats")
 async def stats_page(request: Request):
     return templates.TemplateResponse(
-        "stats.html", {"request": request, "current_page": "stats"}
+        request, "stats.html", {"current_page": "stats"}
     )
 
 
 @app.get("/setup")
 async def setup(request: Request):
     return templates.TemplateResponse(
-        "setup.html", {"request": request, "current_page": "setup"}
+        request, "setup.html", {"current_page": "setup"}
     )
 
 
@@ -420,6 +423,78 @@ async def set_album_route(play_id: int, request: Request):
         for pid in ids:
             spawn_art_download(pid, art_url)
     return {"status": "ok", "updated": len(ids)}
+
+
+# --- Last.fm ---
+#
+# The auth handshake is two user-driven steps (see gui/lastfm.py): we mint a
+# request token and hand back a last.fm URL to approve it, then the user returns
+# and we trade the approved token for a permanent session key. The token lives
+# in memory between those two calls only — it is single-use, short-lived, and
+# writing it to config.json would just be a stale key to clean up later.
+_pending_auth_token: str | None = None
+
+
+@app.get("/api/lastfm/status")
+async def lastfm_status():
+    return await asyncio.to_thread(lastfm.status)
+
+
+@app.post("/api/lastfm/auth/start")
+async def lastfm_auth_start(request: Request):
+    """Save the credentials the user pasted, then mint a request token."""
+    global _pending_auth_token
+    body = await request.json()
+    api_key = str(body.get("api_key") or "").strip()
+    api_secret = str(body.get("api_secret") or "").strip()
+    if not api_key or not api_secret:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "detail": "API key and secret are both required"})
+
+    token, err = await lastfm.request_token(api_key, api_secret)
+    if err:
+        return JSONResponse(status_code=502, content={"ok": False, "detail": err})
+
+    # Persist only after Last.fm confirms the pair works, so a typo can't
+    # overwrite working credentials.
+    if not await asyncio.to_thread(lastfm._store, API_Key=api_key, API_Secret=api_secret):
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "detail": "Failed to write config.json"})
+    _pending_auth_token = token
+    return {"ok": True, "auth_url": lastfm.auth_url(api_key, token)}
+
+
+@app.post("/api/lastfm/auth/complete")
+async def lastfm_auth_complete():
+    """Called once the user has approved the token on last.fm."""
+    global _pending_auth_token
+    cfg = await asyncio.to_thread(lastfm.settings)
+    username, err = await lastfm.complete_auth(
+        cfg.get("API_Key", ""), cfg.get("API_Secret", ""), _pending_auth_token or "")
+    if err:
+        return JSONResponse(status_code=400, content={"ok": False, "detail": err})
+    _pending_auth_token = None
+    return {"ok": True, "username": username}
+
+
+@app.post("/api/lastfm/disconnect")
+async def lastfm_disconnect():
+    global _pending_auth_token
+    _pending_auth_token = None
+    if not await asyncio.to_thread(lastfm.disconnect):
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "detail": "Failed to write config.json"})
+    return {"ok": True}
+
+
+@app.post("/api/lastfm/flush")
+async def lastfm_flush():
+    """Submit the pending queue now instead of waiting for the timer — the
+    'is this actually working?' button."""
+    return await lastfm.flush()
 
 
 @app.get("/api/stats")

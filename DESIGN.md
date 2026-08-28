@@ -1,0 +1,486 @@
+# SpinSense — Design Source of Truth
+
+**Version:** 1.0.0.0 (2026-06-01)
+**Status:** Live. This document describes what SpinSense **is today**, not what we want it to be next. Per-feature design specs live under `docs/superpowers/specs/`; the post-1.0 backlog lives in `ROADMAP.md`. Update this file when an architectural decision changes.
+
+---
+
+## 1. Product Overview
+
+SpinSense bridges an analogue turntable and a digital smart home. It listens to the turntable's audio, identifies the track that's playing using a Shazam-compatible recognizer, and surfaces the result in Home Assistant as a `media_player` entity — alongside lights, thermostats, and the rest of the household.
+
+**Primary user:** a home-vinyl-and-home-automation enthusiast who wants what's spinning on their deck to be visible to (and queryable by) Home Assistant, dashboards, voice assistants, and automations. Typically running a Raspberry Pi or x64 NAS next to or near the turntable.
+
+**Design priorities, in order:**
+1. **Local & private.** Recognition results, history, and album art stay on the user's hardware. The only network call to a third party is the Shazam audio query (the recognizer it wraps) and the iTunes metadata lookup.
+2. **Zero-config when possible.** mDNS discovery means a fresh install is reachable from Home Assistant with no IP, port, or broker entered anywhere.
+3. **Docker-first.** A single container, a single compose file, a prebuilt multi-arch image. The setup-wizard handles everything beyond that in a browser.
+4. **Hot-reloadable.** Configuration changes (mic, threshold, MQTT broker, mDNS toggle) take effect on the running engine without a restart.
+
+---
+
+## 2. Top-Level Architecture
+
+```
+┌─────────────────────────────┐         ┌──────────────────────────┐
+│  Turntable → audio interface│         │   Home Assistant LAN     │
+│         │                   │         │                          │
+│  /dev/snd                   │         │  HACS integration:       │
+│  passthrough                │         │  ycsgc1/homeassistant-   │
+│         ▼                   │         │     spinsense            │
+│  ┌───────────────────────┐  │   mDNS  │  ┌────────────────────┐  │
+│  │  Engine process       │──┼─────────┼─▶│ media_player entity│  │
+│  │  core/core_engine.py  │  │  HTTP   │  └────────────────────┘  │
+│  │                       │  │  WS     │                          │
+│  │  ┌─audio loop         │  │         │   (or, optional)         │
+│  │  ├─Shazam recognition │  │         │   ┌──────────────────┐   │
+│  │  ├─iTunes metadata    │  │  MQTT   │   │  MQTT broker     │   │
+│  │  ├─MQTT publisher     │──┼─────────┼──▶│  + HA discovery  │   │
+│  │  └─config watcher     │  │         │   └──────────────────┘   │
+│  └───────────────────────┘  │         └──────────────────────────┘
+│           │ UDS             │
+│           │ /tmp/spinsense* │
+│           ▼                 │
+│  ┌───────────────────────┐  │       ┌──────────────────────┐
+│  │  GUI / backend        │──┼───────┤  Browser             │
+│  │  gui/backend_main.py  │  │  HTTP │  http://host:3313/   │
+│  │  FastAPI + uvicorn    │  │  WS   │  setup wizard,       │
+│  │                       │  │       │  dashboard, history, │
+│  │  ┌─templates/         │  │       │  settings            │
+│  │  ├─static/            │  │       └──────────────────────┘
+│  │  ├─SQLite history     │
+│  │  ├─album-art cache    │
+│  │  └─mDNS advertiser    │
+│  └───────────────────────┘
+│                             │
+│  Single Docker container    │
+└─────────────────────────────┘
+```
+
+**Two processes inside one container** (`docker/entrypoint.sh`):
+1. The **engine** (`python core/core_engine.py`) runs in the background. It owns audio capture, detection, recognition, the MQTT client, and the `config.json` file watcher.
+2. The **GUI/backend** (`uvicorn backend_main:app`) runs in the foreground (PID 1 by container convention). It owns the web UI, the integration HTTP/WebSocket contract, the SQLite history database, the album-art cache, and the mDNS advertiser.
+
+They communicate over **two named UDS sockets** under `/tmp` (see §3). This split lets the engine focus on real-time audio work without any HTTP framework overhead, and lets the GUI restart independently for hot reloads during development.
+
+---
+
+## 3. Inter-Process Communication (UDS)
+
+| Socket | Direction | Used for | Owned by |
+| --- | --- | --- | --- |
+| `/tmp/spinsense.sock` | engine → backend | Live status frames (RMS, current track, engine status) | Backend listens (`gui/ipc_manager.py`); engine writes (`core_engine.py` audio loop) |
+| `/tmp/spinsense-cmd.sock` | backend → engine | Calibration command channel (`start_calibration`, `get_calibration`, `clear_calibration`) | Engine listens (`command_listener_loop()` in `core_engine.py`); backend writes (`_send_cmd` in `backend_main.py`) |
+
+Both use **JSON-per-line**, short-lived connections. The status socket has a long-lived listener with reconnects on either side; the command socket is one connection per command.
+
+The status frame schema is the single source of truth for what the GUI and the HA integration both render:
+
+```json
+{
+  "type": "live_status",
+  "payload": {
+    "engine_active": true,
+    "status_msg": "Playing",
+    "rms_level": 0.0042,
+    "track": {
+      "title": "Sing Sing Sing",
+      "artist": "Benny Goodman",
+      "album": "The Famous 1938 Carnegie Hall Jazz Concert",
+      "art_url": "https://..."
+    }
+  }
+}
+```
+
+The backend caches the most recent payload (`ipc_manager.last_status`) and serves it on `GET /api/status` so the HA integration can poll between WebSocket frames.
+
+---
+
+## 4. Configuration Model
+
+A single `config.json` under `SPINSENSE_DATA_DIR` (default `/app/data`). Validated by pydantic on every read and write (`gui/config_manager.py`). Schema (live as of 1.0):
+
+```python
+class SpinSenseConfig(BaseModel):
+    System: SystemConfig         # Auto_Start, Engine_Status, Setup_Wizard_State
+    Hardware: HardwareConfig     # Mic_Device
+    Audio: AudioConfig           # Volume_Threshold, Song_Sample_Length, *_Silence_Interval
+    MQTT: MQTTConfig             # Enabled + Broker{Host,Port,User,Password} + Discovery + Topics
+    Discovery: DiscoveryConfig   # mDNS{Enabled, Service_Name}
+```
+
+**Defaults that matter:**
+- `Volume_Threshold = 0.01` (linear RMS, = −40 dBFS). Internal storage stays linear; the UI converts to dB.
+- `MQTT.Enabled = False`. mDNS is the default integration path.
+- `Discovery.mDNS.Enabled = True`. Zero-config out of the box.
+- `Setup_Wizard_State = "pending"`. The middleware redirects to `/setup` on first run.
+
+**Hot-reload model.** The engine watches `config.json`'s mtime every 2 seconds. On change, `_apply_config_diff()` re-populates the `runtime` dict and dispatches side effects per category:
+
+| Category changed | Side effect |
+| --- | --- |
+| Audio thresholds | Picked up on next audio-loop iteration |
+| Mic device | `mic_change_event.set()` → audio loop tears down + reopens the InputStream |
+| MQTT broker fields *or* `MQTT.Enabled` | Cancel in-flight connect; disconnect; reconnect if newly enabled. Toggling Enabled is live. |
+| `Discovery.mDNS.Enabled` | Backend's advertiser starts / stops in place |
+
+**Why a file watcher and not in-process pub/sub?** The GUI process writes config.json (validated, via `POST /api/config`); the engine reads it. Two processes, one file. mtime polling at 2 s is the simplest possible boundary that doesn't require RPC.
+
+---
+
+## 5. Storage
+
+Two stores, both under `SPINSENSE_DATA_DIR`:
+
+**`history.db`** — SQLite (`gui/play_history.py`). One table:
+
+```
+plays(
+  id INTEGER PRIMARY KEY,
+  played_at INTEGER,      -- unix epoch seconds
+  title TEXT, artist TEXT, album TEXT,
+  art_path TEXT,          -- relative to ART_DIR; rendered via /art/...
+  isrc TEXT,              -- nullable; future analytics
+  genre TEXT,             -- nullable
+  release_year INTEGER    -- nullable
+)
+```
+
+Later columns (`ended_at`, `duration_secs`, `album_locked`, `started_at`, `join_offset_secs`) arrived the same way and are documented where the feature that added them is described (§6.1, §14).
+
+The three nullable columns (`isrc`, `genre`, `release_year`) were added in 1.0 with an idempotent `ALTER TABLE` migration. They're populated best-effort from the recognition result; old rows stay valid as NULLs. They exist now so a future "listening Wrapped"-style feature has real data to mine — you cannot retroactively backfill listening history.
+
+**`art_cache/`** — downloaded album art, served under `/art/...`. The dashboard and history pages reference these via local URLs; the HA integration sees the **remote** `art_url` from the recognition pipeline (so it works without going through the SpinSense host as a proxy).
+
+---
+
+## 6. Audio Pipeline
+
+The engine's main loop (`audio_monitor_loop` in `core/core_engine.py`):
+
+```
+sounddevice InputStream
+    └─audio_callback()  ── RMS computed every buffer (~22 Hz at 48 kHz / 1024 frames)
+         │
+         ├─state["current_rms"] = rms          ← drives live meter (UDS frames)
+         └─if calibration["status"]=="running":
+              calibration["samples"].append(rms)   ← Step 7
+
+main loop @ 1 Hz:
+    if calibration is running:  skip detection branch (suppression)
+    elif rms > runtime["threshold"]:
+        if not in_song or just-came-out-of-silence:
+            recognize_audio()  ── Shazam → iTunes metadata → publish + persist
+    elif in_song:
+        silence_counter++
+        if silence_counter >= stopped_silence:
+            publish_state("stopped")
+```
+
+**Recognition (`recognize_audio`):**
+1. Capture `Song_Sample_Length` seconds (default 5 s) into an in-memory WAV buffer.
+2. Send to `shazamio.Shazam.recognize()`.
+3. On hit: fetch high-res album art from iTunes (`fetch_itunes_metadata`).
+4. Base64-encode the art for MQTT payloads (HA reads it that way).
+5. Publish to MQTT topics (if enabled and connected) and write the play to SQLite (via UDS frame to backend).
+
+**Why the `rms > threshold` model and not a continuous Shazam stream?** API budget, and silence-after-side handling. The engine spends most of its time idle, watching one float. Recognition only runs when the needle drops.
+
+**Engine state machine — high level:**
+
+```
+LISTENING ──audio above threshold──▶ RECOGNIZING ──result──▶ PLAYING(track)
+   ▲                                     ▲                        │
+   │                                     │ predicted end passed   │
+   │                                     └────────────────────────┤
+   │                                                              │
+   └──────────silence_counter ≥ stopped_silence ──────────────────┘
+```
+
+`status_msg` in UDS frames maps directly to this state: `"Listening"`, recognition-in-progress (no public name; the WebSocket pauses), `"Playing"`, `"stopped"`.
+
+### 6.1 Track-end prediction and the play clock
+
+Silence detection alone misses transitions on records whose inter-track gaps are too short or too quiet to reach `New_Song_Silence_Interval` — and no threshold setting fixes that, because at the sensitivity needed to catch those gaps, quiet passages *inside* songs start triggering rescans.
+
+So there is a second, independent way out of a track: **we know how long it is.** `core/track_clock.py` is a pure module (no I/O, `now` always passed in — same contract as `_scan_decision`) that turns the duration plus Shazam's `matches[0].offset` into a deadline:
+
+```
+position   ← matches[0].offset, or 0 if missing / implausible
+remaining  ← duration - position
+grace      ← min(max(Track_End_Grace_Secs, 0.10 * duration), 60)
+deadline   ← capture_start + remaining + grace
+```
+
+Past the deadline with no gap detected, the engine spends **one** recognition asking what is actually playing. Anchoring at capture start (not match time) keeps network latency out of the estimate; falling back to `position = 0` when the offset looks wrong makes the prediction fire *late*, which costs nothing.
+
+**The call budget is the design constraint.** Four gates keep it bounded: no duration means permanently disarmed; at most 3 end-checks per track, with the counter *inherited* across same-track re-arms so bad duration metadata can't loop forever; exponential deferral between them; and a stand-down once the gap has qualified anyway (without which the runout groove at the end of every side would drain the budget). Worst case is 3 extra calls on a track we keep failing to place; typical case is zero.
+
+One behavioural exception: an end-check calls `recognize_audio(preserve_on_miss=True)`. The ordinary no-match path tears down "now playing" and arms the back-off gate, which is right for a fresh onset — but an end-check runs against a track we are still playing, so a miss there means "we could not tell", not "there is nothing here".
+
+**The play clock** rides along in every frame as a `play_clock` block beside `track` (additive; unknown keys are ignored by the HACS integration):
+
+```json
+"play_clock": {"started_at": 1756338000, "join_offset_secs": 42,
+               "duration_secs": 213, "position_source": "shazam_offset"}
+```
+
+`started_at` is when the track actually began on the platter; `join_offset_secs` is how far in we started hearing it. Both persist to `plays`. `played_at` deliberately keeps its old meaning ("when we identified it") so every existing row, every stats query and history ordering stay valid.
+
+**Open question, deliberately absorbed rather than resolved:** the exact semantics of Shazam's `offset` are unverified (the bench spike from the 2026-07-12 lyrics design never ran). If it marks the end of the sample rather than the start, every prediction is early by `Song_Sample_Length` — 5 s, well inside a 20 s grace window. Both readings are safe; the spike would only tighten accuracy. `_log_clock()` prints the position and source on every match so it can be checked against a real record.
+
+---
+
+## 7. Calibration
+
+Two paths, both produce the same artifact: a single `Audio.Volume_Threshold` float in linear RMS.
+
+**Manual:** drag a dB slider while watching a live dBFS meter. Internally the slider operates on −80 to 0 dB at 0.5 dB resolution; the linked number input mirrors it. On save the GUI converts dB → linear RMS via `gui/static/db_utils.js` and POSTs to `/api/config`.
+
+**Auto-calibrate (the wizard's recommended path):**
+
+```
+User taps "Auto-calibrate"
+   │
+   ▼ "Drop needle on runout" → 5s capture
+   │   Engine: start_calibration noise_floor
+   │   audio_callback appends per-buffer RMS to deque
+   │   _finish_calibration timer flips status to "done"
+   │
+   ▼ "Drop needle on a song, tap when it starts" → 5s capture
+   │   (same path, phase=music)
+   │
+   ▼ Frontend reads stats for both phases:
+       threshold_dB = noise_p99_dB + 0.25 * (music_p10_dB - noise_p99_dB)
+       if threshold_dB < noise_p99_dB + 2:  threshold_dB = noise_p99_dB + 2
+       (clamped to [-80, 0])
+```
+
+**Why this formula?** `noise_p99` is the loudest rumble blip during silence (must clear it). `music_p10` is the *quiet* parts of music (threshold must sit below these so quiet intros still trigger). The 0.25 weighting biases toward sensitivity — closer to noise — because real-world vinyl has very quiet intros and we'd rather catch them than miss them. The 2 dB safety floor prevents the formula from spitting out a value too close to noise when the gap is small.
+
+**dB everywhere:** wizard, Settings, Dashboard. Internal storage stays linear so existing installs keep their saved value without migration. The conversion helper has a Python mirror under `gui/tests/test_db_utils.py` that pins the contract so JS↔Python math drift gets caught at CI time.
+
+---
+
+## 8. Setup Wizard
+
+State machine: `System.Setup_Wizard_State ∈ {"pending", "skipped", "completed"}`.
+
+Routing middleware (`backend_main.setup_wizard_gate`):
+
+| Wizard state | Visiting `/`, `/history`, `/settings` | Visiting `/setup` |
+|--------------|----------------------------------------|-------------------|
+| `pending`    | 307-redirect to `/setup`               | Render wizard     |
+| `skipped`    | Render normally                        | Render wizard     |
+| `completed`  | Render normally                        | Render wizard     |
+
+`/api/*`, `/static/*`, `/art/*`, `/ws/*` always pass through.
+
+**Five steps:**
+
+1. **Welcome** — intro, "Get started" or "Skip setup".
+2. **Microphone** — dropdown populated from `/api/devices`.
+3. **Calibrate threshold** — chooser sub-flow (Auto vs Manual; see §7).
+4. **Home Assistant & Integrations** — two **independent** toggles: mDNS (on by default, zero-config, recommended) and MQTT (off by default, advanced). Enabling MQTT reveals the broker fields and a "Test connection" button. Either, both, or neither is valid.
+5. **Done** — "Save and finish" writes everything to `config.json`. The engine's file watcher picks it up within ~2 s. No restart.
+
+**Three exits:**
+- **X** (close) — leaves state as-is. If it was `pending`, the redirect fires again on the next page hit.
+- **Skip setup** (footer link) — sets state to `"skipped"`. Auto-redirect stops.
+- **Save and finish** (final step) — sets state to `"completed"`.
+
+Re-entry is always available via **Settings → Re-run setup wizard**.
+
+---
+
+## 9. Discovery & Integrations
+
+Two integration paths, independently toggleable in §8 step 4.
+
+### 9.1 mDNS (default, recommended)
+
+`gui/discovery.py` advertises `_spinsense._tcp.local.` on `SPINSENSE_PORT` whenever the GUI process is running and `Discovery.mDNS.Enabled` is true. The companion HACS integration ([ycsgc1/homeassistant-spinsense](https://github.com/ycsgc1/homeassistant-spinsense)) declares the same service type in its `manifest.json` `zeroconf` key, so Home Assistant's discovery surfaces SpinSense automatically under Settings → Devices & Services → Discovered.
+
+The integration's config flow reads `discovery_info.host` + `.port` (no IP or port typed anywhere). It then validates by calling `GET /api/status` and subscribes to `WS /ws/live-status` for ongoing state.
+
+**Why mDNS requires `network_mode: host`.** Multicast does not cross Docker's bridge network. Under host mode the container binds `SPINSENSE_PORT` directly on the host; there is no `ports:` mapping (and adding one would do nothing). This is why the default port is **3313** (a nod to 33⅓ RPM) instead of 8000 — colliding with every other "default 8000" container under host networking would be a fresh-install footgun.
+
+**Failure mode.** mDNS bind failures (UDP 5353 already in use, no network) are non-fatal. The GUI logs and carries on serving HTTP; the user can still reach the dashboard, and MQTT remains as a fallback.
+
+### 9.2 MQTT (optional, advanced)
+
+Opt-in toggle. When enabled, the engine connects to the user's broker with the configured credentials and:
+
+- Publishes track state to `home/vinyl/{state,title,artist,album,album_art}` (album art base64-encoded).
+- Publishes Home Assistant MQTT-discovery payload to `homeassistant/media_player/spinsense/config` on connect, so HA's MQTT integration auto-creates a `media_player` entity without any user wiring.
+
+Topics are currently hardcoded in `core_engine.py` (`BASE_TOPIC = "home/vinyl"`). The `MQTT.Discovery.Discovery_Topic` and `MQTT.Topics.*` config fields exist in the schema for forward compatibility but are not yet wired — flagged as future cleanup.
+
+**Live enable/disable.** Toggling `MQTT.Enabled` in the GUI is reconciled by the config watcher: enabling reconnects, disabling disconnects. No engine restart.
+
+---
+
+## 10. HTTP / WebSocket Contract
+
+The HA integration depends on this surface. Breaking changes here ripple to a separate repo and a HACS install base.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /` | Dashboard HTML |
+| `GET /history` | History page HTML |
+| `GET /settings` | Settings page HTML |
+| `GET /setup` | Setup wizard HTML (always renders regardless of state) |
+| `GET /api/config` | Current config (linear-RMS values stored, dB-display done client-side) |
+| `POST /api/config` | Pydantic-validated config write; 400 on validation failure with `{"detail": "..."}` |
+| `GET /api/devices` | Audio input devices visible to the container |
+| `GET /api/setup-state` | `{"state": "pending\|skipped\|completed"}` |
+| `POST /api/mqtt/test` | Short-lived 3.5 s paho connect; returns `{ok, detail}` |
+| `POST /api/calibrate/start` body `{phase}` | Forwarded to engine; 503 if engine unreachable |
+| `GET /api/calibrate/status` | Forwarded to engine; returns running/done/none + stats blob |
+| `POST /api/calibrate/clear` | Forwarded to engine |
+| `GET /api/recent?limit=N` | Recent plays for dashboard |
+| `GET /api/plays?limit=N&offset=M` | Paginated history; capped at 100 |
+| `GET /api/lastfm/status` | Connection state, username, pending queue depth |
+| `POST /api/lastfm/auth/start` body `{api_key, api_secret}` | Mints a request token; returns the last.fm approval URL |
+| `POST /api/lastfm/auth/complete` | Trades the approved token for a session key |
+| `POST /api/lastfm/disconnect` | Forgets the session; keeps the API key + secret |
+| `POST /api/lastfm/flush` | Submits the pending queue now instead of on the timer |
+| **`GET /api/status`** | Last cached engine status frame; the HA integration's poll endpoint |
+| **`WS /ws/live-status`** | Push-only stream of status frames |
+
+**Cache policy.** HTML and `/static/*` are served `Cache-Control: no-cache` so a rebuild can never leave a browser executing stale JS against fresh markup. `/art/*` and `/api/*` stay cacheable.
+
+---
+
+## 11. Deployment
+
+**Distribution:** prebuilt multi-arch image at `ghcr.io/ycsgc1/spinsense`, built by a GitHub Actions workflow.
+
+| Tag | Tracks |
+| --- | --- |
+| `:latest` | Each release |
+| `<version>` | The specific release (e.g. `:1.0.0.0`) |
+| `:main` | Every commit to `main` |
+
+`docker compose pull && docker compose up -d` (and Dockge's Update button) just works. Building from source is supported via the commented `build:` block in the reference compose.
+
+**Reference compose** (`docker-compose.yml`, host networking required for mDNS):
+
+```yaml
+services:
+  spinsense:
+    image: ghcr.io/ycsgc1/spinsense:latest
+    container_name: spinsense_engine
+    restart: unless-stopped
+    devices:
+      - "/dev/snd:/dev/snd"
+    group_add: ["29"]
+    ipc: host
+    network_mode: host
+    environment:
+      - SPINSENSE_DATA_DIR=/app/data
+      - SPINSENSE_PORT=3313
+    volumes:
+      - ./data:/app/data
+      - /tmp:/tmp
+```
+
+**Critical knobs:**
+- `/dev/snd` passthrough — without it the container has no audio devices.
+- `group_add: ["29"]` (or `audio`) — owns the right ALSA permissions.
+- `network_mode: host` — required for mDNS to reach the LAN.
+- `volumes: ./data:/app/data` — persistence for `config.json`, `history.db`, and `art_cache/`. Without it, every rebuild starts from an empty database. **This is the single most-easily-missed config item.**
+
+**Image build (`docker/Dockerfile`):** Python 3.11-slim base; installs `portaudio19-dev`, `alsa-utils`, `libsndfile1`, `ffmpeg`; pip-installs `requirements.txt`; copies the source; runs `docker/entrypoint.sh` (starts engine in background, uvicorn in foreground). Exposes 3313 documentationally — under host networking the EXPOSE is informational only.
+
+---
+
+## 11.1 Last.fm scrobbling
+
+`gui/lastfm.py`, in the GUI process — that is where the play history lives. The engine knows nothing about it.
+
+**Why the user brings their own API key.** One shared application key would put every SpinSense install behind a single rate limit and make the project responsible for Last.fm's terms on the user's behalf. Registering at last.fm/api/account/create takes a minute and makes the account, the limit and the terms theirs.
+
+**Why the handshake is two clicks.** Last.fm's web auth flow wants a callback URL; a box on someone's LAN has none, and exposing one would be a worse trade than a second click. So the flow is user-driven: we mint a request token and hand over a last.fm URL, they approve it, they come back and we trade the token for a permanent session key. Nothing inbound, nothing to expose. The token lives in a module-level variable between the two calls — it is single-use and short-lived, and persisting it would only create a stale key to clean up.
+
+**The queue is the interesting part.** Plays are marked with `scrobbled_at` once submitted, and the mark is what makes submission exactly-once. The rule for *when* to mark is the one that matters:
+
+| Outcome | Marked? | Why |
+|---|---|---|
+| Accepted | yes | obviously |
+| Accepted but ignored by Last.fm | yes | it will be ignored identically next time; retrying forever is a slow leak |
+| Network / timeout | **no** | nothing reached Last.fm; retry next sweep |
+| Retryable service error (8, 11, 16, 29) | **no** | Last.fm asked us to come back later |
+| Other API error | yes | resubmitting would fail the same way |
+| Session revoked (error 9) | **no** | the user can fix this; keep the queue for when they do, and disable scrobbling so we stop asking |
+| Older than 14 days | yes, unsent | Last.fm refuses these outright — never offered to the API at all |
+
+Two further bounds: `Scrobble_Since` is stamped at connect time and nothing before it is ever submitted (connecting an account must not upload months of back catalogue), and batches are capped at Last.fm's 50.
+
+`play_history.scrobble_candidates(since, limit, pending_only)` is the read side — closed plays oldest-first (the order `track.scrobble` batches want) with the maths applied:
+
+```
+timestamp     = started_at or played_at         # true track start where known
+listened_secs = ended_at - played_at            # never estimated; NULL stays NULL
+eligible      = duration > 30s AND listened >= min(duration/2, 240s)
+```
+
+That last line is Last.fm's published rule verbatim. Ineligible rows come back **flagged, not dropped** — the ledger reports, the caller decides.
+
+`track.updateNowPlaying` is fired from `ipc_manager` as each play is recorded, as a detached task: it is decorative, and it must never delay or fail the act of recording a play.
+
+---
+
+## 12. Operational Notes
+
+- **Tier 3 hot-reload.** Every field in `config.json` that the engine reads is mirrored into a mutable `runtime` dict at startup and re-applied by the file watcher. No engine restart for any setting change. (Old behavior — needing a restart — was a 0.3-era bug; the Settings page banner that warned about it is gone.)
+- **mtime polling cadence.** 2 s. Fast enough that the UI feels live; slow enough that the engine's normal audio loop is unbothered.
+- **Track-end checks are budgeted, not throttled.** The cap is per *track*, not per unit time, and it resets only when the track changes or real silence clears it. This is deliberate: a rate limit would still let one badly-tagged record scan all afternoon, where a budget cannot.
+- **Detection suppression during calibration.** While a 5 s capture is `"running"`, the engine's audio loop skips the threshold-comparison branch entirely (samples still accumulate; the live meter still publishes). This prevents recognition firing on the calibration audio itself.
+- **MQTT reconnect under config change.** Cancels the in-flight connect task, calls `mqtt_client.loop_stop()` + `disconnect()`, then re-enters `connect_mqtt_loop`. Brief connection blip is acceptable.
+- **mDNS advertiser reconcile.** Lives in the GUI process. Stopping requires un-registering the `ServiceInfo`; starting binds a fresh one. Bind failures log and continue serving HTTP.
+
+---
+
+## 13. Project Structure
+
+```
+core/
+  core_engine.py           # the engine process: audio + recognition + MQTT
+  track_clock.py           # pure: track-end prediction + the play clock (§6.1)
+  tests/                   # unittest; runs without audio hardware (mocks indata)
+gui/
+  backend_main.py          # FastAPI app, routes, middleware
+  config_manager.py        # pydantic schema + load/save
+  ipc_manager.py           # UDS listener for engine→backend frames; last-status cache
+  discovery.py             # mDNS advertiser
+  lastfm.py                # Last.fm auth handshake, scrobble queue, now-playing
+  play_history.py          # SQLite history + migrations + the scrobble ledger
+  audio_utils.py           # device enumeration for /api/devices
+  templates/               # Jinja2: _layout, dashboard, history, settings, setup
+  static/                  # JS, CSS, db_utils.js (the shared dB conversion)
+  tests/                   # unittest; covers config round-trip, db_utils,
+                           # play_history, calibrate API (with fake UDS listener)
+docker/
+  Dockerfile, entrypoint.sh
+docs/
+  superpowers/specs/       # per-feature design docs (one per phase)
+  images/                  # README screenshots
+docker-compose.yml         # the reference compose (image-based)
+VERSION                    # 1.0.0.0
+CHANGELOG.md               # Keep-a-Changelog format
+README.md                  # install + setup + usage walkthrough
+ROADMAP.md                 # post-1.0 backlog
+DESIGN.md                  # ← you are here
+```
+
+---
+
+## 14. What's Deliberately Not Here
+
+- **Listening analytics / "Wrapped".** The history schema has the nullable columns ready (`isrc`, `genre`, `release_year`) but no surface yet. Deferred post-1.0.
+- **Clean DB export/import** for device migration. Backup is "copy the `data/` volume." Tracked in `ROADMAP.md`.
+- **Schema normalization** (separate `artists` / `tracks` tables). Same data, different shape — punt until analytics actually need joins.
+- **A JS test runner.** The frontend is hand-verified against the manual test plan in the spec. The Python mirror of `db_utils.js` is the closest thing to a unit test the JS gets.
+- **Engine restart on failure.** If hot-reload fails mid-flight, the engine logs and continues with the old value rather than crashing. No supervisor, no auto-restart loop inside the container — Docker's `restart: unless-stopped` is the only safety net, and it should rarely need to fire.

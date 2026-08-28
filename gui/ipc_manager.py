@@ -6,6 +6,7 @@ import os
 import time
 from typing import TYPE_CHECKING
 
+import lastfm
 import play_history
 import reconcile
 
@@ -17,11 +18,15 @@ log = logging.getLogger(__name__)
 ART_DIR = os.path.join(play_history.DATA_DIR, "art")
 
 
+# Stands in for a real frame on /api/status until the engine reports, so it
+# must carry every key a frame does — consumers shouldn't need two code paths.
 DEFAULT_STATUS = {
     "engine_active": False,
     "status_msg": "stopped",
+    "phase": "listening",
     "rms_level": 0.0,
     "track": {"title": "", "artist": "", "album": "", "art_url": ""},
+    "play_clock": None,
 }
 
 
@@ -70,6 +75,17 @@ _last_play_id: int | None = None
 # Strong refs to in-flight art-download tasks so the event loop's weak task
 # tracking can't GC them mid-download; each removes itself on completion.
 _art_tasks: set = set()
+
+# Same, for the fire-and-forget Last.fm "now playing" ping.
+_now_playing_tasks: set = set()
+
+
+def _spawn_now_playing(track: dict) -> None:
+    """Tell Last.fm what's on the platter, without making recording wait for it.
+    Purely decorative — the scrobble itself happens later, from the queue."""
+    task = asyncio.create_task(lastfm.update_now_playing(track))
+    _now_playing_tasks.add(task)
+    task.add_done_callback(_now_playing_tasks.discard)
 
 
 async def _download_and_store_art(play_id: int, art_url: str) -> None:
@@ -125,7 +141,23 @@ async def _stamp_last_play_ended() -> None:
     _last_play_id = None
 
 
-async def _record_if_new(track: dict) -> None:
+def _play_clock_fields(play_clock) -> tuple[int | None, int | None]:
+    """(started_at, join_offset_secs) from a frame's play_clock block.
+
+    The block is optional and every field in it is best-effort — an engine
+    running an older build sends no block at all, and a track with no duration
+    metadata sends one with nulls. Anything unusable becomes NULL in the row,
+    which the scrobble ledger reads as "unknown" rather than "zero"."""
+    if not isinstance(play_clock, dict):
+        return None, None
+    started_at = play_clock.get("started_at")
+    join_offset = play_clock.get("join_offset_secs")
+    started_at = int(started_at) if isinstance(started_at, (int, float)) else None
+    join_offset = int(join_offset) if isinstance(join_offset, (int, float)) else None
+    return started_at, join_offset
+
+
+async def _record_if_new(track: dict, play_clock: dict | None = None) -> None:
     """Record a new identification if the title differs from the last one we
     saved. On silence (empty title) reset the dedupe state so the next play is
     treated as new, and close the open play's ended_at."""
@@ -148,6 +180,7 @@ async def _record_if_new(track: dict) -> None:
     genre = track.get("genre") or None
     release_year = track.get("release_year") or None
     duration_secs = track.get("duration_secs") or None
+    started_at, join_offset_secs = _play_clock_fields(play_clock)
 
     # A different track is starting: the previous one just ended.
     await _stamp_last_play_ended()
@@ -156,7 +189,8 @@ async def _record_if_new(track: dict) -> None:
         play_id = await asyncio.to_thread(
             play_history.record_play, title, artist, album, art_url,
             isrc=isrc, genre=genre, release_year=release_year,
-            duration_secs=duration_secs,
+            duration_secs=duration_secs, started_at=started_at,
+            join_offset_secs=join_offset_secs,
         )
     except Exception as e:
         log.error("failed to record play %s - %s: %s", artist, title, e)
@@ -167,6 +201,8 @@ async def _record_if_new(track: dict) -> None:
 
     if art_url:
         spawn_art_download(play_id, art_url)
+
+    _spawn_now_playing(track)
 
     # Unify edition variants across this play's session run. Best-effort:
     # a reconcile failure must never block or crash recording.
@@ -191,7 +227,7 @@ async def handle_uds_client(reader, writer):
             continue
 
         if payload.get("type") == "live_status":
-            track = payload.get("payload", {}).get("track", {})
-            await _record_if_new(track)
+            body = payload.get("payload", {})
+            await _record_if_new(body.get("track", {}), body.get("play_clock"))
 
         await manager.broadcast(payload)

@@ -6,7 +6,7 @@ GUI_DIR = os.path.dirname(HERE)
 if GUI_DIR not in sys.path:
     sys.path.insert(0, GUI_DIR)
 
-import unittest
+import unittest  # noqa: E402
 
 
 class TestServiceInfoBuilder(unittest.TestCase):

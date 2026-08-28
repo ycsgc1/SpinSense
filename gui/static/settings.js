@@ -207,6 +207,176 @@
     }
   }
 
+  // ---------- Last.fm ----------
+  //
+  // Two-step handshake (see gui/lastfm.py): "Connect" mints a request token and
+  // opens last.fm for approval; "I've approved it" trades it for a permanent
+  // session key. The token lives server-side between the two, so nothing about
+  // it needs to survive here.
+
+  const LF_STATE = document.getElementById("lastfm-state");
+  const LF_SETUP = document.getElementById("lastfm-setup");
+  const LF_APPROVE = document.getElementById("lastfm-approve");
+  const LF_APPROVE_LINK = document.getElementById("lastfm-approve-link");
+  const LF_KEY = document.getElementById("lastfm-api-key");
+  const LF_SECRET = document.getElementById("lastfm-api-secret");
+  const LF_CONNECT = document.getElementById("lastfm-connect");
+  const LF_FINISH = document.getElementById("lastfm-finish");
+  const LF_TOAST = document.getElementById("lastfm-toast");
+
+  // The server flips LastFM.Enabled during connect/disconnect, so the form is
+  // stale afterwards. Repopulating it would discard any unsaved edits elsewhere
+  // on the page, so when the form is dirty we say so instead of stomping it.
+  async function reloadConfigIfClean(warning) {
+    if (dirty) {
+      lfToast(warning, "ok");
+      return;
+    }
+    await loadConfig();
+  }
+
+  function lfToast(text, kind) {
+    if (!LF_TOAST) return;
+    LF_TOAST.textContent = text || "";
+    LF_TOAST.dataset.kind = kind || "";
+  }
+
+  function renderLastFm(status) {
+    if (!LF_STATE) return;
+    if (status.connected) {
+      const pending = status.pending || 0;
+      const queued = pending === 0
+        ? "Nothing waiting to be sent."
+        : `${pending} play${pending === 1 ? "" : "s"} waiting to be sent.`;
+      LF_STATE.innerHTML = `
+        <div class="flex items-center justify-between gap-md flex-wrap">
+          <div>
+            <p class="text-body-md text-on-surface">Connected as
+              <strong>${escapeHtml(status.username || "?")}</strong></p>
+            <p class="text-body-sm text-on-surface-variant">${queued}</p>
+          </div>
+          <div class="flex gap-2">
+            <button type="button" id="lastfm-flush"
+                    class="bg-surface-container-high border border-outline-variant/40 text-on-surface font-medium px-md py-2 rounded-full hover:bg-surface-container-highest transition-colors">
+              Send now
+            </button>
+            <button type="button" id="lastfm-disconnect"
+                    class="bg-surface-container-high border border-outline-variant/40 text-on-surface font-medium px-md py-2 rounded-full hover:bg-surface-container-highest transition-colors">
+              Disconnect
+            </button>
+          </div>
+        </div>`;
+      LF_SETUP.classList.add("hidden");
+      document.getElementById("lastfm-flush").addEventListener("click", flushLastFm);
+      document.getElementById("lastfm-disconnect").addEventListener("click", disconnectLastFm);
+    } else {
+      LF_STATE.innerHTML =
+        '<p class="text-body-sm text-on-surface-variant">Not connected. ' +
+        'Scrobbling is off until you link an account.</p>';
+      LF_SETUP.classList.remove("hidden");
+      if (status.has_credentials) {
+        // Keys are already saved; don't make the user hunt them down again.
+        LF_KEY.placeholder = "(saved)";
+        LF_SECRET.placeholder = "(saved)";
+      }
+    }
+  }
+
+  async function refreshLastFm() {
+    try {
+      const res = await fetch("/api/lastfm/status");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      renderLastFm(await res.json());
+    } catch (e) {
+      if (LF_STATE) {
+        LF_STATE.innerHTML =
+          '<p class="text-body-sm text-on-surface-variant">Couldn&rsquo;t read Last.fm status.</p>';
+      }
+    }
+  }
+
+  async function connectLastFm() {
+    const api_key = LF_KEY.value.trim();
+    const api_secret = LF_SECRET.value.trim();
+    if (!api_key || !api_secret) {
+      lfToast("Paste both the API key and the shared secret.", "error");
+      return;
+    }
+    LF_CONNECT.disabled = true;
+    lfToast("Asking Last.fm for an authorisation link…");
+    try {
+      const res = await fetch("/api/lastfm/auth/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key, api_secret }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        lfToast(body.detail || `Failed (${res.status})`, "error");
+        return;
+      }
+      LF_APPROVE_LINK.href = body.auth_url;
+      LF_APPROVE.classList.remove("hidden");
+      window.open(body.auth_url, "_blank", "noopener");
+      lfToast("Approve SpinSense in the tab that opened, then finish below.", "ok");
+    } catch (e) {
+      lfToast("Network error: " + e.message, "error");
+    } finally {
+      LF_CONNECT.disabled = false;
+    }
+  }
+
+  async function finishLastFm() {
+    LF_FINISH.disabled = true;
+    lfToast("Finishing…");
+    try {
+      const res = await fetch("/api/lastfm/auth/complete", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Usually "Unauthorized Token" — they haven't clicked Allow yet.
+        lfToast(body.detail || `Failed (${res.status})`, "error");
+        return;
+      }
+      LF_APPROVE.classList.add("hidden");
+      LF_KEY.value = "";
+      LF_SECRET.value = "";
+      lfToast(`Connected as ${body.username}.`, "ok");
+      await refreshLastFm();
+      await reloadConfigIfClean("Connected — reload the page to see the scrobbling toggles update.");
+    } catch (e) {
+      lfToast("Network error: " + e.message, "error");
+    } finally {
+      LF_FINISH.disabled = false;
+    }
+  }
+
+  async function disconnectLastFm() {
+    if (!window.confirm("Disconnect this Last.fm account? Your API key stays saved.")) return;
+    try {
+      await fetch("/api/lastfm/disconnect", { method: "POST" });
+      lfToast("Disconnected.", "ok");
+      await refreshLastFm();
+      await reloadConfigIfClean("Disconnected — reload the page to see the scrobbling toggles update.");
+    } catch (e) {
+      lfToast("Network error: " + e.message, "error");
+    }
+  }
+
+  async function flushLastFm() {
+    lfToast("Sending…");
+    try {
+      const res = await fetch("/api/lastfm/flush", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      lfToast(body.detail || (body.ok ? "Sent." : "Failed."), body.ok ? "ok" : "error");
+      await refreshLastFm();
+    } catch (e) {
+      lfToast("Network error: " + e.message, "error");
+    }
+  }
+
+  if (LF_CONNECT) LF_CONNECT.addEventListener("click", connectLastFm);
+  if (LF_FINISH) LF_FINISH.addEventListener("click", finishLastFm);
+
   // Wire up RMS preview off the shell's WS pub/sub.
   if (window.SpinSense && typeof window.SpinSense.onFrame === "function") {
     window.SpinSense.onFrame((payload) => {
@@ -291,4 +461,5 @@
   });
 
   loadConfig();
+  refreshLastFm();
 })();

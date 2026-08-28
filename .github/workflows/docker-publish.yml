@@ -2,6 +2,8 @@ name: Publish Docker image
 
 # Builds a multi-arch (amd64 + arm64) image and pushes it to GHCR.
 # - push to main      -> ghcr.io/ycsgc1/spinsense:main      (rolling)
+# - push to beta      -> ghcr.io/ycsgc1/spinsense:beta      (rolling, for testing
+#                        unreleased work on real hardware — point Dockge at it)
 # - published release -> ghcr.io/ycsgc1/spinsense:<tag> + :latest
 # GHCR auth uses the built-in GITHUB_TOKEN; no secrets to configure.
 # NOTE: after the first push, make the package public once in
@@ -9,7 +11,7 @@ name: Publish Docker image
 
 on:
   push:
-    branches: [main]
+    branches: [main, beta]
   release:
     types: [published]
   workflow_dispatch:
@@ -48,6 +50,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=beta,enable=${{ github.ref == 'refs/heads/beta' }}
             type=raw,value=${{ github.ref_name }},enable=${{ github.event_name == 'release' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
 

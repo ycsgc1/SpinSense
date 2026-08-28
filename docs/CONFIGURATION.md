@@ -17,9 +17,13 @@ How SpinSense tells music from silence, how it samples for recognition, and whic
 | **Rescan wait interval** | When a track can't be identified, SpinSense waits this many seconds before trying again, recording a longer sample each time (1×, then 2×, then 3× the sample length). Longer waits sample more of the song; shorter retries faster. | 5 s | 0 … 60 s |
 | **New-song silence interval** | How long a quiet gap must last before SpinSense treats the next audio as a **new song** rather than a continuation — roughly the gap between tracks on a record. Also how long a failed/unidentifiable track stays "backed off" before a fresh gap re-arms scanning. | 3 s | 1 … 600 s |
 | **Stopped silence interval** | How long silence must persist before SpinSense marks the record **stopped** and clears "now playing". Longer tolerates quiet passages within a song; shorter marks "stopped" sooner after the needle lifts. Keep this ≥ the new-song interval. | 5 s | 1 … 600 s |
+| **Detect the end of a track** | Uses the track's known length as a second way to spot a transition. Once a song should be over and no gap was heard, SpinSense re-identifies once to see what's actually playing. Catches the transitions that silence detection misses on records with very short or very quiet inter-track gaps. Only applies to tracks whose length was found (iTunes / AudD); strictly limited to 3 extra checks per song. | On | toggle |
+| **Track-end grace (seconds)** | How long past a song's expected end SpinSense waits before re-identifying. It uses whichever is longer, this or 10 % of the track's length (capped at 60 s), so long tracks get proportionally more slack. Raise it if you see needless re-identifications; lower it to catch missed transitions sooner. | 20 s | 0 … 300 s |
 | **Re-announce each track to Home Assistant** | When on, each new song briefly drops Home Assistant to idle before playing again (over both the integration and MQTT), so automations that trigger on "started playing" re-fire on every track. Off keeps playback smooth, with no idle blip. | Off | toggle |
 | **Backup recognizer** | A second recognizer to try when the primary (Shazam) can't identify a track on its first attempt. See [Backup recognizers](#backup-recognizers) below. | None | None / AudD / AcoustID |
 | **AudD API token** | Your API token from [audd.io](https://dashboard.audd.io/) — only needed when **Backup recognizer** is set to AudD. | *(empty)* | string |
+
+> **Why not just lower the silence intervals?** On records whose gaps are very short, no silence setting distinguishes the gap between songs from a quiet passage inside one — you trade missed transitions for a flood of needless re-identifications. **Detect the end of a track** sidesteps that trade entirely: it spends recognition calls only where a transition was actually missed, and never more than a few per song.
 
 > **Tip — tuning the silence intervals.** If a track with quiet passages keeps getting re-identified mid-song, raise **New-song silence interval**. If the player lingers on "now playing" too long after a side ends, lower **Stopped silence interval**. The recommended ordering is `New-song ≤ Stopped`.
 
@@ -43,6 +47,30 @@ Shazam is always the **primary** recognizer (free, on by default — nothing to 
 **Using AcoustID:** just set **Backup recognizer → AcoustID** and **Save**. Nothing else — the AcoustID app key is bundled. *(Advanced: override it with the `SPINSENSE_ACOUSTID_KEY` environment variable if you want to use your own.)*
 
 Either way, album art is always fetched high-res from iTunes by artist + title, so artwork quality is the same regardless of which recognizer matched.
+
+---
+
+## Last.fm
+
+Scrobbling uses **your own** Last.fm API application, so the rate limit and the terms are yours, not shared with every SpinSense user. Create one at [last.fm/api/account/create](https://www.last.fm/api/account/create) — any name and description will do, and you can leave the callback URL blank — then paste the **API key** and **shared secret** into Settings → Last.fm.
+
+**Connecting** is two clicks, because Last.fm has no callback-free flow and a LAN box has no public URL to call back to:
+
+1. **Connect to Last.fm** — SpinSense asks Last.fm for a request token and opens the approval page in a new tab.
+2. Approve it there, come back, and click **I've approved it** — SpinSense trades the token for a permanent session key.
+
+Nothing inbound is ever exposed, and the session key survives restarts.
+
+| Setting | What it does | Default |
+|---|---|---|
+| **Scrobble plays** | Submit finished plays to your profile. Uses Last.fm's own eligibility rule: the track must be longer than 30 s and have played for at least half its length, or 4 minutes, whichever comes first. | Off until connected |
+| **Update "now playing"** | Show the current track on your profile while it plays. Separate from scrobbling — this is the live indicator, scrobbles are the permanent record. | On |
+
+**What gets sent, and when.** Plays queue in the database and go out in batches every couple of minutes; **Send now** flushes immediately if you want to watch it work. Only plays from the moment you connected are ever submitted — connecting an account does not upload your back catalogue. Last.fm refuses scrobbles older than 14 days, so anything that ages out in a long outage is quietly retired rather than retried forever.
+
+**If it stops working.** A revoked session (password change, app removed from your Last.fm settings) turns scrobbling off and says so on the Settings page; reconnecting fixes it, and the queue is preserved while you do. Plays already sent are marked, so nothing is ever scrobbled twice.
+
+> **A note on secrets.** The shared secret and session key live in `config.json` in plaintext, alongside the MQTT password and AudD token. That's fine for a self-hosted box on your own LAN — just don't commit `config.json` anywhere public. The session key permits scrobbling to your account and nothing else; it is not your password.
 
 ---
 

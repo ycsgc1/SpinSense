@@ -145,8 +145,8 @@ class ReconcileAlbumTest(ReconcileDbBase):
         self.assertEqual(set(self.albums()), {"Abbey Road (Super Deluxe Edition)"})
 
     def test_locked_rows_neither_vote_nor_rewrite(self):
-        p1 = self.seed("A", "Abbey Road (My Special Long Locked Edition)", 1000,
-                       locked=1)
+        self.seed("A", "Abbey Road (My Special Long Locked Edition)", 1000,
+                  locked=1)
         p2 = self.seed("A", "Abbey Road", 1100)
         reconcile.reconcile_album(p2, db_path=self.db)
         albums = self.albums()

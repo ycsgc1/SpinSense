@@ -57,13 +57,15 @@ class RecognizeRetryTest(unittest.TestCase):
     def setUp(self):
         self.phases = []
         self.handled = []
+        self.handled_reasons = []
         # Capture phase publishes instead of hitting the socket.
         async def fake_publish(phase):
             self.phases.append(phase)
         async def fake_capture(sample_len):
             return b""
-        async def fake_handle(track):
+        async def fake_handle(track, reason="onset"):
             self.handled.append(track)
+            self.handled_reasons.append(reason)
             core_engine.state["in_song"] = True
             core_engine.state["back_off"] = False
         self._orig = (core_engine._publish_phase, core_engine._capture_sample,
@@ -391,6 +393,7 @@ class AuddAdapterTest(unittest.TestCase):
 class AuddFallbackFlowTest(unittest.TestCase):
     def setUp(self):
         self.handled = []
+        self.handled_reasons = []
         self.audd_calls = 0
         self.shazam_calls = 0
         async def fake_phase(p):
@@ -399,8 +402,9 @@ class AuddFallbackFlowTest(unittest.TestCase):
             return b""
         async def fake_pause(seconds):
             return None
-        async def fake_handle(track):
+        async def fake_handle(track, reason="onset"):
             self.handled.append(track)
+            self.handled_reasons.append(reason)
             core_engine.state["in_song"] = True
             core_engine.state["back_off"] = False
         self._orig = (core_engine._publish_phase, core_engine._capture_sample,
@@ -476,9 +480,11 @@ class FallbackDispatchTest(unittest.TestCase):
                       core_engine.runtime["fallback_provider"])
         self.calls = []
         async def fake_audd(_w):
-            self.calls.append("audd"); return {"title": "AudD", "artist": "A"}
+            self.calls.append("audd")
+            return {"title": "AudD", "artist": "A"}
         async def fake_acoustid(_w):
-            self.calls.append("acoustid"); return {"title": "AcoustID", "artist": "A"}
+            self.calls.append("acoustid")
+            return {"title": "AcoustID", "artist": "A"}
         core_engine._identify_audd = fake_audd
         core_engine._identify_acoustid = fake_acoustid
 

@@ -152,7 +152,8 @@ class IPCDedupeTest(unittest.TestCase):
 
 class TestEnrichmentColumns(unittest.TestCase):
     def setUp(self):
-        import tempfile, os
+        import os
+        import tempfile
         self.tmp = tempfile.mkdtemp()
         self.db = os.path.join(self.tmp, "t.db")
         import play_history
@@ -180,7 +181,7 @@ class TestEnrichmentColumns(unittest.TestCase):
 
     def test_record_play_enrichment_optional(self):
         import play_history
-        pid = play_history.record_play("T", "A", None, None, db_path=self.db)
+        play_history.record_play("T", "A", None, None, db_path=self.db)
         rows = play_history.recent_plays(10, 0, db_path=self.db)
         self.assertIsNone(rows[0]["isrc"])
         self.assertIsNone(rows[0]["genre"])

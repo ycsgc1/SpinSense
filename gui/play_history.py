@@ -31,6 +31,16 @@ _ENRICHMENT_COLUMNS = {
     # Album/edition reconciliation (2026-07): 1 = album set manually, never
     # auto-rewritten. NULL/0 = auto-managed.
     "album_locked": "INTEGER",
+    # Play clock (2026-08, core/track_clock.py). `played_at` deliberately keeps
+    # its old meaning ("when we identified it") so every existing row, every
+    # stats query and history ordering stay valid; the true track start lands
+    # here instead. NULL on both = unknown, which is every pre-feature row.
+    "started_at": "INTEGER",          # unix secs the track began on the platter
+    "join_offset_secs": "INTEGER",    # secs into the track when we started hearing it
+    # Last.fm (2026-08). Non-NULL = this play has been submitted and must never
+    # be submitted again; the value is when we sent it. Rows Last.fm ignored or
+    # that aged out are stamped too — retrying either forever would be a leak.
+    "scrobbled_at": "INTEGER",
 }
 
 
@@ -69,14 +79,17 @@ def record_play(
     genre: str | None = None,
     release_year: int | None = None,
     duration_secs: int | None = None,
+    started_at: int | None = None,
+    join_offset_secs: int | None = None,
 ) -> int:
     with _connect(db_path) as conn:
         cur = conn.execute(
             "INSERT INTO plays "
-            "(title, artist, album, art_url, played_at, isrc, genre, release_year, duration_secs) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(title, artist, album, art_url, played_at, isrc, genre, release_year, "
+            "duration_secs, started_at, join_offset_secs) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (title, artist, album, art_url, int(time.time()), isrc, genre,
-             release_year, duration_secs),
+             release_year, duration_secs, started_at, join_offset_secs),
         )
         return int(cur.lastrowid)
 
@@ -151,7 +164,8 @@ def recent_plays(
     with _connect(db_path) as conn:
         rows = conn.execute(
             "SELECT id, title, artist, album, art_url, art_path, played_at, "
-            "isrc, genre, release_year "
+            "isrc, genre, release_year, duration_secs, ended_at, album_locked, "
+            "started_at, join_offset_secs "
             "FROM plays WHERE deleted_at IS NULL ORDER BY played_at DESC, id DESC LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()
@@ -204,7 +218,93 @@ def purge_deleted(
     return len(victims)
 
 
+def mark_scrobbled(play_ids, scrobbled_at: int, db_path: str | None = None) -> int:
+    """Stamp plays as submitted. First write wins, so a retry that races a
+    successful submission can't move the timestamp. Returns rows changed."""
+    ids = list(play_ids)
+    if not ids:
+        return 0
+    with _connect(db_path) as conn:
+        cur = conn.executemany(
+            "UPDATE plays SET scrobbled_at = ? WHERE id = ? AND scrobbled_at IS NULL",
+            [(int(scrobbled_at), int(i)) for i in ids],
+        )
+        return cur.rowcount
+
+
 def count_plays(db_path: str | None = None) -> int:
     with _connect(db_path) as conn:
         (n,) = conn.execute("SELECT COUNT(*) FROM plays WHERE deleted_at IS NULL").fetchone()
         return int(n)
+
+
+# --- Scrobble ledger -------------------------------------------------------
+# Last.fm's published track.scrobble eligibility rule. A future scrobbler is a
+# pure consumer of these: auth + POST, no further schema or engine work.
+SCROBBLE_MIN_DURATION_SECS = 30    # tracks shorter than this never scrobble
+SCROBBLE_ABSOLUTE_SECS = 240       # 4 minutes always qualifies
+
+
+def scrobble_listened_secs(row: dict) -> int | None:
+    """Seconds of this play we actually heard, or None if unknowable.
+
+    `played_at` is when we identified the track, so it already excludes
+    whatever ran before we joined; `join_offset_secs` only matters for the
+    total, not the heard time. An unclosed play (no `ended_at` — the GUI
+    restarted mid-track) is never estimated, by the same rule stats.py uses.
+    """
+    ended_at = row.get("ended_at")
+    played_at = row.get("played_at")
+    if ended_at is None or played_at is None:
+        return None
+    return max(0, int(ended_at) - int(played_at))
+
+
+def scrobble_eligible(row: dict) -> bool:
+    """Last.fm's rule: the track must be longer than 30 s, and must have been
+    played for at least half its length or 4 minutes, whichever comes first."""
+    duration = row.get("duration_secs")
+    listened = scrobble_listened_secs(row)
+    if not duration or listened is None:
+        return False
+    if int(duration) <= SCROBBLE_MIN_DURATION_SECS:
+        return False
+    return listened >= min(int(duration) / 2, SCROBBLE_ABSOLUTE_SECS)
+
+
+def scrobble_candidates(
+    since: int = 0,
+    limit: int = 200,
+    db_path: str | None = None,
+    *,
+    pending_only: bool = False,
+) -> list[dict]:
+    """Closed plays since `since`, oldest first, with the scrobble maths applied.
+
+    Oldest-first because Last.fm expects batches in chronological order. Each
+    row carries `timestamp` (the true track start where we know it, else the
+    identification time — what track.scrobble wants), plus `listened_secs` and
+    `eligible` so the caller decides nothing.
+
+    `pending_only` narrows to rows not yet submitted — what the scrobbler drains.
+    Without it this is the general ledger view, useful for inspecting history.
+    """
+    limit = max(1, min(int(limit), 1000))
+    unsent = " AND scrobbled_at IS NULL" if pending_only else ""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, title, artist, album, played_at, ended_at, duration_secs, "
+            "started_at, join_offset_secs, scrobbled_at "
+            "FROM plays WHERE deleted_at IS NULL AND ended_at IS NOT NULL "
+            f"AND played_at >= ?{unsent} ORDER BY played_at ASC, id ASC LIMIT ?",
+            (int(since), limit),
+        ).fetchall()
+
+    out = []
+    for r in rows:
+        row = dict(r)
+        row["timestamp"] = row["started_at"] or row["played_at"]
+        row["listened_secs"] = scrobble_listened_secs(row)
+        row["eligible"] = scrobble_eligible(row)
+        out.append(row)
+    return out

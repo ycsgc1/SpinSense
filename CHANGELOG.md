@@ -2,6 +2,30 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
+## [Unreleased]
+
+### Added
+- **Last.fm scrobbling.** Finished plays are submitted to your profile, plus a live "now playing" indicator. Eligibility is Last.fm's own rule — longer than 30 s, played to half its length or 4 minutes, whichever comes first. Connecting takes two clicks and your own API key from [last.fm/api/account/create](https://www.last.fm/api/account/create), so the rate limit is yours and nothing inbound is exposed.
+- **A scrobble queue that survives outages.** Plays are marked once submitted and never sent twice; network and service errors leave them queued for the next sweep; a revoked session turns scrobbling off, says so, and keeps the queue intact until you reconnect. Only plays from the moment you connect are ever sent, and anything that ages past Last.fm's 14-day limit is retired rather than retried forever.
+- **Track-end detection.** Some records have gaps between songs too short or too quiet to detect, so SpinSense kept showing the previous track for the rest of the side. It now also uses the track's known length: once a song should be over and no gap was heard, it re-identifies once to see what's actually playing. Off-by-default silence tuning was never able to fix this — at the sensitivity needed to catch those gaps, quiet passages inside songs start triggering rescans.
+- **A recognition budget you can reason about.** Track-end checks are capped at 3 per song, back off exponentially between attempts, stand down entirely once an ordinary gap has been detected, and never run at all for tracks whose length couldn't be found. Worst case is 3 extra lookups on a song we keep failing to place; typical case is zero.
+- **Two Settings knobs**, both hot-reloaded like every other audio setting: **Detect the end of a track** (on by default) and **Track-end grace (seconds)** (20 s). Grace is whichever is larger, that value or 10 % of the track's length, capped at 60 s.
+- **The play clock.** Every live frame now carries a `play_clock` block — when the track actually started, how far into it we joined, its length, and where that position came from. New `started_at` / `join_offset_secs` columns persist it. `played_at` deliberately keeps its old meaning, so existing rows, stats and history ordering are untouched.
+- **`play_history.scrobble_candidates()`** — closed plays, oldest first, with Last.fm's eligibility rule (>30 s, played to half or 4 minutes) already applied. Ineligible rows come back flagged rather than dropped. This is the whole data half of scrobbling; what remains is auth and a POST.
+
+### Changed
+- **CI runs the tests.** There was no test workflow at all — images published from `main` untested. Both suites, `ruff` and `vulture` now run on every push and pull request.
+- **A `beta` branch publishes `ghcr.io/ycsgc1/spinsense:beta`**, for trying unreleased work on real hardware without touching `:latest`.
+- Shazam's `matches[0].offset` is no longer discarded — it becomes the playhead anchor. Implausible values fall back to "assume we caught it from the top", which makes predictions fire late rather than early.
+- History rows now include `duration_secs`, `ended_at` and `album_locked`, which `recent_plays()` had been selecting around.
+
+### Fixed
+- **`config.json` is no longer overwritten when it can't be read.** `load_config()` runs on every page request, and any parse or validation failure used to regenerate defaults *and write them back* — so a single truncated read could permanently replace the MQTT password, AudD token and calibrated threshold. It now serves defaults in memory and leaves the file alone, so the next good read recovers everything.
+- **Page routes no longer depend on a removed Starlette signature.** `TemplateResponse(name, {"request": ...})` has been replaced by the current `TemplateResponse(request, name, ...)` form throughout — the old one 500s on modern Starlette, so this was a landmine under any future FastAPI upgrade.
+- **The engine and the config schema no longer disagree about MQTT defaults.** The engine shipped `User: "vinylrecord"` against the schema's `""`, and whichever process created `config.json` first silently decided your broker settings. A test now pins them together.
+- `/api/status` returns the same shape as a live frame (it was missing `phase`), so consumers don't need a second code path for the pre-first-frame case.
+- A failed identification during a track-end check no longer wipes "now playing". It runs against a track that is still playing, so a miss there means "couldn't tell", not "nothing here".
+
 ## [1.7.0.0] - 2026-07-07
 
 ### Added

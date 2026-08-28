@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import subprocess
+import time
 import tempfile
 import io
 import wave
@@ -13,6 +14,8 @@ import sounddevice as sd
 import paho.mqtt.client as mqtt
 import base64
 from shazamio import Shazam
+
+import track_clock
 
 # --- 1. Paths + config bootstrap ---
 DATA_DIR = os.environ.get('SPINSENSE_DATA_DIR', os.path.join(os.path.dirname(__file__), '..'))
@@ -32,16 +35,22 @@ DEFAULT_CONFIG = {
         "New_Song_Silence_Interval": 3.0,
         "Stopped_Silence_Interval": 5.0,
         "Rescan_Wait_Interval": 5.0,
+        "Track_End_Detection": True,
+        "Track_End_Grace_Secs": 20.0,
         "Retrigger_On_Track_Change": False,
         "Fallback_Provider": "none",
         "AudD_API_Token": "",
         # NOTE: keep these defaults in sync with gui/config_manager.AudioConfig.
     },
     "MQTT": {
+        # NOTE: keep these defaults in sync with gui/config_manager.MQTTConfig —
+        # whichever process creates config.json first wins, so a divergence here
+        # silently decides the user's broker settings.
+        "Enabled": False,
         "Broker": {
             "Host": "127.0.0.1",
             "Port": 1883,
-            "User": "vinylrecord",
+            "User": "",
             "Password": "",
         },
         "Topics": {
@@ -85,6 +94,8 @@ runtime = {
     "new_song_silence": 3.0,
     "stopped_silence": 5.0,
     "rescan_wait": 5.0,
+    "track_end_detection": True,
+    "track_end_grace": 20.0,
     "fallback_provider": "none",
     "audd_token": "",
     "mic_device": None,
@@ -102,6 +113,8 @@ def _populate_runtime(cfg):
     runtime["new_song_silence"] = cfg.get('Audio', {}).get('New_Song_Silence_Interval', 3.0)
     runtime["stopped_silence"]  = cfg.get('Audio', {}).get('Stopped_Silence_Interval', 5.0)
     runtime["rescan_wait"]      = cfg.get('Audio', {}).get('Rescan_Wait_Interval', 5.0)
+    runtime["track_end_detection"] = cfg.get('Audio', {}).get('Track_End_Detection', True)
+    runtime["track_end_grace"]  = cfg.get('Audio', {}).get('Track_End_Grace_Secs', 20.0)
     runtime["retrigger_on_track_change"] = cfg.get('Audio', {}).get('Retrigger_On_Track_Change', False)
     runtime["fallback_provider"] = cfg.get('Audio', {}).get('Fallback_Provider', 'none')
     runtime["audd_token"]       = cfg.get('Audio', {}).get('AudD_API_Token', '')
@@ -395,6 +408,12 @@ state = {
     "duration_secs": None,
     "back_off": False,
     "force_scan": False,
+    # Track-end prediction (core/track_clock.py). `clock` is the current play's
+    # TrackClock or None; the capture stamps are two readings of the instant the
+    # most recent sample started recording, which is what the clock anchors to.
+    "clock": None,
+    "capture_mono": 0.0,
+    "capture_wall": 0,
 }
 
 
@@ -419,6 +438,10 @@ def build_status_payload(phase: str, rms: float, st: dict) -> dict:
                 "release_year": st.get("release_year"),
                 "duration_secs": st.get("duration_secs"),
             },
+            # Where in the track we are and when it really started. Additive:
+            # consumers that don't know the key (older HACS integrations) skip
+            # it. None whenever no track is playing. See core/track_clock.py.
+            "play_clock": track_clock.play_clock_payload(st.get("clock")),
         },
     }
 
@@ -535,6 +558,11 @@ async def _capture_sample(sample_len: float | None = None) -> bytes:
     if sample_len is None:
         sample_len = runtime["sample_len"]
     mic = runtime["mic_device"]
+    # Two readings of the same instant, kept for whichever attempt ends up
+    # matching: the play clock anchors to the start of the winning capture, so
+    # recognition + network latency never leak into the position estimate.
+    state["capture_mono"] = time.monotonic()
+    state["capture_wall"] = int(time.time())
     print(f"[!] Recording {sample_len}s sample for identification...")
     recording = sd.rec(int(sample_len * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1,
                        dtype='int16', device=mic)
@@ -565,6 +593,9 @@ async def _identify_shazam(wav_bytes: bytes) -> dict | None:
     images = track.get('images', {}) if isinstance(track, dict) else {}
     enr = _extract_enrichment(track)
     return {
+        # Playhead anchor for track-end prediction. Shazam is the only backend
+        # that reports where in the reference recording our sample matched.
+        "match_offset_secs": track_clock.extract_match_offset(out),
         "title": track.get('title', 'Unknown Title'),
         "artist": track.get('subtitle', 'Unknown Artist'),
         "album": None,  # Shazam has no reliable album; iTunes supplies it downstream
@@ -619,6 +650,7 @@ def _audd_to_normalized(result: dict) -> dict:
         "genre": genre,
         "release_year": release_year,
         "duration_secs": duration_secs,
+        "match_offset_secs": None,   # AudD reports no playhead
     }
 
 
@@ -690,6 +722,7 @@ def _acoustid_to_normalized(results: list) -> dict | None:
         "genre": None,
         "release_year": None,
         "duration_secs": None,
+        "match_offset_secs": None,   # AcoustID reports no playhead
     }
 
 
@@ -702,7 +735,7 @@ def _run_fpcalc(wav_bytes: bytes) -> tuple[int, str] | None:
             f.flush()
             out = subprocess.run(
                 ["fpcalc", "-json", f.name],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True, text=True, timeout=15, check=False,
             )
         if out.returncode != 0:
             print(f"⚠️ fpcalc exited {out.returncode}: {out.stderr.strip()}")
@@ -772,9 +805,13 @@ async def _identify_fallback(wav_bytes: bytes) -> dict | None:
     return None
 
 
-async def _handle_match(track: dict) -> None:
+async def _handle_match(track: dict, reason: str = "onset") -> None:
     """Enrich, publish, and record a matched track. `track` is the NORMALIZED shape
-    produced by a backend (_identify_shazam / _identify_audd)."""
+    produced by a backend (_identify_shazam / _identify_audd).
+
+    `reason` is what triggered the recognition — "onset" for the ordinary
+    threshold/gap path, "track_end" for a track-end check. It only affects the
+    play clock's rescan budget: see the `previous` argument below."""
     title = track.get('title') or 'Unknown Title'
     artist = track.get('artist') or 'Unknown Artist'
 
@@ -802,6 +839,22 @@ async def _handle_match(track: dict) -> None:
     state["release_year"] = track.get('release_year')
     state["duration_secs"] = duration_secs
 
+    # An end-check that lands on the same track means our prediction was wrong
+    # (usually duration metadata for a different edit). Inherit its rescan
+    # budget so the mistake can't cost a call every duration+grace for the rest
+    # of the side. A same-track match from any other path means gap detection
+    # is working, so the budget resets.
+    same_track = result_str == state["last_song"]
+    state["clock"] = track_clock.start_clock(
+        duration_secs=duration_secs,
+        match_offset_secs=track.get("match_offset_secs"),
+        anchor_mono=state.get("capture_mono") or time.monotonic(),
+        anchor_wall=state.get("capture_wall") or int(time.time()),
+        grace_floor_secs=runtime["track_end_grace"],
+        previous=state.get("clock") if (same_track and reason == "track_end") else None,
+    )
+    _log_clock(state["clock"])
+
     if result_str != state["last_song"]:
         print(f"🎵 NEW TRACK: {result_str}")
         print(f"💿 Album:     {album}")
@@ -823,6 +876,22 @@ async def _handle_match(track: dict) -> None:
     await _publish_phase("playing")
 
 
+def _log_clock(clock) -> None:
+    """One line per match describing the play clock, so offset semantics can be
+    sanity-checked against a real record without a debugger."""
+    if clock is None or clock.duration_secs is None:
+        print("⏱️  Play clock: no duration — track-end prediction disabled for this play.")
+        return
+    if clock.deadline_mono is None:
+        print("⏱️  Play clock: rescan budget spent — no further end-checks this play.")
+        return
+    print(
+        f"⏱️  Play clock: {clock.position_secs:.0f}s into "
+        f"{clock.duration_secs:.0f}s ({clock.position_source}); "
+        f"end-check in {clock.deadline_mono - time.monotonic():.0f}s"
+    )
+
+
 def _clear_track_state(set_backoff: bool) -> None:
     """Reset all track + enrichment fields to the 'no song' state. `set_backoff`
     arms the re-scan back-off gate — True after a no_match (don't re-hammer the
@@ -837,6 +906,7 @@ def _clear_track_state(set_backoff: bool) -> None:
     state["genre"] = None
     state["release_year"] = None
     state["duration_secs"] = None
+    state["clock"] = None
     state["back_off"] = set_backoff
 
 
@@ -846,12 +916,17 @@ async def _rescan_pause(seconds: float) -> None:
         await asyncio.sleep(seconds)
 
 
-async def recognize_audio():
+async def recognize_audio(preserve_on_miss: bool = False, reason: str = "onset"):
     """Sample + identify with up to 2 auto-retries, lengthening the sample on
     each retry (1x/2x/3x the base length, capped at _MAX_SAMPLE_SECONDS) with a
     Rescan_Wait_Interval pause between attempts. On total failure, publish
     no_match, clear the track, and set the back-off gate so the monitor loop
-    waits for a fresh audio onset before scanning again."""
+    waits for a fresh audio onset before scanning again.
+
+    `preserve_on_miss` suppresses that teardown. A track-end check runs against
+    a track we have already identified and are still playing, so a miss there
+    means "we couldn't tell", not "there is nothing here" — wiping now-playing
+    on it would make the feature actively worse than not having it."""
     print("\n[!] Music detected — identifying...")
     base = runtime["sample_len"]
     wait = runtime["rescan_wait"]
@@ -870,7 +945,11 @@ async def recognize_audio():
             break
 
     if track:
-        await _handle_match(track)
+        await _handle_match(track, reason=reason)
+    elif preserve_on_miss:
+        print("❓ End-check couldn't identify — keeping the current track.")
+        track_clock.defer(state.get("clock"), time.monotonic())
+        await _publish_phase("playing" if state["in_song"] else "listening")
     else:
         print("❌ Could not identify track (gave up).")
         # Order matters: clear the track (emptying the title) BEFORE publishing
@@ -894,11 +973,15 @@ def _open_input_stream(callback):
     return stream
 
 
-def audio_callback(indata, frames, time, status):
+def audio_callback(indata, _frames, _time, _status):
     """Runs on the sounddevice audio thread. Updates the GUI's live RMS
     reading every buffer, and — when a calibration session is collecting —
     appends the per-buffer RMS to its samples deque. deque.append is atomic
-    in CPython, safe to call from this thread."""
+    in CPython, safe to call from this thread.
+
+    sounddevice passes four positional arguments and we only use the first;
+    the rest carry the underscore convention (and `time`/`status` would shadow
+    the module-level `time` import besides)."""
     rms = float(np.sqrt(np.mean(indata ** 2)))
     state["current_rms"] = rms
     if calibration is not None and calibration["status"] == "running":
@@ -993,6 +1076,26 @@ async def audio_monitor_loop():
             state["silence_counter"], runtime["new_song_silence"],
             state.get("back_off", False),
         )
+        # Track-end check: the song should be over by now and no gap was
+        # detected, so ask what is actually playing rather than keep reporting a
+        # track that has probably finished. Deliberately placed after
+        # _scan_decision — a real detected gap is always the better trigger.
+        if decision in ("tick", "silence") and track_clock.should_check_end(
+            state.get("clock"), time.monotonic(),
+            enabled=runtime["track_end_detection"],
+            in_song=state["in_song"],
+            backing_off=state.get("back_off", False),
+            gap_qualified=state["silence_counter"] >= runtime["new_song_silence"],
+        ):
+            print(f"\n[ END-CHECK ] {state['last_song']} should be over — re-identifying...")
+            stream.stop()
+            stream.close()
+            await recognize_audio(preserve_on_miss=True, reason="track_end")
+            stream = _open_input_stream(audio_callback)
+            state["current_rms"] = 0.0
+            await asyncio.sleep(1)
+            continue
+
         if decision == "scan":
             stream.stop()
             stream.close()

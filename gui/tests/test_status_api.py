@@ -6,13 +6,14 @@ GUI_DIR = os.path.dirname(HERE)
 if GUI_DIR not in sys.path:
     sys.path.insert(0, GUI_DIR)
 
-import unittest
-from fastapi.testclient import TestClient
+import unittest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 
 class TestStatusApi(unittest.TestCase):
     def test_status_default_is_stopped(self):
-        import importlib, ipc_manager
+        import importlib
+        import ipc_manager
         importlib.reload(ipc_manager)
         import backend_main
         importlib.reload(backend_main)

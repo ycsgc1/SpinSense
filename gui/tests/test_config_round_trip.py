@@ -153,6 +153,108 @@ class ConfigRoundTripTest(unittest.TestCase):
         self.assertEqual(loaded["Audio"]["AudD_API_Token"], "tok_abc123")
 
 
+class CorruptConfigIsNeverOverwrittenTest(unittest.TestCase):
+    """load_config() runs on every page request (the setup-wizard middleware).
+    It used to regenerate defaults *and write them back* on any read failure, so
+    one truncated read — the engine writing the file, a half-saved hand edit —
+    permanently replaced the MQTT password, AudD token and calibrated threshold.
+    Serving defaults is fine; persisting them is data loss."""
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        self._orig = config_manager.CONFIG_PATH
+        config_manager.CONFIG_PATH = self.path
+
+    def tearDown(self):
+        config_manager.CONFIG_PATH = self._orig
+        try:
+            os.remove(self.path)
+        except OSError:
+            pass
+
+    def _load_and_assert_untouched(self, raw):
+        with open(self.path, "w") as f:
+            f.write(raw)
+        cfg = config_manager.load_config()
+        self.assertEqual(cfg["Audio"]["Volume_Threshold"], 0.01)  # defaults served
+        with open(self.path) as f:
+            self.assertEqual(f.read(), raw)                       # file untouched
+
+    def test_truncated_json_is_left_on_disk(self):
+        self._load_and_assert_untouched('{"Audio": {"Volume_Threshold": 0.0')
+
+    def test_invalid_types_are_left_on_disk(self):
+        self._load_and_assert_untouched(
+            '{"Audio": {"Volume_Threshold": "not a number"}}')
+
+    def test_a_recoverable_file_survives_to_the_next_read(self):
+        # The real scenario: a bad read now, a good read a moment later.
+        good = json.dumps({"MQTT": {"Broker": {"Password": "secret"}}})
+        with open(self.path, "w") as f:
+            f.write(good[:12])
+        config_manager.load_config()
+        with open(self.path, "w") as f:
+            f.write(good)
+        self.assertEqual(
+            config_manager.load_config()["MQTT"]["Broker"]["Password"], "secret")
+
+    def test_a_missing_file_is_still_created(self):
+        os.remove(self.path)
+        config_manager.load_config()
+        self.assertTrue(os.path.exists(self.path))
+
+
+class TestTrackEndConfig(unittest.TestCase):
+    """Track-end prediction knobs. The defaults must match
+    core/core_engine.DEFAULT_CONFIG["Audio"] — the engine reads config.json raw,
+    so a drift here means the two processes disagree about the feature."""
+
+    def test_defaults(self):
+        from config_manager import SpinSenseConfig
+        audio = SpinSenseConfig().dict()["Audio"]
+        self.assertTrue(audio["Track_End_Detection"])
+        self.assertEqual(audio["Track_End_Grace_Secs"], 20.0)
+
+    def test_defaults_match_the_engine(self):
+        HERE = os.path.dirname(os.path.abspath(__file__))
+        core_dir = os.path.join(os.path.dirname(os.path.dirname(HERE)), "core")
+        if core_dir not in sys.path:
+            sys.path.insert(0, core_dir)
+        import core_engine  # noqa: PLC0415
+        from config_manager import SpinSenseConfig
+
+        engine_audio = core_engine.DEFAULT_CONFIG["Audio"]
+        schema_audio = SpinSenseConfig().dict()["Audio"]
+        for key in ("Track_End_Detection", "Track_End_Grace_Secs"):
+            self.assertEqual(engine_audio[key], schema_audio[key], key)
+
+    def test_mqtt_defaults_match_the_engine(self):
+        # Whichever process creates config.json first wins, so a divergence here
+        # silently decides the user's broker settings. These drifted once.
+        HERE = os.path.dirname(os.path.abspath(__file__))
+        core_dir = os.path.join(os.path.dirname(os.path.dirname(HERE)), "core")
+        if core_dir not in sys.path:
+            sys.path.insert(0, core_dir)
+        import core_engine  # noqa: PLC0415
+        from config_manager import SpinSenseConfig
+
+        engine_mqtt = core_engine.DEFAULT_CONFIG["MQTT"]
+        schema_mqtt = SpinSenseConfig().dict()["MQTT"]
+        self.assertEqual(engine_mqtt["Enabled"], schema_mqtt["Enabled"])
+        for key in ("Host", "Port", "User", "Password"):
+            self.assertEqual(engine_mqtt["Broker"][key], schema_mqtt["Broker"][key], key)
+
+    def test_roundtrip_preserves_overrides(self):
+        from config_manager import SpinSenseConfig
+        data = SpinSenseConfig().dict()
+        data["Audio"]["Track_End_Detection"] = False
+        data["Audio"]["Track_End_Grace_Secs"] = 45.0
+        out = SpinSenseConfig(**data).dict()
+        self.assertFalse(out["Audio"]["Track_End_Detection"])
+        self.assertEqual(out["Audio"]["Track_End_Grace_Secs"], 45.0)
+
+
 class TestDiscoveryConfig(unittest.TestCase):
     def test_defaults_include_discovery_and_mqtt_enabled(self):
         from config_manager import SpinSenseConfig

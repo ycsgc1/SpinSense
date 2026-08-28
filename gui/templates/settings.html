@@ -73,6 +73,17 @@
         </label>
 
         <label class="flex items-center justify-between gap-md cursor-pointer">
+          <span class="text-body-sm text-on-surface">Detect the end of a track<span class="help-tip" tabindex="0" role="note" aria-label="Help: Detect the end of a track"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Some records have gaps between songs too short or too quiet to detect, so SpinSense keeps showing the previous track. With this on, it also uses the track&rsquo;s known length: once a song should be over and no gap was heard, it re-identifies once to see what&rsquo;s actually playing. Only works for tracks whose length was found, and is strictly limited to a few extra checks per song.</span></span></span>
+          <input type="checkbox" name="Audio.Track_End_Detection" class="sr-only peer">
+          <span class="relative shrink-0 w-11 h-6 rounded-full bg-surface-container-highest border border-outline-variant/40 peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-on-surface after:transition-transform peer-checked:after:translate-x-5"></span>
+        </label>
+
+        <label class="block">
+          <span class="text-body-sm text-on-surface mb-1 block">Track-end grace (seconds)<span class="help-tip" tabindex="0" role="note" aria-label="Help: Track-end grace"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">How long past a song&rsquo;s expected end SpinSense waits before re-identifying. SpinSense uses whichever is longer, this or 10% of the track&rsquo;s length, so long tracks get proportionally more slack. Raise it if you see needless re-identifications; lower it to catch missed transitions sooner.</span></span></span>
+          <input type="number" name="Audio.Track_End_Grace_Secs" min="0" max="300" step="1" class="form-input">
+        </label>
+
+        <label class="flex items-center justify-between gap-md cursor-pointer">
           <span class="text-body-sm text-on-surface">Re-announce each track to Home Assistant<span class="help-tip" tabindex="0" role="note" aria-label="Help: Re-announce each track to Home Assistant"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">When on, each new song briefly drops Home Assistant to idle before playing again — over both the integration and MQTT — so automations that trigger on 'started playing' re-fire on every track (e.g. to push the new title to a display). Off keeps playback smooth, with no idle blip on either.</span></span></span>
           <input type="checkbox" name="Audio.Retrigger_On_Track_Change" class="sr-only peer">
           <span class="relative shrink-0 w-11 h-6 rounded-full bg-surface-container-highest border border-outline-variant/40 peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-on-surface after:transition-transform peer-checked:after:translate-x-5"></span>
@@ -90,6 +101,62 @@
         <label class="block">
           <span class="text-body-sm text-on-surface mb-1 block">AudD API token<span class="help-tip" tabindex="0" role="note" aria-label="Help: AudD API token"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Your API token from audd.io — only needed when "Backup recognizer" is set to AudD. Stored in config.json in plaintext (like the MQTT password), fine for a self-hosted LAN box.</span></span></span>
           <input type="password" name="Audio.AudD_API_Token" autocomplete="off" class="form-input">
+        </label>
+      </div>
+    </section>
+
+    <section class="glass-panel rounded-xl p-md md:p-lg">
+      <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Last.fm</h3>
+
+      <div class="space-y-md">
+        <div id="lastfm-state" class="rounded-lg border border-outline-variant/40 bg-surface-container-high p-md">
+          <p class="text-body-sm text-on-surface-variant">Checking&hellip;</p>
+        </div>
+
+        <div id="lastfm-setup" class="space-y-md hidden">
+          <p class="text-body-sm text-on-surface-variant">
+            Scrobbling uses <strong>your own</strong> Last.fm API account, so the rate limit and
+            terms are yours. Create one at
+            <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener"
+               class="text-primary underline">last.fm/api/account/create</a>
+            (any name and description will do &mdash; leave the callback URL blank), then paste the
+            two values it gives you.
+          </p>
+
+          <label class="block">
+            <span class="text-body-sm text-on-surface mb-1 block">API key</span>
+            <input type="text" id="lastfm-api-key" autocomplete="off" spellcheck="false" class="form-input">
+          </label>
+
+          <label class="block">
+            <span class="text-body-sm text-on-surface mb-1 block">Shared secret</span>
+            <input type="password" id="lastfm-api-secret" autocomplete="off" class="form-input">
+          </label>
+
+          <button type="button" id="lastfm-connect" class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">Connect to Last.fm</button>
+
+          <div id="lastfm-approve" class="hidden rounded-lg border border-primary/40 bg-primary/5 p-md space-y-2">
+            <p class="text-body-sm text-on-surface">
+              Step 2 &mdash; <a href="#" id="lastfm-approve-link" target="_blank" rel="noopener"
+                 class="text-primary underline">approve SpinSense on Last.fm</a>,
+              then come back here and finish.
+            </p>
+            <button type="button" id="lastfm-finish" class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">I&rsquo;ve approved it</button>
+          </div>
+        </div>
+
+        <p id="lastfm-toast" class="text-body-sm" data-kind=""></p>
+
+        <label class="flex items-center justify-between gap-md cursor-pointer">
+          <span class="text-body-sm text-on-surface">Scrobble plays<span class="help-tip" tabindex="0" role="note" aria-label="Help: Scrobble plays"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Submit finished plays to your Last.fm profile. A play qualifies under Last.fm&rsquo;s own rule: the track must be longer than 30 seconds and have played for at least half its length, or 4 minutes, whichever comes first. Only plays from the moment you connected are ever sent &mdash; connecting doesn&rsquo;t upload your back catalogue.</span></span></span>
+          <input type="checkbox" name="LastFM.Enabled" class="sr-only peer">
+          <span class="relative shrink-0 w-11 h-6 rounded-full bg-surface-container-highest border border-outline-variant/40 peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-on-surface after:transition-transform peer-checked:after:translate-x-5"></span>
+        </label>
+
+        <label class="flex items-center justify-between gap-md cursor-pointer">
+          <span class="text-body-sm text-on-surface">Update &ldquo;now playing&rdquo;<span class="help-tip" tabindex="0" role="note" aria-label="Help: Update now playing"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Show the current track on your Last.fm profile as it plays. Separate from scrobbling: this is the live indicator, scrobbles are the permanent record.</span></span></span>
+          <input type="checkbox" name="LastFM.Scrobble_Now_Playing" class="sr-only peer">
+          <span class="relative shrink-0 w-11 h-6 rounded-full bg-surface-container-highest border border-outline-variant/40 peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-on-surface after:transition-transform peer-checked:after:translate-x-5"></span>
         </label>
       </div>
     </section>

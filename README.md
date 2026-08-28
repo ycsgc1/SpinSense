@@ -10,6 +10,7 @@ Integrate your analogue record player into your digital life. SpinSense listens 
 
 - **Automatic track ID** — a Shazam-compatible recognizer identifies whatever's on the platter, with an optional **free AcoustID** (or AudD) backup for the tracks Shazam can't get.
 - **Zero-config Home Assistant discovery** — auto-appears as a `media_player` via **mDNS** (no broker, recommended), or publish state over **MQTT** to your own broker.
+- **Last.fm scrobbling** — finished plays land on your Last.fm profile, with a live "now playing" indicator. Uses your own API key, so the rate limit is yours.
 - **Listening stats** — a Wrapped-style Stats page: top artists and tracks, plays over time, genres and decades, filterable by month / year / all-time.
 - **Runs where your deck is** — Docker-first; works on a Raspberry Pi (ARM) next to the turntable or on your x64 NAS.
 - **Guided onboarding** — a built-in web wizard walks you through mic selection and "silence vs. music" calibration.
@@ -56,7 +57,20 @@ services:
     restart: unless-stopped
 ```
 
-Bring it up, then open the web UI at **`http://<your-host-ip>:3313`**. (`:latest` tracks releases; use `:main` for the latest commit, or swap `image:` for a `build:` block to build from source.)
+Bring it up, then open the web UI at **`http://<your-host-ip>:3313`**.
+
+**Which tag?**
+
+| Tag | Tracks | Use it when |
+|---|---|---|
+| `:latest` | every published release | normal use — this is the one you want |
+| `:beta` | every push to the `beta` branch | you want to try unreleased work on real hardware |
+| `:main` | every push to `main` | you want the bleeding edge |
+| `:1.7.0.0` | that exact release | you want to pin |
+
+Or swap `image:` for a `build:` block to build from source.
+
+> **Testing a beta.** Point `image:` at `ghcr.io/ycsgc1/spinsense:beta` and hit Update in Dockge. Keep the same `./data` volume and your history, config and calibration carry straight over — the database migrations are additive and a beta will never rewrite rows an older build wrote. Going back to `:latest` afterwards works the same way: newer columns are simply ignored.
 
 > **Why host networking?** mDNS uses multicast, which doesn't cross Docker's bridge network. `network_mode: host` lets Home Assistant discover SpinSense — and means the app binds `SPINSENSE_PORT` directly on the host (no `ports:` mapping). If you don't need auto-discovery you can use bridge networking with `ports: ["3313:3313"]` instead, and integrate via MQTT.
 

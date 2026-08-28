@@ -6,8 +6,8 @@ GUI_DIR = os.path.dirname(HERE)
 if GUI_DIR not in sys.path:
     sys.path.insert(0, GUI_DIR)
 
-import asyncio
-import unittest
+import asyncio  # noqa: E402
+import unittest  # noqa: E402
 
 
 class TestLastStatusCache(unittest.TestCase):
