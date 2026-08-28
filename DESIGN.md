@@ -228,7 +228,26 @@ One behavioural exception: an end-check calls `recognize_audio(preserve_on_miss=
 
 `started_at` is when the track actually began on the platter; `join_offset_secs` is how far in we started hearing it. Both persist to `plays`. `played_at` deliberately keeps its old meaning ("when we identified it") so every existing row, every stats query and history ordering stay valid.
 
-**Open question, deliberately absorbed rather than resolved:** the exact semantics of Shazam's `offset` are unverified (the bench spike from the 2026-07-12 lyrics design never ran). If it marks the end of the sample rather than the start, every prediction is early by `Song_Sample_Length` — 5 s, well inside a 20 s grace window. Both readings are safe; the spike would only tighten accuracy. `_log_clock()` prints the position and source on every match so it can be checked against a real record.
+**Offset semantics — measured, 2026-08-28.** This was the open question carried
+over from the 2026-07-12 lyrics design, whose bench spike never ran. Settled on
+real hardware instead, against AJR's "Maybe Man" (220 s):
+
+| Scan at | `join_offset_secs` | `position_source` |
+|---|---|---|
+| needle drop, ~1 s in | `1` | `shazam_offset` |
+| forced rescan, ~184 s in | `184` | `shazam_offset` |
+
+So `matches[0].offset` is the playhead in the track, measured at the **start** of
+the submitted sample — exactly what `resolve_position()` assumes. Two readings
+that would have broken the design are ruled out: it is not the position of the
+sample's *end* (that would have reported ~6 s and ~189 s), and it is not an
+offset within the submitted buffer (that would have reported ~0 in both cases,
+and would have made every mid-song join predict the end a full track too late).
+
+The second measurement is the load-bearing one. A single reading near the top of
+a track cannot distinguish a real playhead from a constant zero; only a scan
+taken deliberately mid-song can. `_log_clock()` still prints position and source
+on every match, which is how this was measured and how a regression would show.
 
 ---
 

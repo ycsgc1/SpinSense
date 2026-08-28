@@ -90,6 +90,12 @@ def extract_match_offset(raw) -> float | None:
 def resolve_position(match_offset_secs, duration_secs) -> tuple[float, str]:
     """(playhead at capture start, how we know it).
 
+    Shazam's `matches[0].offset` is the playhead in the track, measured at the
+    start of the sample we submitted — verified on hardware 2026-08-28 by
+    scanning one 220 s track twice, at ~1 s (reported 1) and ~184 s (reported
+    184). The mid-song reading is the one that proves it: near the top of a
+    track a real playhead is indistinguishable from a constant zero.
+
     Falls back to the top of the track whenever the offset is missing or fails
     the sanity check against the duration. That fallback makes the prediction
     fire *late*, which is the safe direction: a late prediction costs nothing,

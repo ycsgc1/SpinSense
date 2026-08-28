@@ -78,11 +78,17 @@ and only the winning attempt's stamp is used.
 sample matched. `_identify_shazam` currently discards it.
 
 We capture it as `match_offset_secs` and treat it as the playhead at the
-start of the capture. **Its exact semantics are unverified** (the open
-question from the 2026-07-12 lyrics design; the bench spike never ran). If
-it turns out to mark the *end* of the sample instead, every prediction is
-early by `Song_Sample_Length` — 5 s, comfortably inside a 20 s grace window.
-Both readings are safe; the spike would only tighten accuracy.
+start of the capture. **Measured on hardware 2026-08-28** — the open question
+from the 2026-07-12 lyrics design, whose bench spike never ran. Two scans of
+one 220 s track: at ~1 s in it reported `1`, at ~184 s in it reported `184`,
+both tagged `shazam_offset`. That is a real playhead anchored to the start of
+the submitted sample, and it rules out both alternatives that would have
+mattered — the sample's *end* (~6 s / ~189 s) and an offset within the
+submitted buffer (~0 for both, which would have made every mid-song join
+predict the end a full track too late).
+
+The mid-song reading is the one that carries the result. Near the top of a
+track a genuine playhead and a constant zero are indistinguishable.
 
 Sanity gate: an offset that is negative, non-finite, or exceeds
 `duration + 5 s` is discarded and the clock falls back to
