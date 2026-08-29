@@ -580,8 +580,12 @@ async def fetch_itunes_metadata(artist, title):
     `album_exclusive` carries that finding through to reconciliation, which
     runs much later and cannot re-derive it.
     """
-    results = await itunes.search_songs(artist, title)
+    results = itunes.results_for_track(
+        await itunes.search_songs(artist, title), title)
     if not results:
+        # iTunes answers a fuzzy query with something rather than nothing, so
+        # "no result that is actually this track" is a real and common outcome.
+        print(f"[!] iTunes had no match for {title!r} — leaving album unknown")
         return None, None, None, False
     album, exclusive = choose_edition(itunes.album_names(results))
     art_url, duration_secs = itunes.metadata_for(results, album)

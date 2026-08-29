@@ -9,6 +9,7 @@ is what let a mislabelled edition through.
 Network calls are isolated in `search_songs()` so everything above it is
 testable without touching the network.
 """
+import re
 import urllib.parse
 
 SEARCH_URL = "https://itunes.apple.com/search"
@@ -44,6 +45,40 @@ async def search_songs(artist: str, title: str, limit: int = EDITION_LOOKUP_LIMI
         return []
     results = (data or {}).get("results")
     return results if isinstance(results, list) else []
+
+
+_TRAILING_QUALIFIER_RE = re.compile(r"\s*[(\[][^()\[\]]*[)\]]\s*$|\s+[-\u2013\u2014]\s+.*$")
+_NON_ALNUM_RE = re.compile(r"[^0-9a-z]+")
+
+
+def track_key(title: str | None) -> str:
+    """A comparison key for track titles across two different catalogues.
+
+    Shazam and iTunes disagree constantly on punctuation and suffixes — curly
+    versus straight apostrophes, "(feat. X)", "- 2019 Remaster" — so matching
+    raw strings would reject the right result as often as the wrong one. One
+    trailing qualifier comes off, then everything but letters and digits.
+    """
+    text = " ".join((title or "").split())
+    text = _TRAILING_QUALIFIER_RE.sub("", text)
+    return _NON_ALNUM_RE.sub("", text.casefold())
+
+
+def results_for_track(results: list[dict], title: str) -> list[dict]:
+    """Only the results that really are the track we asked about.
+
+    iTunes' search is fuzzy and answers with *something* rather than nothing:
+    a query for AJR's "3 O'Clock Things" comes back with "Yes I'm A Mess" and
+    "3AM", from two albums the track is not on. Taking the top result on faith
+    is how a play gets confidently labelled with the wrong record.
+
+    An empty list is the honest answer when nothing matches. "Unknown Album"
+    beats a wrong one, and it leaves the manual picker to sort out.
+    """
+    want = track_key(title)
+    if not want:
+        return []
+    return [r for r in results or [] if track_key((r or {}).get("trackName")) == want]
 
 
 def hi_res(artwork_url: str | None) -> str | None:

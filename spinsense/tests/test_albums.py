@@ -14,7 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from spinsense import albums  # noqa: E402
+from spinsense import albums, itunes  # noqa: E402
 
 
 class BaseFormTest(unittest.TestCase):
@@ -117,6 +117,69 @@ class PickWinnerEvidenceTest(unittest.TestCase):
                                 ("Album (Deluxe B)", 200, False)]),
             "Album (Deluxe B)")
 
+
+
+class TrackMatchingTest(unittest.TestCase):
+    """iTunes' search is fuzzy and answers with *something* rather than nothing.
+    A query for AJR's "3 O'Clock Things" comes back with "Yes I'm A Mess" and
+    "3AM" — from two albums the track is not on — so a play was labelled with
+    the wrong record. Verified against the live API before writing these."""
+
+    def key(self, title):
+        return itunes.track_key(title)
+
+    def test_punctuation_and_case_do_not_matter(self):
+        # Shazam and iTunes disagree constantly on apostrophes, curly or not.
+        self.assertEqual(self.key("3 O'Clock Things"), self.key("3 O’Clock Things"))
+        self.assertEqual(self.key("Bang!"), self.key("bang"))
+        self.assertEqual(self.key("Sing, Sing, Sing"), self.key("Sing Sing Sing"))
+
+    def test_one_trailing_qualifier_comes_off(self):
+        self.assertEqual(self.key("Weak (feat. Someone)"), self.key("Weak"))
+        self.assertEqual(self.key("Weak [Remastered]"), self.key("Weak"))
+        self.assertEqual(self.key("Weak - 2019 Remaster"), self.key("Weak"))
+
+    def test_different_songs_do_not_collide(self):
+        self.assertNotEqual(self.key("3 O'Clock Things"), self.key("3AM"))
+        self.assertNotEqual(self.key("Bummerland"), self.key("Yes I'm A Mess"))
+
+    def test_empty_titles_are_never_a_match(self):
+        for junk in (None, "", "   ", "!!!"):
+            self.assertEqual(itunes.results_for_track([{"trackName": "x"}], junk), [])
+
+    def test_only_the_real_track_survives(self):
+        results = [
+            {"trackName": "Yes I'm A Mess", "collectionName": "The Maybe Man"},
+            {"trackName": "3AM", "collectionName": "Infinity - EP"},
+        ]
+        self.assertEqual(itunes.results_for_track(results, "3 O'Clock Things"), [])
+
+    def test_a_genuine_match_is_kept(self):
+        results = [
+            {"trackName": "Bummerland", "collectionName": "OK ORCHESTRA"},
+            {"trackName": "Not It", "collectionName": "Something Else"},
+        ]
+        got = itunes.results_for_track(results, "Bummerland")
+        self.assertEqual([r["collectionName"] for r in got], ["OK ORCHESTRA"])
+
+    def test_cover_and_karaoke_rows_are_excluded(self):
+        # Their titles carry the performer, so they never key as the track —
+        # which also keeps them out of the edition analysis.
+        results = [
+            {"trackName": "Bummerland", "collectionName": "OK ORCHESTRA"},
+            {"trackName": "Bummerland (Originally Performed by AJR) [Instrumental Version]",
+             "collectionName": "Pristine Karaoke, Vol. 21"},
+        ]
+        got = itunes.results_for_track(results, "Bummerland")
+        self.assertEqual(len(got), 1)
+
+    def test_malformed_rows_are_skipped(self):
+        results = [None, {}, {"trackName": None}, {"trackName": "Weak"}]
+        self.assertEqual(len(itunes.results_for_track(results, "Weak")), 1)
+
+    def test_no_results_is_safe(self):
+        self.assertEqual(itunes.results_for_track([], "Weak"), [])
+        self.assertEqual(itunes.results_for_track(None, "Weak"), [])
 
 if __name__ == "__main__":
     unittest.main()

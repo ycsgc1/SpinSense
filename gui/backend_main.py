@@ -417,7 +417,9 @@ async def _itunes_album_candidates(artist: str, title: str) -> list[dict]:
     """Distinct candidate albums for a track, for the manual picker."""
     results = await itunes.search_songs(
         artist, title, limit=itunes.CANDIDATE_LOOKUP_LIMIT)
-    return itunes.album_candidates(results)
+    # Same filter the engine applies: offering albums belonging to some other
+    # song is worse than offering none, since the picker looks authoritative.
+    return itunes.album_candidates(itunes.results_for_track(results, title))
 
 
 @app.get("/api/plays/{play_id}/album-candidates")
