@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import os
+import time
 import urllib.parse
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -18,7 +19,7 @@ import play_history
 import stats
 import reconcile
 from config_manager import SpinSenseConfig, load_config, save_config
-from ipc_manager import ART_DIR, manager, handle_uds_client, spawn_art_download
+from ipc_manager import ART_DIR, manager, handle_uds_client, unify_art
 from discovery import advertiser
 
 # Paths that the setup-wizard redirect must let through. Everything outside
@@ -460,10 +461,30 @@ async def set_album_route(play_id: int, request: Request):
         if not ok:
             return JSONResponse(status_code=404, content={"detail": "not found"})
         ids = [play_id]
-    if art_url:
-        for pid in ids:
-            spawn_art_download(pid, art_url)
-    return {"status": "ok", "updated": len(ids)}
+
+    # Awaited, not fired and forgotten: the caller is a person who clicked Save
+    # and is about to redraw those rows, so the response must not claim the art
+    # is in place before it is. Falls back to the edited play's own artwork when
+    # no URL was chosen, so "apply to the whole session" always ends up uniform.
+    arted = await unify_art(ids, play_id, art_url)
+
+    rows = await asyncio.to_thread(_rows_for, ids)
+    return {"status": "ok", "updated": len(ids), "arted": len(arted), "rows": rows,
+            # Art lives at a stable /art/{id}.jpg whose contents just changed, so
+            # hand the client something to bust its own cache with.
+            "art_version": int(time.time())}
+
+
+def _rows_for(ids: list[int]) -> list[dict]:
+    """The post-edit state of the rows we touched, so the page can redraw them
+    in place instead of reloading and losing the reader's position."""
+    out = []
+    for pid in ids:
+        play = play_history.get_play(pid)
+        if play is not None:
+            out.append({"id": play["id"], "album": play["album"],
+                        "art_path": play["art_path"]})
+    return out
 
 
 # --- Last.fm ---

@@ -22,14 +22,17 @@
 
   // Eyebrow = short label; headline = descriptive line (when not playing) or
   // the track title (when playing). Filling both avoids an empty headline.
+  // Same vocabulary as the nav pill (shell.js LABELS) — the two used to
+  // disagree about the idle state, one calling it "Idle" and the other
+  // "Listening", on the same screen.
   const PHASE_EYEBROW = {
-    listening: "Idle", scanning: "Scanning", identifying: "Identifying",
+    listening: "Waiting", scanning: "Listening", identifying: "Analyzing",
     retrying: "Retrying", no_match: "No match", playing: "Now playing",
   };
   const PHASE_HEADLINE = {
-    listening:   "Waiting for the needle…",
+    listening:   "Waiting for the needle to drop…",
     scanning:    "Listening to the track…",
-    identifying: "Identifying…",
+    identifying: "Analyzing…",
     retrying:    "Couldn't catch it — retrying…",
     no_match:    "Couldn't identify this one",
   };
@@ -147,7 +150,7 @@
       albumEl.textContent  = track.album  || "";
       setVinylArt(track.art_url || null);
     } else {
-      titleEl.textContent  = PHASE_HEADLINE[uiPhase] || "Waiting for the needle…";
+      titleEl.textContent  = PHASE_HEADLINE[uiPhase] || "Waiting for the needle to drop…";
       artistEl.innerHTML   = "&nbsp;";
       albumEl.innerHTML    = "&nbsp;";
       setVinylArt(null);

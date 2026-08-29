@@ -71,9 +71,20 @@ class SetAlbumTest(AlbumApiBase):
     def test_single_play_update_locks(self):
         pid = play_history.record_play("T", "A", "Old", None, db_path=self.db_path)
         r = self.client.post(f"/api/plays/{pid}/album", json={"album": "New"})
-        self.assertEqual(r.json(), {"status": "ok", "updated": 1})
+        body = r.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["updated"], 1)
         row = play_history.get_play(pid, db_path=self.db_path)
         self.assertEqual((row["album"], row["album_locked"]), ("New", 1))
+
+    def test_response_carries_the_rows_it_changed(self):
+        # The page redraws from these instead of reloading, so they have to be
+        # the post-edit state, not what the client already had.
+        pid = play_history.record_play("T", "A", "Old", None, db_path=self.db_path)
+        body = self.client.post(f"/api/plays/{pid}/album",
+                                json={"album": "New"}).json()
+        self.assertEqual(body["rows"], [{"id": pid, "album": "New", "art_path": None}])
+        self.assertIsInstance(body["art_version"], int)
 
     def test_apply_to_run_updates_whole_run(self):
         import sqlite3
@@ -89,31 +100,48 @@ class SetAlbumTest(AlbumApiBase):
                              json={"album": "Right", "apply_to_run": True})
         self.assertEqual(r.json()["updated"], 2)
 
-    def test_art_url_fires_download(self):
-        # Patch the SYNCHRONOUS spawn helper as resolved inside backend_main —
-        # patching the async downloader would race the response (create_task
-        # may not have run by assertion time).
-        pid = play_history.record_play("T", "A", "Old", None, db_path=self.db_path)
+    def _capture_unify(self):
+        """Replace unify_art as resolved inside backend_main, recording its args."""
         calls = []
-        orig = backend_main.spawn_art_download
-        backend_main.spawn_art_download = lambda p, u: calls.append((p, u))
-        try:
-            self.client.post(f"/api/plays/{pid}/album",
-                             json={"album": "New", "art_url": "http://a/x.jpg"})
-        finally:
-            backend_main.spawn_art_download = orig
-        self.assertEqual(calls, [(pid, "http://a/x.jpg")])
 
-    def test_no_art_url_no_download(self):
+        async def fake(ids, source_play_id, art_url=None):
+            calls.append((list(ids), source_play_id, art_url))
+            return list(ids)
+
+        self._orig_unify = backend_main.unify_art
+        backend_main.unify_art = fake
+        self.addCleanup(lambda: setattr(backend_main, "unify_art", self._orig_unify))
+        return calls
+
+    def test_art_is_unified_across_the_whole_run(self):
+        # The reported bug: the album unified but every other row kept its old
+        # cover, so a run edited to one album still looked like several.
+        import sqlite3
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("INSERT INTO plays (title, artist, album, played_at)"
+                     " VALUES ('t1', 'A', 'Wrong', 1000)")
+        cur = conn.execute("INSERT INTO plays (title, artist, album, played_at)"
+                           " VALUES ('t2', 'A', 'Also Wrong', 1100)")
+        pid = cur.lastrowid
+        conn.commit()
+        conn.close()
+        calls = self._capture_unify()
+        self.client.post(f"/api/plays/{pid}/album",
+                         json={"album": "Right", "art_url": "http://a/x.jpg",
+                               "apply_to_run": True})
+        ids, source, url = calls[0]
+        self.assertEqual(len(ids), 2)          # every play in the run, not just one
+        self.assertEqual(source, pid)
+        self.assertEqual(url, "http://a/x.jpg")
+
+    def test_no_art_url_still_unifies_onto_the_edited_play(self):
+        # Typing an album by hand, or picking a candidate with no cover, used to
+        # skip artwork entirely and leave the run mismatched. It now falls back
+        # to the artwork of the row being edited.
         pid = play_history.record_play("T", "A", "Old", None, db_path=self.db_path)
-        calls = []
-        orig = backend_main.spawn_art_download
-        backend_main.spawn_art_download = lambda p, u: calls.append((p, u))
-        try:
-            self.client.post(f"/api/plays/{pid}/album", json={"album": "New"})
-        finally:
-            backend_main.spawn_art_download = orig
-        self.assertEqual(calls, [])
+        calls = self._capture_unify()
+        self.client.post(f"/api/plays/{pid}/album", json={"album": "New"})
+        self.assertEqual(calls, [([pid], pid, None)])
 
 
 class ParseItunesCandidatesTest(unittest.TestCase):

@@ -312,6 +312,23 @@
     MODAL_SAVE.disabled = !MODAL_TEXT.value.trim();
   });
 
+  function applyRowUpdates(rows, artVersion) {
+    for (const row of rows) {
+      const li = LIST.querySelector(`li[data-id="${row.id}"]`);
+      if (!li) continue;   // outside the loaded page; it'll be right on load
+      const albumEl = li.querySelector(".history-album");
+      if (albumEl) albumEl.textContent = row.album || "";
+      li.dataset.album = row.album || "";
+      const img = li.querySelector("img");
+      if (img && row.art_path) {
+        // /art/{id}.jpg is a stable URL whose bytes just changed, and /art is
+        // deliberately cacheable — without a new query the browser keeps the
+        // old cover and the run still looks mismatched.
+        img.src = `/${row.art_path}?v=${artVersion || Date.now()}`;
+      }
+    }
+  }
+
   async function saveAlbum() {
     if (!editLi) return;
     const album = MODAL_TEXT.value.trim();
@@ -330,9 +347,10 @@
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = await res.json();
-      const albumEl = editLi.querySelector(".history-album");
-      if (albumEl) albumEl.textContent = album;
-      editLi.dataset.album = album;
+      // Redraw every row the server actually changed, not just the one that
+      // was clicked — applying to a run rewrote them all, and leaving the rest
+      // showing their old album and cover is what made the feature look broken.
+      applyRowUpdates(body.rows || [], body.art_version);
       const n = body.updated || 1;
       showToast(`Album updated (${n} ${n === 1 ? "play" : "plays"})`, false);
       closeModal();

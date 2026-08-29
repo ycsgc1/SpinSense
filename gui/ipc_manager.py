@@ -124,10 +124,94 @@ async def _download_and_store_art(play_id: int, art_url: str) -> None:
 
 
 def spawn_art_download(play_id: int, art_url: str) -> None:
-    """create_task + strong ref until done. Reused by the UDS record path and
-    the album-edit API (art refresh)."""
+    """create_task + strong ref until done. Used by the UDS record path, where
+    a play is being written and nothing is waiting on the artwork."""
     _art_tasks.add(task := asyncio.create_task(_download_and_store_art(play_id, art_url)))
     task.add_done_callback(_art_tasks.discard)
+
+
+def _thumbnail(data: bytes) -> bytes:
+    """Full-size artwork bytes -> the 64x64 JPEG we actually store."""
+    import io as _io
+
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = img.convert("RGB")
+        img.thumbnail((64, 64))
+        out = _io.BytesIO()
+        img.save(out, "JPEG", quality=75)
+        return out.getvalue()
+
+
+async def _fetch_art(art_url: str) -> bytes | None:
+    import aiohttp
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(art_url) as resp:
+                if resp.status != 200:
+                    log.warning("art fetch %s returned HTTP %s", art_url, resp.status)
+                    return None
+                return await resp.read()
+    except Exception as e:
+        log.warning("art fetch failed for %s: %s", art_url, e)
+        return None
+
+
+async def unify_art(play_ids: list[int], source_play_id: int,
+                    art_url: str | None = None) -> list[int]:
+    """Give every play in `play_ids` the same artwork. Returns the ids changed.
+
+    Unlike the record path this is awaited, because a person clicked a button
+    and the response should not claim success before the files exist.
+
+    Two sources, in order. If `art_url` is given — the user picked a specific
+    album — it is fetched and thumbnailed **once** and the same bytes written to
+    every play; the previous code spawned an independent download per row, so a
+    ten-play run pulled the same 1000x1000 image ten times. If no URL is given —
+    the album was typed by hand, or the chosen candidate had no artwork — the
+    run is unified onto whatever the edited play already has, since making the
+    run look like the row you were editing is what "apply to the whole session"
+    means.
+    """
+    thumb: bytes | None = None
+    if art_url:
+        raw = await _fetch_art(art_url)
+        if raw is not None:
+            try:
+                thumb = await asyncio.to_thread(_thumbnail, raw)
+            except Exception as e:
+                log.warning("could not thumbnail %s: %s", art_url, e)
+    if thumb is None:
+        thumb = await asyncio.to_thread(_read_stored_art, source_play_id)
+    if thumb is None:
+        return []
+
+    def _write_all() -> list[int]:
+        os.makedirs(ART_DIR, exist_ok=True)
+        written = []
+        for pid in play_ids:
+            try:
+                with open(os.path.join(ART_DIR, f"{pid}.jpg"), "wb") as fh:
+                    fh.write(thumb)
+            except OSError as e:
+                log.warning("could not write art for play %s: %s", pid, e)
+                continue
+            play_history.set_art_path(pid, f"art/{pid}.jpg")
+            written.append(pid)
+        return written
+
+    return await asyncio.to_thread(_write_all)
+
+
+def _read_stored_art(play_id: int) -> bytes | None:
+    try:
+        with open(os.path.join(ART_DIR, f"{play_id}.jpg"), "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
 
 
 async def _stamp_last_play_ended() -> None:

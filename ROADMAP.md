@@ -31,14 +31,8 @@ Two separate faults:
 - `version` sits in `_EDITION_MARKER_RE`, but "Video Version" denotes a different **rendition**, like live/acoustic/instrumental — which the original spec deliberately excluded. The marker list needs the same treatment for renditions generally (video, radio edit, instrumental, karaoke, sped up, slowed).
 - "Most qualifiers wins" is the deeper problem. It assumes qualifiers stack toward a more complete edition, which holds for Deluxe → Super Deluxe and fails for anything that isn't a superset. Ranking known edition markers explicitly would beat measuring string length.
 
-### Album art doesn't follow a run-wide album change
-Setting an album with "apply to the whole session" rewrites every row's album but the old art stays on the other rows.
-
-The code already looks right — `history.js` sends `art_url`, and `set_album_route` spawns a download for every id in the run — which points at caching rather than logic. Art is stored at `art/{play_id}.jpg`, a **stable URL whose contents change**, and `no_cache_app_assets` deliberately leaves `/art/*` cacheable. That is the same bug class as the stale-`settings.js` incident: the browser keeps the old bytes because nothing about the URL moved. Fix options: a cache-busting query param off a per-row updated timestamp, a content-addressed filename, or simply excluding `/art/` from the cacheable set. Verify the diagnosis with a hard reload before building anything.
-
 ## Polish
 
-- **"Waiting for the needle…"** on the idle dashboard wants to be "Waiting for the needle to drop" — as written it reads like a different kind of waiting entirely.
 - **Drop or rework the System Health panel.** The connection status conveys nothing actionable, and the input level neither responds properly nor adds anything over the meter already on the same page.
 
 ## Docs

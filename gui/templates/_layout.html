@@ -123,8 +123,11 @@ tailwind.config = {
          data-state="idle"
          class="engine-pill flex items-center gap-xs px-4 py-3 rounded-xl border border-outline-variant/40 bg-surface-container/40 backdrop-blur-md">
       <span class="engine-pill-dot w-2.5 h-2.5 rounded-full"></span>
-      <span class="engine-pill-label text-label-sm tracking-widest uppercase">Idle</span>
+      <span class="engine-pill-label text-label-sm tracking-widest uppercase">Waiting</span>
     </div>
+    <p class="engine-now-playing hidden mt-2 px-1 text-body-sm text-on-surface-variant leading-snug"
+       data-now-playing="{{ 'off' if current_page == 'dashboard' else 'on' }}"
+       aria-live="polite"></p>
   </div>
 </nav>
 
@@ -135,11 +138,16 @@ tailwind.config = {
     <img src="/static/favicon.svg?v={{ asset_v }}" alt="" width="28" height="28" class="flex-shrink-0">
     SpinSense
   </a>
-  <div id="engine-pill-mobile"
-       data-state="idle"
-       class="engine-pill flex items-center gap-xs px-3 py-1.5 rounded-full border border-outline-variant/40 bg-surface-container/40">
-    <span class="engine-pill-dot w-2 h-2 rounded-full"></span>
-    <span class="engine-pill-label text-label-sm tracking-widest uppercase">Idle</span>
+  <div class="flex items-center gap-2 min-w-0">
+    <p class="engine-now-playing hidden text-body-sm text-on-surface-variant truncate max-w-[45vw]"
+       data-now-playing="{{ 'off' if current_page == 'dashboard' else 'on' }}"
+       aria-live="polite"></p>
+    <div id="engine-pill-mobile"
+         data-state="idle"
+         class="engine-pill flex items-center gap-xs px-3 py-1.5 rounded-full border border-outline-variant/40 bg-surface-container/40 shrink-0">
+      <span class="engine-pill-dot w-2 h-2 rounded-full"></span>
+      <span class="engine-pill-label text-label-sm tracking-widest uppercase">Waiting</span>
+    </div>
   </div>
 </header>
 
