@@ -462,6 +462,45 @@ That last line is Last.fm's published rule verbatim. Ineligible rows come back *
 
 ---
 
+## 11.1.1 A side is one record
+
+Metadata enrichment asks the record it already believes is playing before it
+asks iTunes' search.
+
+iTunes' song search is relevance-ranked, not authoritative, and in the field it
+was wrong for five plays of a single OK ORCHESTRA side: nothing at all for "OK
+Overture", two unrelated songs for "3 O'Clock Things", a lullaby cover for "My
+Play", and only a live album for "World's Smallest Violin". Filtering cannot
+fix a result that is absent from the response.
+
+But a side is one album, and any track that *does* resolve carries the album's
+`collectionId`. One `lookup` call then returns the real tracklist — every song
+with its correct duration — and all five of those tracks are on it.
+
+So the engine keeps an `album_context`: the collection id and name of the
+record it believes is on the platter, refreshed by every track that confirms
+it. Subsequent tracks are answered from that tracklist, which beats search
+because nine other tracks already established what is playing.
+
+- **A track absent from the album falls through to search.** That is what lets
+  a different record take over, and it re-points the context when it does.
+- **The context expires after 30 minutes** without a confirming track, matching
+  `reconcile.SESSION_GAP_SECS` — long enough to span flipping a side, short
+  enough that tomorrow's listening starts clean.
+- **Tracklists are cached per album for the engine's lifetime, misses
+  included.** Caching the miss matters: an album iTunes cannot expand would
+  otherwise be re-requested for every track for half an hour, and the cost of
+  caching it is only the fallback to search that existed before.
+
+Net API traffic goes *down*: one lookup per record instead of one search per
+track.
+
+This also repairs durations, which matters beyond the label — "World's Smallest
+Violin" is 180 s, and the 229 s taken from the live album is why a track-end
+check (§6.1) fired some fifty seconds late on it.
+
+---
+
 ## 11.2 Why there is a shared package
 
 `core/` and `gui/` are two processes and were two import roots, so anything

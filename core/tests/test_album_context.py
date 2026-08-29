@@ -132,6 +132,21 @@ class AlbumContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(album, "OK ORCHESTRA")
         self.assertEqual(self.searches, [])
 
+    async def test_an_unavailable_tracklist_is_only_asked_for_once(self):
+        # Otherwise an album iTunes cannot expand would be re-requested for
+        # every track for the next half hour.
+        async def no_tracks(collection_id, timeout_secs=8.0):
+            self.lookups.append(collection_id)
+            return []
+
+        itunes.album_tracks = no_tracks
+        self.search_result = self.searched_result()
+        await core_engine.fetch_itunes_metadata("AJR", "Joe")
+        for title in ("Bang!", "The Trick", "Humpty Dumpty"):
+            self.search_result = self.searched_result(track=title)
+            await core_engine.fetch_itunes_metadata("AJR", title)
+        self.assertEqual(self.lookups, [1713833569])
+
     async def test_an_empty_tracklist_does_not_wedge_the_context(self):
         async def no_tracks(collection_id, timeout_secs=8.0):
             self.lookups.append(collection_id)

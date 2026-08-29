@@ -584,15 +584,21 @@ _tracklist_cache: dict[int, list[dict]] = {}
 ALBUM_CONTEXT_TTL_SECS = 1800
 
 
-async def _tracklist(collection_id: int) -> list[dict]:
-    """An album's tracklist, fetched once per album per engine run."""
+async def _tracklist(collection_id: int, album: str = "") -> list[dict]:
+    """An album's tracklist, fetched at most once per album per engine run.
+
+    An empty result is cached too. Without that, an album iTunes can't expand —
+    or one lookup that failed — would be re-requested for every single track
+    for the next half hour. Caching the miss costs only the fallback to search,
+    which is exactly what happened before any of this existed.
+    """
     if collection_id not in _tracklist_cache:
         tracks = await itunes.album_tracks(collection_id)
-        if not tracks:
-            return []
         _tracklist_cache[collection_id] = tracks
-        print(f"[!] Learned {len(tracks)} tracks for {album_context['name']!r}"
-              if album_context else f"[!] Learned {len(tracks)} tracks")
+        if tracks:
+            print(f"[!] Learned the {len(tracks)} tracks on {album or collection_id!r}")
+        else:
+            print(f"[!] No tracklist available for {album or collection_id!r}")
     return _tracklist_cache[collection_id]
 
 
@@ -620,11 +626,14 @@ async def fetch_itunes_metadata(artist, title):
     now_mono = time.monotonic()
 
     if _context_is_live(now_mono):
-        tracks = await _tracklist(album_context["id"])
+        tracks = await _tracklist(album_context["id"], album_context["name"])
         entry = itunes.find_track(tracks, title)
         if entry is not None:
             album_context["at"] = now_mono
-            art, duration = itunes.metadata_for([entry], album_context["name"])
+            art, duration = itunes.track_metadata(entry)
+            # No edition evidence from this path: the context album is already
+            # whichever edition search settled on, so there is nothing new to
+            # prove and nothing to upgrade the run to.
             return album_context["name"], art, duration, False
 
     results = itunes.results_for_track(

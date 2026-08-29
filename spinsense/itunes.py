@@ -183,26 +183,27 @@ def album_names(results: list[dict]) -> list[str]:
     return out
 
 
+def track_metadata(result: dict | None) -> tuple[str | None, int | None]:
+    """(cover art, duration) from a single result or tracklist entry."""
+    result = result or {}
+    art = hi_res(result.get("artworkUrl100"))
+    duration = None
+    ms = result.get("trackTimeMillis")
+    if isinstance(ms, (int, float)) and ms > 0:
+        duration = int(round(ms / 1000))
+    return art, duration
+
+
 def metadata_for(results: list[dict], album: str | None) -> tuple[str | None, int | None]:
     """(cover art, duration) from the result matching `album`.
 
     Falls back to the top result: the chosen album may be one we picked for its
     edition rather than its relevance, and every edition shares a duration.
     """
-    chosen = None
     for r in results or []:
         if album and (r or {}).get("collectionName") == album:
-            chosen = r
-            break
-    if chosen is None:
-        chosen = (results or [{}])[0] if results else {}
-
-    art = hi_res(chosen.get("artworkUrl100"))
-    duration = None
-    ms = chosen.get("trackTimeMillis")
-    if isinstance(ms, (int, float)) and ms > 0:
-        duration = int(round(ms / 1000))
-    return art, duration
+            return track_metadata(r)
+    return track_metadata(results[0] if results else None)
 
 
 def album_candidates(results: list[dict], limit: int = 10) -> list[dict]:
