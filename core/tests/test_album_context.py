@@ -6,7 +6,6 @@ relevance-ranked and was wrong for five plays of one OK ORCHESTRA side: nothing
 at all for "OK Overture", two unrelated songs for "3 O'Clock Things", a lullaby
 cover for "My Play", and only a live album for "World's Smallest Violin".
 """
-import asyncio
 import os
 import sys
 import unittest
