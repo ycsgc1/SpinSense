@@ -60,9 +60,11 @@ log = logging.getLogger(__name__)
 # the key revoked — at which point every install falls back to bring-your-own,
 # which is why that path is kept rather than removed.
 #
-# Override without editing code via SPINSENSE_LASTFM_KEY / _SECRET.
-BUILTIN_API_KEY = ""
-BUILTIN_API_SECRET = ""
+# Registered to the Last.fm account `ycsgc` as "Spinsense" — that is where to go
+# to rotate or revoke it. Override without editing code via
+# SPINSENSE_LASTFM_KEY / SPINSENSE_LASTFM_SECRET.
+BUILTIN_API_KEY = "86fcabef3f02c9b51a8620628033b221"
+BUILTIN_API_SECRET = "5961449e958b192c40d75045b881b924"
 
 API_ROOT = "https://ws.audioscrobbler.com/2.0/"
 AUTH_URL = "https://www.last.fm/api/auth/"
