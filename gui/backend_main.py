@@ -118,13 +118,24 @@ async def setup_wizard_gate(request: Request, call_next):
 
 @app.middleware("http")
 async def no_cache_app_assets(request: Request, call_next):
-    """Force the browser to revalidate the app's own HTML pages and static
-    JS/CSS, so a rebuild can never serve a stale asset against fresh markup
-    (the 'works in incognito but not my normal browser' class of bug). ETag /
-    Last-Modified still produce cheap 304s; /art and /api are left cacheable."""
+    """Force revalidation of anything whose URL is stable but whose bytes move.
+
+    That's the app's HTML and static JS/CSS (a rebuild must not serve a stale
+    asset against fresh markup) and, less obviously, album art: `/art/{id}.jpg`
+    is rewritten in place whenever a play's album is corrected, so a cached copy
+    at that same URL is simply wrong. Leaving it cacheable is what made a
+    run-wide art change revert on the next page load — and, behind a caching
+    reverse proxy, revert in a way no amount of clearing the *browser* cache
+    could fix.
+
+    `no-cache` is not `no-store`: the browser still keeps the file and a
+    revalidation costs one 304. `/api` stays cacheable — its responses are
+    generated fresh anyway."""
     response = await call_next(request)
     ctype = response.headers.get("content-type", "")
-    if request.url.path.startswith("/static/") or ctype.startswith("text/html"):
+    path = request.url.path
+    if (path.startswith("/static/") or path.startswith("/art/")
+            or ctype.startswith("text/html")):
         response.headers["Cache-Control"] = "no-cache"
     return response
 
