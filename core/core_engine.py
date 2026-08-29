@@ -581,7 +581,7 @@ async def fetch_itunes_metadata(artist, title):
     runs much later and cannot re-derive it.
     """
     results = itunes.results_for_track(
-        await itunes.search_songs(artist, title), title)
+        await itunes.search_songs(artist, title), title, artist)
     if not results:
         # iTunes answers a fuzzy query with something rather than nothing, so
         # "no result that is actually this track" is a real and common outcome.

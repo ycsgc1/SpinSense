@@ -181,5 +181,50 @@ class TrackMatchingTest(unittest.TestCase):
         self.assertEqual(itunes.results_for_track([], "Weak"), [])
         self.assertEqual(itunes.results_for_track(None, "Weak"), [])
 
+
+class ArtistMatchingTest(unittest.TestCase):
+    """Cover and lullaby records title their tracks identically, so a title
+    check alone waves them through: "My Play" came back from "Lullaby Versions
+    of AJR", performed by The Cat and Owl, and was recorded as the album."""
+
+    def test_the_performer_is_what_distinguishes_a_cover(self):
+        results = [
+            {"trackName": "My Play", "artistName": "The Cat and Owl",
+             "collectionName": "Lullaby Versions of AJR - EP"},
+        ]
+        self.assertEqual(itunes.results_for_track(results, "My Play", "AJR"), [])
+
+    def test_the_album_name_would_not_have_helped(self):
+        # "Lullaby Versions of AJR" contains the real artist; artistName does
+        # not. That is why the check is on the performer, not the album.
+        self.assertIn("AJR", "Lullaby Versions of AJR - EP")
+        self.assertNotEqual(itunes.artist_key("The Cat and Owl"),
+                            itunes.artist_key("AJR"))
+
+    def test_the_real_artist_is_kept(self):
+        results = [{"trackName": "Joe", "artistName": "AJR",
+                    "collectionName": "OK ORCHESTRA"}]
+        self.assertEqual(len(itunes.results_for_track(results, "Joe", "AJR")), 1)
+
+    def test_featured_credits_do_not_break_a_match(self):
+        # The two catalogues attach featured artists inconsistently.
+        for name in ("AJR feat. Someone", "AJR ft. Someone",
+                     "AJR featuring Someone", "AJR (feat. Someone)"):
+            with self.subTest(name=name):
+                self.assertEqual(itunes.artist_key(name), itunes.artist_key("AJR"))
+
+    def test_punctuation_and_case_are_ignored(self):
+        self.assertEqual(itunes.artist_key("Tyler, The Creator"),
+                         itunes.artist_key("tyler the creator"))
+
+    def test_different_artists_never_collide(self):
+        self.assertNotEqual(itunes.artist_key("M83"), itunes.artist_key("M"))
+        self.assertNotEqual(itunes.artist_key("AJR"), itunes.artist_key("AJR Project"))
+
+    def test_omitting_the_artist_keeps_the_old_behaviour(self):
+        # The filter is opt-in per caller; title-only still works.
+        results = [{"trackName": "My Play", "artistName": "The Cat and Owl"}]
+        self.assertEqual(len(itunes.results_for_track(results, "My Play")), 1)
+
 if __name__ == "__main__":
     unittest.main()

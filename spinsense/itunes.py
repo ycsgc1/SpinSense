@@ -64,21 +64,49 @@ def track_key(title: str | None) -> str:
     return _NON_ALNUM_RE.sub("", text.casefold())
 
 
-def results_for_track(results: list[dict], title: str) -> list[dict]:
-    """Only the results that really are the track we asked about.
+_FEAT_RE = re.compile(r"\s+(feat\.?|ft\.?|featuring|with)\s+.*$", re.IGNORECASE)
 
-    iTunes' search is fuzzy and answers with *something* rather than nothing:
-    a query for AJR's "3 O'Clock Things" comes back with "Yes I'm A Mess" and
-    "3AM", from two albums the track is not on. Taking the top result on faith
-    is how a play gets confidently labelled with the wrong record.
 
-    An empty list is the honest answer when nothing matches. "Unknown Album"
-    beats a wrong one, and it leaves the manual picker to sort out.
+def artist_key(name: str | None) -> str:
+    """A comparison key for artist names, tolerant of featured-credit noise."""
+    text = " ".join((name or "").split())
+    text = _TRAILING_QUALIFIER_RE.sub("", text)
+    text = _FEAT_RE.sub("", text)
+    return _NON_ALNUM_RE.sub("", text.casefold())
+
+
+def results_for_track(results: list[dict], title: str,
+                      artist: str | None = None) -> list[dict]:
+    """Only the results that really are the recording we asked about.
+
+    Two filters, because two different things went wrong in the field.
+
+    The title catches iTunes answering a fuzzy query with *something* rather
+    than nothing: asking for AJR's "3 O'Clock Things" returns "Yes I'm A Mess"
+    and "3AM", from two albums the track is not on.
+
+    The artist catches cover and lullaby records, which title their tracks
+    identically and so sail past a title check — "My Play" came back from
+    "Lullaby Versions of AJR", performed by The Cat and Owl. Matching on the
+    album name would not have helped, since it contains the real artist's name;
+    `artistName` is the field that actually distinguishes them.
+
+    An empty list is the honest answer. "Unknown Album" beats a wrong one, and
+    the manual picker is there for it.
     """
-    want = track_key(title)
-    if not want:
+    want_title = track_key(title)
+    if not want_title:
         return []
-    return [r for r in results or [] if track_key((r or {}).get("trackName")) == want]
+    want_artist = artist_key(artist) if artist else None
+    hits = []
+    for r in results or []:
+        r = r or {}
+        if track_key(r.get("trackName")) != want_title:
+            continue
+        if want_artist and artist_key(r.get("artistName")) != want_artist:
+            continue
+        hits.append(r)
+    return hits
 
 
 def hi_res(artwork_url: str | None) -> str | None:

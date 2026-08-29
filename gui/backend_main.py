@@ -419,7 +419,8 @@ async def _itunes_album_candidates(artist: str, title: str) -> list[dict]:
         artist, title, limit=itunes.CANDIDATE_LOOKUP_LIMIT)
     # Same filter the engine applies: offering albums belonging to some other
     # song is worse than offering none, since the picker looks authoritative.
-    return itunes.album_candidates(itunes.results_for_track(results, title))
+    return itunes.album_candidates(
+        itunes.results_for_track(results, title, artist))
 
 
 @app.get("/api/plays/{play_id}/album-candidates")
