@@ -6,7 +6,6 @@ import time
 import tempfile
 import io
 import wave
-import urllib.parse
 from collections import deque
 import aiohttp
 import numpy as np
@@ -16,6 +15,8 @@ import base64
 from shazamio import Shazam
 
 import track_clock
+from spinsense import itunes
+from spinsense.albums import choose_edition
 
 # --- 1. Paths + config bootstrap ---
 DATA_DIR = os.environ.get('SPINSENSE_DATA_DIR', os.path.join(os.path.dirname(__file__), '..'))
@@ -418,6 +419,7 @@ state = {
     "genre": None,
     "release_year": None,
     "duration_secs": None,
+    "album_exclusive": False,
     "back_off": False,
     "force_scan": False,
     # Track-end prediction (core/track_clock.py). `clock` is the current play's
@@ -513,6 +515,9 @@ def build_status_payload(phase: str, rms: float, st: dict) -> dict:
                 "genre": st.get("genre"),
                 "release_year": st.get("release_year"),
                 "duration_secs": st.get("duration_secs"),
+                # True when the track can only be on a qualified edition, which
+                # is evidence enough to upgrade the whole run to it.
+                "album_exclusive": bool(st.get("album_exclusive")),
             },
             # Where in the track we are and when it really started. Additive:
             # consumers that don't know the key (older HACS integrations) skip
@@ -567,26 +572,22 @@ async def _publish_idle_blip() -> None:
 
 
 async def fetch_itunes_metadata(artist, title):
-    """Return (album, art_url, duration_secs) from the iTunes Search API."""
-    query = urllib.parse.quote_plus(f"{artist} {title}")
-    url = f"https://itunes.apple.com/search?term={query}&entity=song&limit=1"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json(content_type=None)
-                    if data.get("resultCount", 0) > 0:
-                        result = data["results"][0]
-                        album = result.get("collectionName", "")
-                        art_url = result.get("artworkUrl100", "").replace("100x100bb", "1000x1000bb")
-                        duration_secs = None
-                        ms = result.get("trackTimeMillis")
-                        if isinstance(ms, (int, float)) and ms > 0:
-                            duration_secs = int(round(ms / 1000))
-                        return album, art_url, duration_secs
-    except Exception as e:
-        print(f"⚠️ iTunes API error: {e}")
-    return None, None, None
+    """Return (album, art_url, duration_secs, album_exclusive) for a track.
+
+    Asks for several results rather than one, so `choose_edition()` can see
+    whether the track also appears on the base album. If every edition it
+    appears on is qualified, the record on the platter must be that edition —
+    `album_exclusive` carries that finding through to reconciliation, which
+    runs much later and cannot re-derive it.
+    """
+    results = await itunes.search_songs(artist, title)
+    if not results:
+        return None, None, None, False
+    album, exclusive = choose_edition(itunes.album_names(results))
+    art_url, duration_secs = itunes.metadata_for(results, album)
+    if exclusive:
+        print(f"[!] {album!r} is the only edition carrying this track — run upgraded")
+    return album, art_url, duration_secs, exclusive
 
 
 async def fetch_image_base64(url):
@@ -913,7 +914,7 @@ async def _handle_match(track: dict, reason: str = "onset") -> None:
     artist = track.get('artist') or 'Unknown Artist'
 
     print("[!] Fetching high-res metadata from iTunes...")
-    album, art_url, duration_secs = await fetch_itunes_metadata(artist, title)
+    album, art_url, duration_secs, album_exclusive = await fetch_itunes_metadata(artist, title)
     if not art_url:
         art_url = track.get('art_url') or ''   # backend-supplied fallback art
     if not album:
@@ -935,6 +936,7 @@ async def _handle_match(track: dict, reason: str = "onset") -> None:
     state["genre"] = track.get('genre')
     state["release_year"] = track.get('release_year')
     state["duration_secs"] = duration_secs
+    state["album_exclusive"] = album_exclusive
 
     # An end-check that lands on the same track means our prediction was wrong
     # (usually duration metadata for a different edit). Inherit its rescan
@@ -1003,6 +1005,7 @@ def _clear_track_state(set_backoff: bool) -> None:
     state["genre"] = None
     state["release_year"] = None
     state["duration_secs"] = None
+    state["album_exclusive"] = False
     state["clock"] = None
     state["back_off"] = set_backoff
 

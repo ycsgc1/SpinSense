@@ -331,6 +331,7 @@ async def _record_if_new(track: dict, play_clock: dict | None = None) -> None:
     genre = track.get("genre") or None
     release_year = track.get("release_year") or None
     duration_secs = track.get("duration_secs") or None
+    album_exclusive = bool(track.get("album_exclusive"))
     started_at, join_offset_secs = _play_clock_fields(play_clock)
 
     # A different track is starting: the previous one just ended.
@@ -341,7 +342,7 @@ async def _record_if_new(track: dict, play_clock: dict | None = None) -> None:
             play_history.record_play, title, artist, album, art_url,
             isrc=isrc, genre=genre, release_year=release_year,
             duration_secs=duration_secs, started_at=started_at,
-            join_offset_secs=join_offset_secs,
+            join_offset_secs=join_offset_secs, album_exclusive=album_exclusive,
         )
     except Exception as e:
         log.error("failed to record play %s - %s: %s", artist, title, e)

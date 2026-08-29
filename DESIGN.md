@@ -462,6 +462,28 @@ That last line is Last.fm's published rule verbatim. Ineligible rows come back *
 
 ---
 
+## 11.2 Why there is a shared package
+
+`core/` and `gui/` are two processes and were two import roots, so anything
+both needed got written twice — and the two copies drifted. Album-title
+vocabulary lived only in `gui/reconcile.py`, invisible to the engine, which is
+the process that actually asks iTunes which album a track belongs to; that is
+what let "SOUR (Video Version)" be treated as an edition of *SOUR*. Separately,
+each side had grown its own iTunes client against the same endpoint.
+
+`spinsense/` holds what both need: the album vocabulary and one search client.
+Everything in it is pure or purely-network, with no framework dependency, so
+either process can import it and it is testable on its own.
+
+Import resolution is the only cost. Neither process runs from the repository
+root — the engine is a script in `core/`, the backend a uvicorn app in `gui/` —
+so the root is put on the path by `PYTHONPATH=/app` in the image and by a
+`conftest.py` in each suite under test. A `pip install -e .` with packaging
+metadata would be the heavier alternative; for a single-image application this
+buys the same thing with less to maintain.
+
+---
+
 ## 12. Operational Notes
 
 - **Tier 3 hot-reload.** Every field in `config.json` that the engine reads is mirrored into a mutable `runtime` dict at startup and re-applied by the file watcher. No engine restart for any setting change. (Old behavior — needing a restart — was a 0.3-era bug; the Settings page banner that warned about it is gone.)
@@ -476,6 +498,11 @@ That last line is Last.fm's published rule verbatim. Ineligible rows come back *
 ## 13. Project Structure
 
 ```
+spinsense/                 # domain logic shared by BOTH processes
+  albums.py                # album-title vocabulary, edition vs rendition,
+                           #   choose_edition() and pick_winner()
+  itunes.py                # the one iTunes Search client
+  tests/
 core/
   core_engine.py           # the engine process: audio + recognition + MQTT
   track_clock.py           # pure: track-end prediction + the play clock (§6.1)

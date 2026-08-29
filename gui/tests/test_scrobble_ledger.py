@@ -108,6 +108,19 @@ class RecordIfNewCarriesTheClockTest(unittest.TestCase):
         self.assertEqual(row["started_at"], 1_756_338_000)
         self.assertEqual(row["join_offset_secs"], 42)
 
+    def test_edition_evidence_reaches_the_row(self):
+        # Gathered in the engine at enrichment time; reconciliation runs much
+        # later and cannot re-derive it, so it has to travel with the play.
+        self._feed({"title": "T", "artist": "A", "album": "SOUR (Deluxe)",
+                    "album_exclusive": True}, None)
+        row = play_history.recent_plays(db_path=self.db_path)[0]
+        self.assertEqual(row["album_exclusive"], 1)
+
+    def test_no_evidence_is_recorded_as_zero_not_null(self):
+        self._feed({"title": "T", "artist": "A", "album": "SOUR"}, None)
+        row = play_history.recent_plays(db_path=self.db_path)[0]
+        self.assertEqual(row["album_exclusive"], 0)
+
     def test_a_frame_without_a_clock_still_records(self):
         # An engine on an older build sends no play_clock at all.
         self._feed({"title": "T", "artist": "A"}, None)

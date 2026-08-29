@@ -37,6 +37,11 @@ _ENRICHMENT_COLUMNS = {
     # here instead. NULL on both = unknown, which is every pre-feature row.
     "started_at": "INTEGER",          # unix secs the track began on the platter
     "join_offset_secs": "INTEGER",    # secs into the track when we started hearing it
+    # Edition evidence (2026-08). 1 = every edition this track appears on
+    # carries a qualifier, so the record played must be that edition and the
+    # whole run can be upgraded to it. NULL/0 = the base album exists, which
+    # proves nothing. See spinsense.albums.choose_edition().
+    "album_exclusive": "INTEGER",
     # Last.fm (2026-08). Non-NULL = this play has been submitted and must never
     # be submitted again; the value is when we sent it. Rows Last.fm ignored or
     # that aged out are stamped too — retrying either forever would be a leak.
@@ -81,15 +86,17 @@ def record_play(
     duration_secs: int | None = None,
     started_at: int | None = None,
     join_offset_secs: int | None = None,
+    album_exclusive: bool | None = None,
 ) -> int:
     with _connect(db_path) as conn:
         cur = conn.execute(
             "INSERT INTO plays "
             "(title, artist, album, art_url, played_at, isrc, genre, release_year, "
-            "duration_secs, started_at, join_offset_secs) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "duration_secs, started_at, join_offset_secs, album_exclusive) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (title, artist, album, art_url, int(time.time()), isrc, genre,
-             release_year, duration_secs, started_at, join_offset_secs),
+             release_year, duration_secs, started_at, join_offset_secs,
+             1 if album_exclusive else 0),
         )
         return int(cur.lastrowid)
 
@@ -165,7 +172,7 @@ def recent_plays(
         rows = conn.execute(
             "SELECT id, title, artist, album, art_url, art_path, played_at, "
             "isrc, genre, release_year, duration_secs, ended_at, album_locked, "
-            "started_at, join_offset_secs "
+            "started_at, join_offset_secs, album_exclusive "
             "FROM plays WHERE deleted_at IS NULL ORDER BY played_at DESC, id DESC LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()

@@ -2,10 +2,10 @@ name: Tests
 
 # Runs the unit suites and static analysis on every push and PR.
 #
-# Both suites must run from inside their own directory: backend_main mounts
-# StaticFiles("static") and Jinja2Templates("templates") by relative path, so
-# pytest launched from the repo root can't find them. That's why this is two
-# steps and not one `pytest core gui`.
+# The two process suites must run from inside their own directory: backend_main
+# mounts StaticFiles("static") and Jinja2Templates("templates") by relative
+# path, so pytest launched from the repo root can't find them. The shared
+# `spinsense` package has no such constraint and runs from the root.
 
 on:
   push:
@@ -36,6 +36,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Shared domain tests
+        run: python -m pytest -q spinsense
+
       - name: Core engine tests
         working-directory: core
         run: python -m pytest -q
@@ -45,7 +48,7 @@ jobs:
         run: python -m pytest -q
 
       - name: Lint (unused imports, undefined names, correctness)
-        run: ruff check --select E4,E7,E9,F core/ gui/
+        run: ruff check --select E4,E7,E9,F core/ gui/ spinsense/
 
       - name: Dead code
-        run: vulture core/ gui/ --min-confidence 100
+        run: vulture core/ gui/ spinsense/ --min-confidence 100

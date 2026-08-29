@@ -2,6 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Both processes run from their own directory — the engine as a script from
+# core/, the backend as a uvicorn app from gui/ — but share the `spinsense`
+# package at the repository root, so the root must be importable from both.
+ENV PYTHONPATH=/app
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     portaudio19-dev \

@@ -67,7 +67,7 @@ class HandleMatchClockTest(unittest.IsolatedAsyncioTestCase):
         self.duration = 213
 
         async def fake_itunes(artist, title):
-            return "Album", "", self.duration
+            return "Album", "", self.duration, False
 
         async def fake_art(url):
             return ""

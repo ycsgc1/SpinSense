@@ -11,7 +11,6 @@ from fastapi.templating import Jinja2Templates
 import paho.mqtt.client as mqtt
 from pydantic import ValidationError
 import sounddevice as sd
-import aiohttp
 
 import lastfm
 import play_history
@@ -20,6 +19,7 @@ import reconcile
 from config_manager import SpinSenseConfig, load_config, save_config
 from ipc_manager import ART_DIR, events, manager, handle_uds_client, unify_art
 from discovery import advertiser
+from spinsense import itunes
 
 # Paths that the setup-wizard redirect must let through. Everything outside
 # this list is gated when Setup_Wizard_State == "pending".
@@ -413,37 +413,11 @@ async def restore_play_route(play_id: int):
     return {"status": "restored", "id": play_id}
 
 
-def _parse_itunes_candidates(data: dict) -> list[dict]:
-    """Pure: iTunes search JSON -> up to 10 distinct {album, art_url}."""
-    out, seen = [], set()
-    for r in (data or {}).get("results", []):
-        album = r.get("collectionName")
-        if not album or album in seen:
-            continue
-        seen.add(album)
-        art = (r.get("artworkUrl100") or "").replace("100x100bb", "1000x1000bb")
-        out.append({"album": album, "art_url": art or None})
-        if len(out) >= 10:
-            break
-    return out
-
-
 async def _itunes_album_candidates(artist: str, title: str) -> list[dict]:
-    """Distinct candidate albums for a track from the iTunes Search API.
-    Isolated so tests can stub it; any error is an empty list."""
-    query = urllib.parse.quote_plus(f"{artist} {title}")
-    url = f"https://itunes.apple.com/search?term={query}&entity=song&limit=25"
-    try:
-        timeout = aiohttp.ClientTimeout(total=5)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    return []
-                data = await resp.json(content_type=None)
-    except Exception as e:
-        print(f"⚠️ iTunes candidates lookup failed: {e}")
-        return []
-    return _parse_itunes_candidates(data)
+    """Distinct candidate albums for a track, for the manual picker."""
+    results = await itunes.search_songs(
+        artist, title, limit=itunes.CANDIDATE_LOOKUP_LIMIT)
+    return itunes.album_candidates(results)
 
 
 @app.get("/api/plays/{play_id}/album-candidates")

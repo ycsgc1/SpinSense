@@ -11,6 +11,7 @@ if GUI_DIR not in sys.path:
     sys.path.insert(0, GUI_DIR)
 
 import backend_main  # noqa: E402
+from spinsense import itunes  # noqa: E402
 import play_history  # noqa: E402
 
 
@@ -143,20 +144,32 @@ class SetAlbumTest(AlbumApiBase):
         self.assertEqual(calls, [([pid], pid, None)])
 
 
-class ParseItunesCandidatesTest(unittest.TestCase):
-    def test_dedupes_caps_and_upscales(self):
-        results = [{"collectionName": f"Album {i}",
-                    "artworkUrl100": f"http://a/{i}/100x100bb.jpg"} for i in range(12)]
-        results.insert(1, {"collectionName": "Album 0",
-                           "artworkUrl100": "http://dup/100x100bb.jpg"})
-        results.insert(2, {"trackName": "no collection name"})
-        out = backend_main._parse_itunes_candidates({"results": results})
-        self.assertEqual(len(out), 10)                       # capped
-        self.assertEqual(out[0]["album"], "Album 0")         # dup skipped
-        self.assertEqual(out[0]["art_url"], "http://a/0/1000x1000bb.jpg")
+class AlbumCandidatesTest(unittest.TestCase):
+    """Now lives in spinsense.itunes, shared with the engine's enrichment —
+    there used to be two iTunes parsers free to disagree."""
+
+    def test_dedupes_and_upscales(self):
+        got = itunes.album_candidates([
+            {"collectionName": "A", "artworkUrl100": "http://x/100x100bb.jpg"},
+            {"collectionName": "A", "artworkUrl100": "http://x/100x100bb.jpg"},
+            {"collectionName": "B", "artworkUrl100": "http://y/100x100bb.jpg"},
+        ])
+        self.assertEqual([c["album"] for c in got], ["A", "B"])
+        self.assertEqual(got[0]["art_url"], "http://x/1000x1000bb.jpg")
 
     def test_missing_art_is_none_and_empty_input_safe(self):
-        out = backend_main._parse_itunes_candidates(
-            {"results": [{"collectionName": "X"}]})
-        self.assertEqual(out, [{"album": "X", "art_url": None}])
-        self.assertEqual(backend_main._parse_itunes_candidates({}), [])
+        self.assertEqual(itunes.album_candidates([]), [])
+        self.assertEqual(itunes.album_candidates(None), [])
+        got = itunes.album_candidates([{"collectionName": "A"}])
+        self.assertIsNone(got[0]["art_url"])
+
+    def test_rows_without_an_album_are_skipped(self):
+        got = itunes.album_candidates([{"artworkUrl100": "x"}, {"collectionName": "A"}])
+        self.assertEqual([c["album"] for c in got], ["A"])
+
+    def test_the_list_is_capped(self):
+        got = itunes.album_candidates(
+            [{"collectionName": f"A{i}"} for i in range(50)])
+        self.assertEqual(len(got), 10)
+
+

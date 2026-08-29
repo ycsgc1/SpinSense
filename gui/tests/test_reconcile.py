@@ -171,12 +171,13 @@ class ReconcileDbBase(unittest.TestCase):
         except OSError:
             pass
 
-    def seed(self, artist, album, played_at, locked=None, deleted=None):
+    def seed(self, artist, album, played_at, locked=None, deleted=None,
+             exclusive=None):
         conn = sqlite3.connect(self.db)
         cur = conn.execute(
             "INSERT INTO plays (title, artist, album, played_at, album_locked,"
-            " deleted_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (f"t{played_at}", artist, album, played_at, locked, deleted))
+            " deleted_at, album_exclusive) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (f"t{played_at}", artist, album, played_at, locked, deleted, exclusive))
         conn.commit()
         pid = cur.lastrowid
         conn.close()
@@ -262,6 +263,49 @@ class ReconcileAlbumTest(ReconcileDbBase):
         albums = self.albums()
         self.assertEqual(albums[0], "Abbey Road")        # bridged
         self.assertEqual(albums[1], "Some Other Album")  # untouched
+
+
+class EditionUpgradeTest(ReconcileDbBase):
+    """The other half of the original design: assume the base album, but
+    upgrade the whole run once a track proves it could only be the deluxe."""
+
+    def test_a_run_defaults_to_the_base_album(self):
+        self.seed("A", "SOUR", 1000)
+        p2 = self.seed("A", "SOUR (Deluxe)", 1100)
+        reconcile.reconcile_album(p2, db_path=self.db)
+        self.assertEqual(set(self.albums()), {"SOUR"})
+
+    def test_one_exclusive_track_upgrades_the_whole_run(self):
+        # The bonus track can't be on the standard pressing, so the record
+        # being played is the deluxe — and every play in the session is too.
+        self.seed("A", "SOUR", 1000)
+        self.seed("A", "SOUR", 1100)
+        p3 = self.seed("A", "SOUR (Deluxe)", 1200, exclusive=1)
+        reconcile.reconcile_album(p3, db_path=self.db)
+        self.assertEqual(set(self.albums()), {"SOUR (Deluxe)"})
+
+    def test_the_upgrade_applies_backwards_through_the_run(self):
+        # Evidence arrives mid-side; earlier plays are the same record.
+        p1 = self.seed("A", "SOUR", 1000)
+        self.seed("A", "SOUR (Deluxe)", 1100, exclusive=1)
+        reconcile.reconcile_album(p1, db_path=self.db)
+        self.assertEqual(set(self.albums()), {"SOUR (Deluxe)"})
+
+    def test_evidence_does_not_leak_across_albums(self):
+        p1 = self.seed("A", "SOUR", 1000)
+        self.seed("A", "GUTS (Deluxe)", 1100, exclusive=1)
+        reconcile.reconcile_album(p1, db_path=self.db)
+        albums = self.albums()
+        self.assertEqual(albums[0], "SOUR")            # untouched
+        self.assertEqual(albums[1], "GUTS (Deluxe)")   # its own album
+
+    def test_a_locked_row_neither_supplies_evidence_nor_moves(self):
+        self.seed("A", "SOUR (Deluxe)", 1000, locked=1, exclusive=1)
+        p2 = self.seed("A", "SOUR", 1100)
+        reconcile.reconcile_album(p2, db_path=self.db)
+        albums = self.albums()
+        self.assertEqual(albums[0], "SOUR (Deluxe)")   # locked, left alone
+        self.assertEqual(albums[1], "SOUR")            # no evidence to use
 
 
 class ApplyToRunTest(ReconcileDbBase):

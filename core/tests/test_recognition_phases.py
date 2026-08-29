@@ -141,7 +141,7 @@ class ScanDecisionTest(unittest.TestCase):
 class IdleBlipTest(unittest.TestCase):
     def setUp(self):
         self.events = []
-        async def fake_itunes(artist, title): return (None, None, None)
+        async def fake_itunes(artist, title): return (None, None, None, False)
         async def fake_img(url): return ""
         def fake_publish_state(status, artist="", title="", album="", art_url="", art_base64=""):
             self.events.append(f"mqtt:{status}")
@@ -239,7 +239,7 @@ class HandleMatchArtTest(unittest.TestCase):
         core_engine._publish_idle_blip = fake_blip
         core_engine.publish_state = fake_publish
         core_engine.state["last_song"] = ""
-        self.itunes_return = (None, None, None)
+        self.itunes_return = (None, None, None, False)
 
     def tearDown(self):
         (core_engine.fetch_itunes_metadata, core_engine.fetch_image_base64,
@@ -247,7 +247,7 @@ class HandleMatchArtTest(unittest.TestCase):
          core_engine.publish_state) = self._orig
 
     def test_itunes_art_is_primary(self):
-        self.itunes_return = ("iTunes Album", "itunes_art.jpg", None)
+        self.itunes_return = ("iTunes Album", "itunes_art.jpg", None, False)
         n = {"title": "T", "artist": "A", "album": "Backend Album",
              "art_url": "backend_art.jpg", "isrc": None, "genre": None, "release_year": None}
         asyncio.run(core_engine._handle_match(n))
@@ -255,7 +255,7 @@ class HandleMatchArtTest(unittest.TestCase):
         self.assertEqual(core_engine.state["album"], "iTunes Album")
 
     def test_backend_art_used_when_itunes_has_none(self):
-        self.itunes_return = (None, None, None)
+        self.itunes_return = (None, None, None, False)
         n = {"title": "T", "artist": "A", "album": "Backend Album",
              "art_url": "backend_art.jpg", "isrc": None, "genre": None, "release_year": None}
         asyncio.run(core_engine._handle_match(n))
@@ -263,7 +263,7 @@ class HandleMatchArtTest(unittest.TestCase):
         self.assertEqual(core_engine.state["album"], "Backend Album")
 
     def test_falls_back_to_unknown_album_and_empty_art(self):
-        self.itunes_return = (None, None, None)
+        self.itunes_return = (None, None, None, False)
         n = {"title": "T", "artist": "A", "album": None,
              "art_url": None, "isrc": None, "genre": None, "release_year": None}
         asyncio.run(core_engine._handle_match(n))
@@ -616,7 +616,7 @@ class DurationCaptureTest(unittest.TestCase):
 
     def setUp(self):
         async def fake_itunes(artist, title):
-            return (None, None, None)
+            return (None, None, None, False)
         async def fake_img(url):
             return ""
         async def fake_phase(p):
@@ -642,7 +642,7 @@ class DurationCaptureTest(unittest.TestCase):
 
     def test_itunes_duration_reaches_state_and_frame(self):
         async def fake_itunes(artist, title):
-            return ("Album", "art.jpg", 245)
+            return ("Album", "art.jpg", 245, False)
         core_engine.fetch_itunes_metadata = fake_itunes
         n = {"title": "T", "artist": "A", "album": None, "art_url": None,
              "isrc": None, "genre": None, "release_year": None, "duration_secs": None}
@@ -653,7 +653,7 @@ class DurationCaptureTest(unittest.TestCase):
 
     def test_backend_duration_used_when_itunes_has_none(self):
         async def fake_itunes(artist, title):
-            return (None, None, None)
+            return (None, None, None, False)
         core_engine.fetch_itunes_metadata = fake_itunes
         n = {"title": "T", "artist": "A", "album": None, "art_url": None,
              "isrc": None, "genre": None, "release_year": None, "duration_secs": 200}
