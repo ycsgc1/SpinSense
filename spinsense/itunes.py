@@ -109,6 +109,62 @@ def results_for_track(results: list[dict], title: str,
     return hits
 
 
+LOOKUP_URL = "https://itunes.apple.com/lookup"
+
+
+async def album_tracks(collection_id: int, timeout_secs: float = 8.0) -> list[dict]:
+    """Every track on an album, by its iTunes collection id.
+
+    This is ground truth, unlike `search_songs()`, which is relevance-ranked and
+    frequently unhelpful: searching for AJR's "World's Smallest Violin" returns
+    a live album and a sped-up single but never the studio record it is track 11
+    of, and searching for "OK Overture" returns nothing whatsoever. A lookup
+    returns exactly what is on the release, with correct durations.
+
+    The id comes free with any track that did resolve, so no extra search is
+    needed to obtain it.
+    """
+    import aiohttp
+
+    url = f"{LOOKUP_URL}?id={int(collection_id)}&entity=song&limit=200"
+    try:
+        client_timeout = aiohttp.ClientTimeout(total=timeout_secs)
+        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    return []
+                data = await response.json(content_type=None)
+    except Exception as e:
+        print(f"⚠️ iTunes album lookup failed: {e}")
+        return []
+    results = (data or {}).get("results")
+    if not isinstance(results, list):
+        return []
+    # The response leads with the album itself; only the tracks are wanted.
+    return [r for r in results if isinstance(r, dict) and r.get("wrapperType") == "track"]
+
+
+def find_track(tracks: list[dict], title: str) -> dict | None:
+    """The entry for `title` in a tracklist, or None if the record hasn't got it."""
+    want = track_key(title)
+    if not want:
+        return None
+    for t in tracks or []:
+        if track_key((t or {}).get("trackName")) == want:
+            return t
+    return None
+
+
+def collection_id_of(results: list[dict], album: str | None) -> int | None:
+    """The iTunes id of `album` among these results, for a tracklist lookup."""
+    for r in results or []:
+        if album and (r or {}).get("collectionName") == album:
+            cid = r.get("collectionId")
+            if isinstance(cid, int):
+                return cid
+    return None
+
+
 def hi_res(artwork_url: str | None) -> str | None:
     """iTunes hands back a 100px thumbnail; the same URL serves 1000px."""
     if not artwork_url:

@@ -571,15 +571,62 @@ async def _publish_idle_blip() -> None:
     await _write_uds(json.dumps(payload) + "\n")
 
 
+# The record we believe is on the platter, and its tracklist. A side is one
+# album, so once any track resolves we know what the rest of them are — which
+# beats searching per track, because iTunes' search is relevance-ranked and
+# frequently wrong about which release a song belongs to.
+album_context: dict | None = None
+_tracklist_cache: dict[int, list[dict]] = {}
+
+# How long a context survives without a confirming track. Matches the reconciler's
+# session gap: long enough to span flipping the record, short enough that
+# tomorrow's listening starts clean.
+ALBUM_CONTEXT_TTL_SECS = 1800
+
+
+async def _tracklist(collection_id: int) -> list[dict]:
+    """An album's tracklist, fetched once per album per engine run."""
+    if collection_id not in _tracklist_cache:
+        tracks = await itunes.album_tracks(collection_id)
+        if not tracks:
+            return []
+        _tracklist_cache[collection_id] = tracks
+        print(f"[!] Learned {len(tracks)} tracks for {album_context['name']!r}"
+              if album_context else f"[!] Learned {len(tracks)} tracks")
+    return _tracklist_cache[collection_id]
+
+
+def _context_is_live(now_mono: float) -> bool:
+    return (album_context is not None
+            and now_mono - album_context["at"] < ALBUM_CONTEXT_TTL_SECS)
+
+
 async def fetch_itunes_metadata(artist, title):
     """Return (album, art_url, duration_secs, album_exclusive) for a track.
 
-    Asks for several results rather than one, so `choose_edition()` can see
-    whether the track also appears on the base album. If every edition it
-    appears on is qualified, the record on the platter must be that edition —
-    `album_exclusive` carries that finding through to reconciliation, which
-    runs much later and cannot re-derive it.
+    Asks the record we already believe is playing before asking iTunes' search.
+    A side is one album, so once any track has resolved, the rest are answerable
+    from that album's own tracklist — which is authoritative, where search is
+    merely relevance-ranked. In the field, search returned nothing at all for
+    "OK Overture", two unrelated songs for "3 O'Clock Things", a lullaby cover
+    for "My Play", and only a live album for "World's Smallest Violin". Every
+    one of those is on OK ORCHESTRA, with a correct duration the search results
+    would have got wrong.
+
+    Falling back to search when a track is *not* on the current album is what
+    lets a new record take over.
     """
+    global album_context
+    now_mono = time.monotonic()
+
+    if _context_is_live(now_mono):
+        tracks = await _tracklist(album_context["id"])
+        entry = itunes.find_track(tracks, title)
+        if entry is not None:
+            album_context["at"] = now_mono
+            art, duration = itunes.metadata_for([entry], album_context["name"])
+            return album_context["name"], art, duration, False
+
     results = itunes.results_for_track(
         await itunes.search_songs(artist, title), title, artist)
     if not results:
@@ -587,10 +634,17 @@ async def fetch_itunes_metadata(artist, title):
         # "no result that is actually this track" is a real and common outcome.
         print(f"[!] iTunes had no match for {title!r} — leaving album unknown")
         return None, None, None, False
+
     album, exclusive = choose_edition(itunes.album_names(results))
     art_url, duration_secs = itunes.metadata_for(results, album)
     if exclusive:
         print(f"[!] {album!r} is the only edition carrying this track — run upgraded")
+
+    collection_id = itunes.collection_id_of(results, album)
+    if collection_id is not None:
+        if not album_context or album_context["id"] != collection_id:
+            print(f"[!] Now assuming the record is {album!r}")
+        album_context = {"id": collection_id, "name": album, "at": now_mono}
     return album, art_url, duration_secs, exclusive
 
 
