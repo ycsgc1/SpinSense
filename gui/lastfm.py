@@ -379,32 +379,64 @@ async def update_now_playing(track: dict) -> None:
         log.warning("last.fm now-playing rejected (%s): %s", code, message)
 
 
+DEFAULT_DELAY_MINS = 30
+
+
 def submit_delay_secs(cfg: dict | None = None) -> int:
-    """How long a finished play is held before it can be submitted."""
+    """How long to wait after the trigger before a play can be submitted."""
     cfg = cfg if cfg is not None else settings()
     try:
-        return max(0, int(cfg.get("Submit_Delay_Mins", 10))) * 60
+        return max(0, int(cfg.get("Submit_Delay_Mins", DEFAULT_DELAY_MINS))) * 60
     except (TypeError, ValueError):
-        return 600
+        return DEFAULT_DELAY_MINS * 60
 
 
-def is_held(play: dict, now: int | None = None, delay_secs: int | None = None) -> bool:
-    """Whether this play is still inside its review window.
+def submit_trigger(cfg: dict | None = None) -> str:
+    """What starts the hold clock: the track ending, or the whole album."""
+    cfg = cfg if cfg is not None else settings()
+    return "track" if cfg.get("Submit_Trigger") == "track" else "album"
+
+
+def release_time(play: dict, trigger: str, delay_secs: int,
+                 db_path: str | None = None) -> int | None:
+    """When this play becomes submittable, or None while it is still playing.
 
     Last.fm has no API to edit or delete a scrobble once sent, so the only
-    place a wrong identification can be caught is before it goes. Holding a
-    finished play briefly means deleting or correcting it in SpinSense — which
-    already excludes it from the queue — actually prevents the scrobble instead
-    of arriving too late to matter.
+    place a wrong identification can be caught is before it goes — and holding
+    a play means deleting or correcting it in SpinSense, which already excludes
+    it from the queue, actually prevents the scrobble instead of arriving too
+    late to matter.
+
+    On the **album** trigger the clock starts when the whole record finishes,
+    not each track. A side is played as a unit: nothing releases while it is
+    still spinning, then the entire side releases together once it has been
+    off for the delay. That is also the window in which a mislabelled track is
+    most likely to be noticed, because the record it belongs to is still on.
+
+    Falls back to the track's own end when the album is unknown — there is no
+    record to wait for.
     """
-    now = now if now is not None else int(time.time())
-    delay_secs = delay_secs if delay_secs is not None else submit_delay_secs()
-    if delay_secs <= 0:
-        return False
     ended_at = play.get("ended_at")
     if ended_at is None:
-        return True   # still playing; nothing to submit yet anyway
-    return (now - int(ended_at)) < delay_secs
+        return None   # still playing; nothing to submit yet anyway
+    reference = int(ended_at)
+    if trigger == "album":
+        last = play_history.album_last_ended(
+            play.get("artist", ""), play.get("album"),
+            play.get("played_at", reference), db_path)
+        if last is not None:
+            reference = max(reference, int(last))
+    return reference + delay_secs
+
+
+def is_held(play: dict, now: int | None = None, delay_secs: int | None = None,
+            trigger: str | None = None, db_path: str | None = None) -> bool:
+    """Whether this play is still inside its review window."""
+    now = now if now is not None else int(time.time())
+    delay_secs = delay_secs if delay_secs is not None else submit_delay_secs()
+    trigger = trigger if trigger is not None else submit_trigger()
+    release = release_time(play, trigger, delay_secs, db_path)
+    return release is None or now < release
 
 
 def pending(limit: int = MAX_BATCH, db_path: str | None = None,
@@ -426,8 +458,10 @@ def pending(limit: int = MAX_BATCH, db_path: str | None = None,
     eligible = [r for r in rows if r["eligible"]]
     if include_held:
         return eligible
-    now, delay = int(time.time()), submit_delay_secs(cfg)
-    return [r for r in eligible if not is_held(r, now, delay)]
+    now = int(time.time())
+    delay, trigger = submit_delay_secs(cfg), submit_trigger(cfg)
+    return [r for r in eligible
+            if not is_held(r, now, delay, trigger, db_path)]
 
 
 async def flush(db_path: str | None = None, release_held: bool = False) -> dict:
@@ -450,8 +484,9 @@ async def flush(db_path: str | None = None, release_held: bool = False) -> dict:
         held = len(pending(db_path=db_path, include_held=True))
         if held:
             mins = submit_delay_secs(cfg) // 60
+            after = "the album ends" if submit_trigger(cfg) == "album" else "each track ends"
             return {"ok": True, "submitted": 0, "held": held,
-                    "detail": f"{held} waiting out a {mins} min review window"}
+                    "detail": f"{held} held until {mins} min after {after}"}
         return {"ok": True, "submitted": 0, "detail": "nothing pending"}
 
     now = int(time.time())
@@ -527,4 +562,5 @@ def status(db_path: str | None = None) -> dict:
         "held": (len(pending(limit=1000, db_path=db_path, include_held=True))
                  - len(pending(limit=1000, db_path=db_path))) if is_connected(cfg) else 0,
         "delay_mins": submit_delay_secs(cfg) // 60,
+        "trigger": submit_trigger(cfg),
     }

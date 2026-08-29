@@ -305,7 +305,8 @@
       if (pending) parts.push(`${pending} ready to send`);
       // Say why something isn't moving — an unexplained queue reads as broken.
       if (held) {
-        parts.push(`${held} held for review (${status.delay_mins || 0} min)`);
+        const after = status.trigger === "track" ? "the track" : "the album";
+        parts.push(`${held} held until ${status.delay_mins || 0} min after ${after} ends`);
       }
       const queued = parts.length ? parts.join(", ") + "." : "Nothing waiting to be sent.";
       LF_STATE.innerHTML = `

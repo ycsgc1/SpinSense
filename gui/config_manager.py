@@ -72,10 +72,15 @@ class LastFMConfig(BaseModel):
     Username: str = ""
     Scrobble_Now_Playing: bool = True
     Scrobble_Since: int = 0
-    # Minutes to hold a finished play before submitting it, so a wrong
-    # identification can be deleted or corrected first — Last.fm has no API to
-    # edit or remove a scrobble afterwards. 0 submits as soon as the sweep runs.
-    Submit_Delay_Mins: int = 10
+    # When the hold clock starts: "album" waits for the whole record to finish,
+    # "track" starts as each song ends. A side is played as a unit, so the album
+    # is the useful moment — it means a whole side releases together, and a
+    # mislabelled track can be caught while the rest of the record is still on.
+    Submit_Trigger: Literal["track", "album"] = "album"
+    # Minutes to hold after that moment, so a wrong identification can be
+    # deleted or corrected first — Last.fm has no API to edit or remove a
+    # scrobble afterwards. 0 submits on the next sweep.
+    Submit_Delay_Mins: int = 30
 
 
 class MDNSConfig(BaseModel):

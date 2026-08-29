@@ -279,6 +279,36 @@ def scrobble_eligible(row: dict) -> bool:
     return listened >= min(int(duration) / 2, SCROBBLE_ABSOLUTE_SECS)
 
 
+# A run of the same record never spans this; used to scope "when did this album
+# finish" to one listening session rather than every time it was ever played.
+_ALBUM_SESSION_WINDOW_SECS = 86400
+
+
+def album_last_ended(artist: str, album: str | None, near_played_at: int,
+                     db_path: str | None = None) -> int | None:
+    """When this album last finished playing, around the given time.
+
+    A side is played as a unit, so "the album is over" is the useful moment to
+    act on — not the end of each individual track. Scoped to a day around the
+    play so that putting the same record on next week doesn't hold last week's
+    plays hostage.
+
+    None when the album is unknown or nothing has closed yet.
+    """
+    if not album:
+        return None
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT MAX(ended_at) FROM plays "
+            "WHERE deleted_at IS NULL AND ended_at IS NOT NULL "
+            "AND artist = ? AND album = ? AND played_at BETWEEN ? AND ?",
+            (artist, album,
+             int(near_played_at) - _ALBUM_SESSION_WINDOW_SECS,
+             int(near_played_at) + _ALBUM_SESSION_WINDOW_SECS),
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+
+
 def scrobble_candidates(
     since: int = 0,
     limit: int = 200,

@@ -516,68 +516,124 @@ if __name__ == "__main__":
 
 class ReviewWindowTest(_LastFmHarness):
     """Last.fm has no API to edit or delete a scrobble, so the only place a bad
-    identification can be caught is before it is sent. Finished plays are held
-    briefly; deleting or correcting one in that window actually prevents the
-    scrobble rather than arriving too late to matter."""
+    identification can be caught is before it is sent. Finished plays are held;
+    deleting or correcting one in that window actually prevents the scrobble
+    rather than arriving too late to matter.
 
-    def test_a_fresh_play_is_held(self):
-        self.connected(Submit_Delay_Mins=10)
-        self.add_play(played_at=int(time.time()) - 60, listened=200)
+    By default the clock starts when the *album* finishes, not each track — a
+    side is played as a unit, and that is also the window in which a mislabelled
+    track is most likely to be noticed, because the record is still on.
+    """
+
+    def side(self, titles, album="OK ORCHESTRA", ends_ago=3600, gap=200):
+        """A side of `titles`, the last of which finished `ends_ago` seconds ago."""
+        now = int(time.time())
+        first_end = now - ends_ago - gap * (len(titles) - 1)
+        ids = []
+        for i, title in enumerate(titles):
+            end = first_end + gap * i
+            pid = play_history.record_play(title, "A", album, None,
+                                           db_path=self.db_path, duration_secs=213)
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "UPDATE plays SET played_at = ?, ended_at = ? WHERE id = ?",
+                    (end - 200, end, pid))
+            ids.append(pid)
+        return ids
+
+    def test_nothing_releases_while_the_record_is_still_playing(self):
+        # The first track ended long ago, but the side is still going.
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")
+        self.side(["a", "b", "c"], ends_ago=60)
         self.assertEqual(lastfm.pending(db_path=self.db_path), [])
 
-    def test_an_aged_play_is_released(self):
-        self.connected(Submit_Delay_Mins=10)
-        self.add_play(played_at=int(time.time()) - 3600, listened=200)
+    def test_the_whole_side_releases_together_once_it_is_over(self):
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")
+        self.side(["a", "b", "c"], ends_ago=31 * 60)
+        self.assertEqual(len(lastfm.pending(db_path=self.db_path)), 3)
+
+    def test_the_delay_runs_from_the_end_of_the_album(self):
+        # The first track finished over an hour ago; the album did not.
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")
+        self.side(["a", "b", "c"], ends_ago=20 * 60, gap=1200)
+        self.assertEqual(lastfm.pending(db_path=self.db_path), [])
+
+    def test_the_track_trigger_releases_each_song_on_its_own(self):
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="track")
+        # Ends at now-3600-2400, now-3600-1200, now-3600.
+        self.side(["a", "b", "c"], ends_ago=20 * 60, gap=1200)
+        titles = [p["title"] for p in lastfm.pending(db_path=self.db_path)]
+        self.assertEqual(titles, ["a", "b"])   # "c" is still inside its window
+
+    def test_another_record_is_judged_separately(self):
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")
+        self.side(["a"], album="Finished Record", ends_ago=60 * 60)
+        self.side(["b"], album="Still Playing", ends_ago=60)
+        titles = [p["title"] for p in lastfm.pending(db_path=self.db_path)]
+        self.assertEqual(titles, ["a"])
+
+    def test_an_unknown_album_falls_back_to_the_track(self):
+        # No record to wait for, so waiting for one would hold it forever.
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")
+        pid = play_history.record_play("t", "A", None, None, db_path=self.db_path,
+                                       duration_secs=213)
+        now = int(time.time())
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE plays SET played_at = ?, ended_at = ? WHERE id = ?",
+                         (now - 4000, now - 3600, pid))
         self.assertEqual(len(lastfm.pending(db_path=self.db_path)), 1)
 
+    def test_a_zero_delay_releases_as_soon_as_the_album_ends(self):
+        self.connected(Submit_Delay_Mins=0, Submit_Trigger="album")
+        self.side(["a", "b"], ends_ago=5)
+        self.assertEqual(len(lastfm.pending(db_path=self.db_path)), 2)
+
     def test_include_held_sees_everything(self):
-        self.connected(Submit_Delay_Mins=10)
-        self.add_play("fresh", played_at=int(time.time()) - 60, listened=200)
-        self.add_play("old", played_at=int(time.time()) - 3600, listened=200)
-        self.assertEqual(len(lastfm.pending(db_path=self.db_path)), 1)
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")
+        self.side(["a", "b"], ends_ago=60)
+        self.assertEqual(lastfm.pending(db_path=self.db_path), [])
         self.assertEqual(
             len(lastfm.pending(db_path=self.db_path, include_held=True)), 2)
 
-    def test_a_zero_delay_holds_nothing(self):
-        self.connected(Submit_Delay_Mins=0)
-        self.add_play(played_at=int(time.time()) - 5, listened=200)
-        self.assertEqual(len(lastfm.pending(db_path=self.db_path)), 1)
-
     def test_the_sweep_leaves_held_plays_alone(self):
-        self.connected(Submit_Delay_Mins=10)
-        self.add_play(played_at=int(time.time()) - 60, listened=200)
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")
+        self.side(["a"], ends_ago=60)
         result = asyncio.run(lastfm.flush(db_path=self.db_path))
         self.assertEqual(self.calls, [])
         self.assertEqual(result["held"], 1)
-        self.assertIn("review window", result["detail"])
+        self.assertIn("the album ends", result["detail"])
 
     def test_send_now_releases_them(self):
-        self.connected(Submit_Delay_Mins=10)
-        self.add_play(played_at=int(time.time()) - 60, listened=200)
-        self.responses = [({"scrobbles": {"@attr": {"accepted": "1", "ignored": "0"}}}, None)]
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")
+        self.side(["a", "b"], ends_ago=60)
+        self.responses = [({"scrobbles": {"@attr": {"accepted": "2", "ignored": "0"}}}, None)]
         result = asyncio.run(lastfm.flush(db_path=self.db_path, release_held=True))
-        self.assertEqual(result["submitted"], 1)
-        self.assertEqual(len(self.scrobbled_ids()), 1)
+        self.assertEqual(result["submitted"], 2)
+        self.assertEqual(len(self.scrobbled_ids()), 2)
 
     def test_deleting_a_held_play_prevents_the_scrobble(self):
         # The whole point of the window: correcting or removing a bad
         # identification in SpinSense stops it ever reaching Last.fm.
-        self.connected(Submit_Delay_Mins=10)
-        pid = self.add_play(played_at=int(time.time()) - 60, listened=200)
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")
+        pid = self.side(["a"], ends_ago=60)[0]
         play_history.delete_play(pid, db_path=self.db_path)
         self.assertEqual(
             lastfm.pending(db_path=self.db_path, include_held=True), [])
 
     def test_status_reports_what_is_waiting_and_what_is_held(self):
-        self.connected(Submit_Delay_Mins=10)
-        self.add_play("fresh", played_at=int(time.time()) - 60, listened=200)
-        self.add_play("old", played_at=int(time.time()) - 3600, listened=200)
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")
+        self.side(["done"], album="Finished Record", ends_ago=60 * 60)
+        self.side(["fresh"], album="Still Playing", ends_ago=60)
         st = lastfm.status(db_path=self.db_path)
         self.assertEqual(st["pending"], 1)
         self.assertEqual(st["held"], 1)
-        self.assertEqual(st["delay_mins"], 10)
+        self.assertEqual(st["delay_mins"], 30)
+        self.assertEqual(st["trigger"], "album")
 
-    def test_a_malformed_delay_falls_back_to_the_default(self):
-        self.connected(Submit_Delay_Mins=10)
-        self.assertEqual(lastfm.submit_delay_secs({"Submit_Delay_Mins": "soon"}), 600)
+    def test_settings_fall_back_to_sane_values(self):
+        self.assertEqual(lastfm.submit_delay_secs({}), 30 * 60)
+        self.assertEqual(lastfm.submit_delay_secs({"Submit_Delay_Mins": "soon"}), 30 * 60)
         self.assertEqual(lastfm.submit_delay_secs({"Submit_Delay_Mins": -5}), 0)
+        self.assertEqual(lastfm.submit_trigger({}), "album")
+        self.assertEqual(lastfm.submit_trigger({"Submit_Trigger": "nonsense"}), "album")
+        self.assertEqual(lastfm.submit_trigger({"Submit_Trigger": "track"}), "track")

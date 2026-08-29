@@ -201,7 +201,15 @@
         </label>
 
         <label class="block">
-          <span class="text-body-sm text-on-surface mb-1 block">Hold scrobbles for (minutes)<span class="help-tip" tabindex="0" role="note" aria-label="Help: Hold scrobbles"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Last.fm has no way to edit or delete a scrobble once it&rsquo;s sent, so this is your only chance to catch a wrong identification. A finished play waits this long before being submitted; delete or correct it in History during that window and it never goes. &ldquo;Send now&rdquo; releases everything immediately. Set to 0 to submit as soon as each play ends.</span></span></span>
+          <span class="text-body-sm text-on-surface mb-1 block">Start the hold when<span class="help-tip" tabindex="0" role="note" aria-label="Help: Start the hold when"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">A record is played as a unit, so &ldquo;the album finishes&rdquo; means nothing is sent while a side is still spinning &mdash; then the whole side releases together. That&rsquo;s also when you&rsquo;re most likely to spot a wrong track, since the record is still on. Choose &ldquo;each track finishes&rdquo; to start the clock per song instead.</span></span></span>
+          <select name="LastFM.Submit_Trigger" class="form-input">
+            <option value="album">The album finishes</option>
+            <option value="track">Each track finishes</option>
+          </select>
+        </label>
+
+        <label class="block">
+          <span class="text-body-sm text-on-surface mb-1 block">&hellip;then wait (minutes)<span class="help-tip" tabindex="0" role="note" aria-label="Help: Hold scrobbles"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Last.fm has no way to edit or delete a scrobble once it&rsquo;s sent, so this window is your only chance to catch a wrong identification. Delete or correct the play in History before it elapses and it never goes. &ldquo;Send now&rdquo; releases everything immediately. Set to 0 to submit on the next sweep after the trigger.</span></span></span>
           <input type="number" name="LastFM.Submit_Delay_Mins" min="0" max="1440" step="1" class="form-input">
         </label>
 
