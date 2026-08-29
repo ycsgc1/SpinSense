@@ -70,14 +70,87 @@ class BaseTitleTest(unittest.TestCase):
 
 
 class PickWinnerTest(unittest.TestCase):
-    def test_longest_wins(self):
+    def test_the_plainest_title_wins(self):
+        # Nothing here knows which pressing is on the platter, and iTunes picks
+        # an edition per track lookup — so the qualifier is usually an artifact
+        # of what matched, not evidence. The plain title is true of every
+        # edition; a deluxe you may not own is an assertion.
         albums = [("Abbey Road", 100), ("Abbey Road (Super Deluxe Edition)", 50)]
-        self.assertEqual(reconcile.pick_winner(albums),
-                         "Abbey Road (Super Deluxe Edition)")
+        self.assertEqual(reconcile.pick_winner(albums), "Abbey Road")
+
+    def test_order_does_not_matter(self):
+        albums = [("Abbey Road (Super Deluxe Edition)", 50), ("Abbey Road", 100)]
+        self.assertEqual(reconcile.pick_winner(albums), "Abbey Road")
 
     def test_tie_breaks_most_recent(self):
         albums = [("Album (Deluxe A)", 100), ("Album (Deluxe B)", 200)]
         self.assertEqual(reconcile.pick_winner(albums), "Album (Deluxe B)")
+
+
+class EditionVsRenditionTest(unittest.TestCase):
+    """A trailing qualifier answers two questions, and conflating them is what
+    mislabelled SOUR. Cases drawn from a survey of 6,215 real iTunes albums."""
+
+    def base(self, album):
+        return reconcile.base_title(album)
+
+    def test_the_sour_case(self):
+        # The report: a session of SOUR came out labelled "SOUR (Video
+        # Version)" because "version" counted as an edition and the longest
+        # string won. It is a different recording; it must not merge at all.
+        self.assertNotEqual(self.base("SOUR (Video Version)"), self.base("SOUR"))
+
+    def test_editions_still_merge(self):
+        for album in ("SOUR (Deluxe)", "folklore (deluxe version)",
+                      "Rumours (Super Deluxe Edition)", "Then Play On (Expanded Edition)",
+                      "Taylor Swift (Bonus Track Version)", "RAM (Archive Collection)"):
+            with self.subTest(album=album):
+                head = album.split(" (")[0]
+                self.assertEqual(self.base(album), self.base(head))
+
+    def test_remasters_merge_because_the_album_is_the_same(self):
+        # A remaster is a pressing distinction, not a different record.
+        for album in ("Abbey Road (Remastered)", "Meddle (2016 Remaster)",
+                      "Abbey Road (2019 Mix)"):
+            with self.subTest(album=album):
+                head = album.split(" (")[0]
+                self.assertEqual(self.base(album), self.base(head))
+
+    def test_a_remaster_never_wins_the_name(self):
+        self.assertEqual(
+            reconcile.pick_winner([("Abbey Road (Remastered)", 100),
+                                   ("Abbey Road", 200)]), "Abbey Road")
+
+    def test_renditions_never_merge(self):
+        # Different recordings of the same songs. Live and acoustic pressings
+        # are real records; the rest mostly aren't, but cost nothing to exclude.
+        for album in ("Get Back: The Rooftop Performance (Live)",
+                      "Blue (Acoustic)", "Nirvana (The Remixes)",
+                      "Bad Guy (Instrumental)", "Royals (Karaoke Version)",
+                      "Time (Edit)", "Treefingers (Extended Version)",
+                      "Queen Bitch (Demo)"):
+            with self.subTest(album=album):
+                head = album.split(" (")[0]
+                self.assertNotEqual(self.base(album), self.base(head))
+
+    def test_a_re_recording_is_its_own_album(self):
+        # Taylor's Version is a separately pressed record, not an edition.
+        self.assertNotEqual(self.base("1989 (Taylor's Version)"), self.base("1989"))
+        self.assertNotEqual(self.base("This Love (Taylor\u2019s Version)"),
+                            self.base("This Love"))
+
+    def test_a_re_recording_has_its_own_editions(self):
+        # Its deluxe strips down to the re-recording, never to the original.
+        self.assertEqual(self.base("1989 (Taylor's Version) [Deluxe]"),
+                         self.base("1989 (Taylor's Version)"))
+        self.assertNotEqual(self.base("1989 (Taylor's Version) [Deluxe]"),
+                            self.base("1989"))
+
+    def test_a_rendition_outranks_an_edition_marker(self):
+        # "Live (Deluxe Edition)" is judged on the half that makes it a
+        # different record.
+        self.assertNotEqual(self.base("Woodstock (Live) [Deluxe Edition]"),
+                            self.base("Woodstock"))
 
 
 import asyncio  # noqa: E402
@@ -135,14 +208,14 @@ class ReconcileAlbumTest(ReconcileDbBase):
         self.seed("A", "Abbey Road", 1100)
         p3 = self.seed("A", "Abbey Road (Super Deluxe Edition)", 1200)
         changed = reconcile.reconcile_album(p3, db_path=self.db)
-        self.assertEqual(changed, 2)
-        self.assertEqual(set(self.albums()), {"Abbey Road (Super Deluxe Edition)"})
+        self.assertEqual(changed, 1)
+        self.assertEqual(set(self.albums()), {"Abbey Road"})
 
     def test_rewrites_forwards(self):
         self.seed("A", "Abbey Road (Super Deluxe Edition)", 1000)
         p2 = self.seed("A", "Abbey Road", 1100)
         reconcile.reconcile_album(p2, db_path=self.db)
-        self.assertEqual(set(self.albums()), {"Abbey Road (Super Deluxe Edition)"})
+        self.assertEqual(set(self.albums()), {"Abbey Road"})
 
     def test_locked_rows_neither_vote_nor_rewrite(self):
         self.seed("A", "Abbey Road (My Special Long Locked Edition)", 1000,
@@ -187,8 +260,8 @@ class ReconcileAlbumTest(ReconcileDbBase):
         p3 = self.seed("A", "Abbey Road (Deluxe Edition)", 2000)
         reconcile.reconcile_album(p3, db_path=self.db)
         albums = self.albums()
-        self.assertEqual(albums[0], "Abbey Road (Deluxe Edition)")  # bridged
-        self.assertEqual(albums[1], "Some Other Album")             # untouched
+        self.assertEqual(albums[0], "Abbey Road")        # bridged
+        self.assertEqual(albums[1], "Some Other Album")  # untouched
 
 
 class ApplyToRunTest(ReconcileDbBase):
@@ -225,7 +298,7 @@ class IpcReconcileTriggerTest(ReconcileDbBase):
             {"title": "One", "artist": "A", "album": "Abbey Road"}))
         asyncio.run(ipc_manager._record_if_new(
             {"title": "Two", "artist": "A", "album": "Abbey Road (Deluxe Edition)"}))
-        self.assertEqual(set(self.albums()), {"Abbey Road (Deluxe Edition)"})
+        self.assertEqual(set(self.albums()), {"Abbey Road"})
 
     def test_reconcile_failure_does_not_block_recording(self):
         orig = reconcile.reconcile_album

@@ -10,12 +10,43 @@ Post-1.0 backlog — things intentionally deferred at the **1.0.0.0** launch (20
 
 Found running the beta on real records. Ordered roughly by how much they hurt.
 
-### Reconciliation merges different recordings, not just editions
-Confirmed on Olivia Rodrigo's *SOUR*: `SOUR (Video Version)` normalises to base `sour`, merges with `SOUR`, and then wins because `pick_winner()` prefers the longest string.
+### Upgrade a run to the deluxe on evidence
 
-Two separate faults:
-- `version` sits in `_EDITION_MARKER_RE`, but "Video Version" denotes a different **rendition**, like live/acoustic/instrumental — which the original spec deliberately excluded. The marker list needs the same treatment for renditions generally (video, radio edit, instrumental, karaoke, sped up, slowed).
-- "Most qualifiers wins" is the deeper problem. It assumes qualifiers stack toward a more complete edition, which holds for Deluxe → Super Deluxe and fails for anything that isn't a superset. Ranking known edition markers explicitly would beat measuring string length.
+The edition/rendition split shipped, and the winner rule is now "plainest title
+wins" — so a run defaults to the base album, as originally intended. The other
+half of that idea is still missing: **notice when a track can only exist on the
+deluxe, and upgrade the whole run.**
+
+The evidence is available. iTunes' song search returns several albums per
+track, so for each identified track we can ask: does any result share this
+album's base title *without* an edition qualifier? If yes, the track exists on
+the base edition and proves nothing. If every result for that track is a
+qualified edition, the track is exclusive to it — and the record on the platter
+must be that edition, so the run should be upgraded.
+
+Two things to settle before building it:
+
+- **Where it runs.** `fetch_itunes_metadata()` currently asks for `limit=1` and
+  lives in the engine, but `base_title()` and the marker lists live in
+  `gui/reconcile.py`. Duplicating the marker vocabulary across two processes is
+  exactly how the SOUR bug would come back, so either the decision moves to the
+  GUI (which already has `_itunes_album_candidates`) or the vocabulary moves to
+  a module both can import.
+- **Storing the evidence.** Reconciliation runs later and can't re-derive it, so
+  the exclusivity finding needs a column on `plays` — then `reconcile_album()`
+  picks the qualified edition when any play in the group carries the flag, and
+  the plain title otherwise.
+
+### Tell a remaster from the original
+
+Wanted: when Shazam matched the remaster rather than the original pressing, say
+so. Currently both reduce to the same base title and are deliberately merged,
+since for history purposes they are the same album.
+
+The only hook already in hand is `isrc`, which we store per play and which is
+per-recording — but remasters inconsistently reuse the original's ISRC, so it
+identifies a remaster sometimes and silently fails the rest of the time. Worth
+a spike against real records before designing anything on top of it.
 
 ## Docs
 - **Home Assistant `media_player` screenshot** — the one missing "payoff" image; add it to the README's "In Home Assistant" subsection. Drop the file in `docs/images/` (e.g. `ha-entity.png`) and wire it in.

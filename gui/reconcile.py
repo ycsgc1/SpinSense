@@ -16,17 +16,38 @@ SESSION_GAP_SECS = 1800
 # listening session never spans it.
 _RUN_WINDOW_SECS = 86400
 
-# Substrings that mark a strippable edition qualifier (matched as whole
-# words). Deliberately absent: live/acoustic/demos/unplugged — those are
-# different albums, not editions.
+# Two vocabularies, because a trailing qualifier answers two different
+# questions and conflating them is what mislabelled SOUR as "SOUR (Video
+# Version)". Matched as whole words.
+#
+# EDITION: the same album, in a different edition or master. Strippable — the
+# plays belong together, and the plain title is what we show.
 _EDITION_MARKER_RE = re.compile(
     r"\b(super deluxe|deluxe|expanded|remastered|remaster|anniversary|"
     r"bonus tracks?|special edition|collector'?s edition|legacy edition|"
-    r"definitive edition|extended|reissue|re-issue|edition|version)\b",
+    r"definitive edition|reissue|re-issue|archive collection|"
+    r"(19|20)\d{2} (remaster|mix))\b",
     re.IGNORECASE,
 )
-# Possessive re-recordings ("Taylor's Version") are different recordings,
-# never editions — checked BEFORE the generic "version" marker.
+# RENDITION: a different recording of the same songs. Never strippable, never
+# merged — a live album is not a pressing of the studio album.
+#
+# "version" used to sit in the edition list, which is backwards: across 6,215
+# iTunes albums it appears overwhelmingly in rendition contexts (karaoke,
+# instrumental, piano, acoustic, video, Taylor's) and as an edition only inside
+# the fixed phrases "deluxe version" and "bonus track version" — both already
+# caught above by "deluxe" and "bonus track".
+_RENDITION_MARKER_RE = re.compile(
+    r"\b(live|acoustic|unplugged|instrumental|karaoke|demos?|remix(es)?|"
+    r"video|radio edit|single version|piano|orchestral|cover|tribute|"
+    r"sped up|slowed|extended|dj mix|session|originally performed by|"
+    r"in the style of)\b",
+    re.IGNORECASE,
+)
+# Possessive re-recordings ("Taylor's Version") are a real, separately-pressed
+# record, not an edition. Its own deluxe strips normally, so
+# "1989 (Taylor's Version) [Deluxe]" reduces to "1989 (Taylor's Version)" and
+# never to "1989".
 _POSSESSIVE_VERSION_RE = re.compile(r"\w+['’]s\s+version", re.IGNORECASE)
 _YEAR_RE = re.compile(r"(19|20)\d{2}")
 
@@ -35,10 +56,18 @@ _TRAILING_DASH_RE = re.compile(r"\s+[-–—]\s+([^-–—]+?)\s*$")
 
 
 def _is_edition_qualifier(text: str) -> bool:
+    """Whether a trailing qualifier means "same album, different edition".
+
+    Order matters: a rendition marker wins over an edition marker, so
+    "Video Version" and "Live (Deluxe Edition)" are judged on the part that
+    makes them a different record.
+    """
     t = " ".join(text.strip().lower().split())
     if not t:
         return False
     if _POSSESSIVE_VERSION_RE.search(t):
+        return False
+    if _RENDITION_MARKER_RE.search(t):
         return False
     if _EDITION_MARKER_RE.search(t):
         return True
@@ -63,9 +92,22 @@ def base_title(album: str | None) -> str:
 
 
 def pick_winner(albums: list[tuple[str, int]]) -> str:
-    """The winning album string among (album, played_at) pairs: most
-    qualifiers (longest raw string) wins; ties break to the most recent."""
-    return max(albums, key=lambda pair: (len(pair[0]), pair[1]))[0]
+    """The album to show for a merged group: the plainest form wins.
+
+    "Most qualifiers wins" was the old rule, on the reasoning that a deluxe is
+    the release containing everything you heard. But nothing here knows which
+    pressing is on the platter — iTunes picks an edition per *track* lookup, so
+    a qualifier is usually an artifact of which release happened to match, not
+    evidence about your record. The plain title is the common denominator true
+    of every edition, and it never asserts a deluxe you may not own.
+
+    The other half of that idea — upgrade the whole run once a track appears
+    that exists *only* on the deluxe — is the right way to earn the qualifier,
+    and needs evidence this function does not have. See ROADMAP.
+
+    Ties break to the most recent.
+    """
+    return min(albums, key=lambda pair: (len(pair[0]), -pair[1]))[0]
 
 
 def _run_rows(conn, play_id: int) -> list[dict]:
