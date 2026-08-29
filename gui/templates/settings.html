@@ -114,31 +114,38 @@
         </div>
 
         <div id="lastfm-setup" class="space-y-md hidden">
-          <p class="text-body-sm text-on-surface-variant">
-            Scrobbling uses <strong>your own</strong> Last.fm API account, so the rate limit and
-            terms are yours. Create one at
-            <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener"
-               class="text-primary underline">last.fm/api/account/create</a>
-            (any name and description will do &mdash; you can leave the callback URL blank,
-            SpinSense supplies its own), then paste the two values it gives you.
-          </p>
-
-          <label class="block">
-            <span class="text-body-sm text-on-surface mb-1 block">API key</span>
-            <input type="text" id="lastfm-api-key" autocomplete="off" spellcheck="false" class="form-input">
-          </label>
-
-          <label class="block">
-            <span class="text-body-sm text-on-surface mb-1 block">Shared secret</span>
-            <input type="password" id="lastfm-api-secret" autocomplete="off" class="form-input">
-          </label>
-
           <button type="button" id="lastfm-connect" class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">Connect to Last.fm</button>
 
           <p class="text-body-sm text-on-surface-variant">
             Takes you to Last.fm to sign in and approve SpinSense, then brings you straight
             back here. Your Last.fm password is never seen by SpinSense.
           </p>
+
+          <details id="lastfm-own-key" class="rounded-lg border border-outline-variant/40 bg-surface-container-high p-md">
+            <summary class="text-body-sm text-on-surface cursor-pointer">Use your own Last.fm API key</summary>
+            <div class="mt-3 space-y-3">
+              <p class="text-body-sm text-on-surface-variant">
+                SpinSense connects using its own registered Last.fm application, which is all
+                most people need. Supply your own from
+                <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener"
+                   class="text-primary underline">last.fm/api/account/create</a>
+                if you'd rather the API rate limit and terms attach to your account &mdash; or if
+                the shared key ever stops working. Leave its callback URL blank; SpinSense
+                supplies its own.
+              </p>
+              <label class="block">
+                <span class="text-body-sm text-on-surface mb-1 block">API key</span>
+                <input type="text" id="lastfm-api-key" autocomplete="off" spellcheck="false" class="form-input">
+              </label>
+              <label class="block">
+                <span class="text-body-sm text-on-surface mb-1 block">Shared secret</span>
+                <input type="password" id="lastfm-api-secret" autocomplete="off" class="form-input">
+              </label>
+              <p class="text-body-sm text-on-surface-variant">
+                Fill both, then use Connect above.
+              </p>
+            </div>
+          </details>
 
           <details id="lastfm-manual" class="hidden rounded-lg border border-outline-variant/40 bg-surface-container-high p-md">
             <summary class="text-body-sm text-on-surface cursor-pointer">Didn&rsquo;t come back automatically?</summary>

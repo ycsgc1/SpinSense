@@ -446,7 +446,13 @@ async def lastfm_status():
 
 @app.post("/api/lastfm/auth/start")
 async def lastfm_auth_start(request: Request):
-    """Validate and save the credentials, then hand back both auth URLs.
+    """Resolve the credentials, then hand back both auth URLs.
+
+    The user only supplies a key and secret when overriding the application
+    SpinSense ships with; the ordinary path sends neither and gets the built-in
+    pair. A partial override is rejected rather than silently half-applied,
+    because mixing one half with the built-in other half produces a signature
+    Last.fm rejects with an error that points nowhere useful.
 
     `auth.getToken` doubles as the credential check: it's a signed call, so a
     wrong key *or* a wrong secret fails here rather than confusing the user on
@@ -457,18 +463,31 @@ async def lastfm_auth_start(request: Request):
     body = await request.json()
     api_key = str(body.get("api_key") or "").strip()
     api_secret = str(body.get("api_secret") or "").strip()
-    if not api_key or not api_secret:
+    supplied = bool(api_key or api_secret)
+    if supplied and not (api_key and api_secret):
         return JSONResponse(
             status_code=400,
-            content={"ok": False, "detail": "API key and secret are both required"})
+            content={"ok": False,
+                     "detail": "Supply both the API key and the shared secret, or neither"})
+
+    if not supplied:
+        api_key, api_secret = await asyncio.to_thread(lastfm.credentials)
+        if not api_key or not api_secret:
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False,
+                         "detail": "This build has no Last.fm application key — "
+                                   "supply your own under Advanced"})
 
     token, err = await lastfm.request_token(api_key, api_secret)
     if err:
         return JSONResponse(status_code=502, content={"ok": False, "detail": err})
 
-    # Persist only after Last.fm confirms the pair works, so a typo can't
-    # overwrite working credentials.
-    if not await asyncio.to_thread(lastfm._store, API_Key=api_key, API_Secret=api_secret):
+    # Persist an override only after Last.fm confirms the pair works, so a typo
+    # can't overwrite working credentials. The built-in pair is never written to
+    # config — it must stay resolved at run time so a later build can replace it.
+    if supplied and not await asyncio.to_thread(
+            lastfm._store, API_Key=api_key, API_Secret=api_secret):
         return JSONResponse(
             status_code=500,
             content={"ok": False, "detail": "Failed to write config.json"})
@@ -500,9 +519,8 @@ async def lastfm_callback(token: str = "", request: Request = None):
     """
     if not token:
         return RedirectResponse(url="/settings?lastfm=denied", status_code=303)
-    cfg = await asyncio.to_thread(lastfm.settings)
-    username, err = await lastfm.complete_auth(
-        cfg.get("API_Key", ""), cfg.get("API_Secret", ""), token)
+    api_key, api_secret = await asyncio.to_thread(lastfm.credentials)
+    username, err = await lastfm.complete_auth(api_key, api_secret, token)
     if err:
         return RedirectResponse(
             url=f"/settings?lastfm=error&detail={urllib.parse.quote(err)}",
@@ -516,9 +534,9 @@ async def lastfm_callback(token: str = "", request: Request = None):
 async def lastfm_auth_complete():
     """Called once the user has approved the token on last.fm."""
     global _pending_auth_token
-    cfg = await asyncio.to_thread(lastfm.settings)
+    api_key, api_secret = await asyncio.to_thread(lastfm.credentials)
     username, err = await lastfm.complete_auth(
-        cfg.get("API_Key", ""), cfg.get("API_Secret", ""), _pending_auth_token or "")
+        api_key, api_secret, _pending_auth_token or "")
     if err:
         return JSONResponse(status_code=400, content={"ok": False, "detail": err})
     _pending_auth_token = None

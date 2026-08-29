@@ -52,7 +52,7 @@ Either way, album art is always fetched high-res from iTunes by artist + title, 
 
 ## Last.fm
 
-Scrobbling uses **your own** Last.fm API application, so the rate limit and the terms are yours, not shared with every SpinSense user. Create one at [last.fm/api/account/create](https://www.last.fm/api/account/create) — any name and description will do, and you can leave the callback URL blank — then paste the **API key** and **shared secret** into Settings → Last.fm.
+Just click **Connect to Last.fm** in Settings → Last.fm. SpinSense connects using its own registered Last.fm application, so there is nothing to set up first.
 
 **Connecting** is one click. Hit **Connect to Last.fm** and you go to Last.fm, sign in there if you aren't already, approve SpinSense, and land back on this page connected. Your Last.fm password is only ever typed into Last.fm.
 
@@ -71,7 +71,13 @@ Nothing inbound is ever exposed, and the session key survives restarts.
 
 **If it stops working.** A revoked session (password change, app removed from your Last.fm settings) turns scrobbling off and says so on the Settings page; reconnecting fixes it, and the queue is preserved while you do. Plays already sent are marked, so nothing is ever scrobbled twice.
 
-> **A note on secrets.** The shared secret and session key live in `config.json` in plaintext, alongside the MQTT password and AudD token. That's fine for a self-hosted box on your own LAN — just don't commit `config.json` anywhere public. The session key permits scrobbling to your account and nothing else; it is not your password.
+### Using your own API key
+
+Optional, under **Use your own Last.fm API key** in Settings. Worth doing if you'd rather the API rate limit and terms attach to your own account, or if the shared key ever stops working. Create one at [last.fm/api/account/create](https://www.last.fm/api/account/create) — any name and description will do, leave the callback URL blank — then paste both values and click Connect. Supply both or neither; half a pair is rejected rather than silently mixed with the built-in half, which would produce a signature Last.fm rejects for reasons you couldn't act on.
+
+There's also `SPINSENSE_LASTFM_KEY` / `SPINSENSE_LASTFM_SECRET` as environment variables, if you'd rather not put them in `config.json`.
+
+> **A note on secrets.** SpinSense's own application key is public by design — it ships in the repository and in every image, because Last.fm has no flow that lets an installed app authenticate without one. It grants no access to anyone's account: scrobbling still requires the per-user session key from the approval flow. Your own key and secret, if you supply them, live in `config.json` in plaintext alongside the MQTT password and AudD token — fine for a self-hosted box on your own LAN, just don't commit `config.json` anywhere public. The session key permits scrobbling to your account and nothing else; it is not your password.
 
 ---
 

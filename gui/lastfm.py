@@ -27,12 +27,19 @@ has no fixed public address:
   through something that rewrites the origin.
 
 Both end at `auth.getSession`, so the difference is only how the token is
-obtained. The user brings their own API key and secret from
-last.fm/api/account/create — one account, theirs, rate-limited to them.
+obtained.
+
+**Credentials.** SpinSense ships its own Last.fm application key so connecting
+is one click, the way Pano Scrobbler and Web Scrobbler do it. `credentials()`
+resolves them, most specific first: the user's own from config, then an
+environment override, then the built-in pair. Bring-your-own stays as an
+advanced path and as the escape hatch if the shared key is ever rate-limited or
+revoked.
 """
 import asyncio
 import hashlib
 import logging
+import os
 import time
 import urllib.parse
 
@@ -40,6 +47,22 @@ import play_history
 from config_manager import load_config, save_config
 
 log = logging.getLogger(__name__)
+
+# SpinSense's own Last.fm application. This is NOT a secret and is not treated
+# as one: it ships in a public repository and inside every published image, so
+# anyone can read it. That is the accepted cost of one-click login, and it is
+# what every user-facing scrobbler does — Last.fm has no public-client flow
+# (no PKCE equivalent), and auth.getSession cannot be signed without the secret.
+#
+# What it does NOT grant: access to anyone's Last.fm account. Scrobbling still
+# requires a per-user session key obtained through the approval flow below.
+# The realistic blast radius is someone burning the shared rate limit or getting
+# the key revoked — at which point every install falls back to bring-your-own,
+# which is why that path is kept rather than removed.
+#
+# Override without editing code via SPINSENSE_LASTFM_KEY / _SECRET.
+BUILTIN_API_KEY = ""
+BUILTIN_API_SECRET = ""
 
 API_ROOT = "https://ws.audioscrobbler.com/2.0/"
 AUTH_URL = "https://www.last.fm/api/auth/"
@@ -183,9 +206,41 @@ def settings() -> dict:
     return (load_config() or {}).get("LastFM", {}) or {}
 
 
+def _pair(key: str, secret: str) -> tuple[str, str] | None:
+    """A credential pair only if both halves are present. Half a pair is worse
+    than none: mixing a user's key with the built-in secret produces a signature
+    Last.fm rejects, with an error that points nowhere useful."""
+    key, secret = (key or "").strip(), (secret or "").strip()
+    return (key, secret) if key and secret else None
+
+
+def credentials(cfg: dict | None = None) -> tuple[str, str]:
+    """The Last.fm application key and secret to authenticate with.
+
+    Most specific wins: the user's own from config, then the environment, then
+    the pair SpinSense ships with. Returns ("", "") only if none resolve, which
+    means the build has no built-in key and the user hasn't supplied one.
+    """
+    cfg = cfg if cfg is not None else settings()
+    return (
+        _pair(cfg.get("API_Key", ""), cfg.get("API_Secret", ""))
+        or _pair(os.environ.get("SPINSENSE_LASTFM_KEY", ""),
+                 os.environ.get("SPINSENSE_LASTFM_SECRET", ""))
+        or _pair(BUILTIN_API_KEY, BUILTIN_API_SECRET)
+        or ("", "")
+    )
+
+
+def uses_own_credentials(cfg: dict | None = None) -> bool:
+    """Whether the user supplied their own key rather than using the built-in."""
+    cfg = cfg if cfg is not None else settings()
+    return _pair(cfg.get("API_Key", ""), cfg.get("API_Secret", "")) is not None
+
+
 def is_connected(cfg: dict | None = None) -> bool:
     cfg = cfg if cfg is not None else settings()
-    return bool(cfg.get("API_Key") and cfg.get("API_Secret") and cfg.get("Session_Key"))
+    api_key, api_secret = credentials(cfg)
+    return bool(api_key and api_secret and cfg.get("Session_Key"))
 
 
 def is_active(cfg: dict | None = None) -> bool:
@@ -296,9 +351,10 @@ async def update_now_playing(track: dict) -> None:
     cfg = settings()
     if not is_active(cfg) or not cfg.get("Scrobble_Now_Playing", True):
         return
+    api_key, api_secret = credentials(cfg)
     params = {
         "method": "track.updateNowPlaying",
-        "api_key": cfg["API_Key"],
+        "api_key": api_key,
         "sk": cfg["Session_Key"],
         "artist": track.get("artist") or "",
         "track": track.get("title") or "",
@@ -312,7 +368,7 @@ async def update_now_playing(track: dict) -> None:
     if duration:
         params["duration"] = str(int(duration))
 
-    body, err = await _api_post(signed(params, cfg["API_Secret"]))
+    body, err = await _api_post(signed(params, api_secret))
     if err:
         log.debug("last.fm now-playing failed: %s", err)
         return
@@ -347,6 +403,7 @@ async def flush(db_path: str | None = None) -> dict:
     cfg = settings()
     if not is_active(cfg):
         return {"ok": True, "submitted": 0, "detail": "not connected"}
+    api_key, api_secret = credentials(cfg)
 
     batch = pending(db_path=db_path)
     if not batch:
@@ -366,8 +423,8 @@ async def flush(db_path: str | None = None) -> dict:
 
     params = build_scrobble_params(fresh)
     params.update({"method": "track.scrobble",
-                   "api_key": cfg["API_Key"], "sk": cfg["Session_Key"]})
-    body, err = await _api_post(signed(params, cfg["API_Secret"]))
+                   "api_key": api_key, "sk": cfg["Session_Key"]})
+    body, err = await _api_post(signed(params, api_secret))
     if err:
         log.warning("last.fm scrobble failed, %d still pending: %s", len(fresh), err)
         return {"ok": False, "submitted": 0, "detail": err}
@@ -410,10 +467,15 @@ async def flush_loop() -> None:
 def status(db_path: str | None = None) -> dict:
     """What the Settings page shows about the connection."""
     cfg = settings()
+    api_key, api_secret = credentials(cfg)
     return {
         "connected": is_connected(cfg),
         "enabled": bool(cfg.get("Enabled")),
         "username": cfg.get("Username") or "",
-        "has_credentials": bool(cfg.get("API_Key") and cfg.get("API_Secret")),
+        # Whether one-click is possible at all: false only on a build with no
+        # built-in key where the user hasn't supplied one, which is the single
+        # case the UI must demand the fields up front.
+        "can_connect": bool(api_key and api_secret),
+        "using_own_key": uses_own_credentials(cfg),
         "pending": len(pending(limit=1000, db_path=db_path)) if is_connected(cfg) else 0,
     }

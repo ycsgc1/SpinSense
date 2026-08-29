@@ -420,7 +420,13 @@ services:
 
 `gui/lastfm.py`, in the GUI process — that is where the play history lives. The engine knows nothing about it.
 
-**Why the user brings their own API key.** One shared application key would put every SpinSense install behind a single rate limit and make the project responsible for Last.fm's terms on the user's behalf. Registering at last.fm/api/account/create takes a minute and makes the account, the limit and the terms theirs.
+**Credentials: SpinSense ships its own application key.** The alternative — every user registering their own — was tried first and is worse: it front-loads a five-minute detour onto a button labelled "Connect to Last.fm", for a benefit (a private rate limit) that a vinyl-scrobbling workload will never need. Pano Scrobbler and Web Scrobbler both ship a key; so do we.
+
+The key and secret are **public by construction**. They sit in a public repository and inside every published image, and no obfuscation changes that — it would only manufacture false confidence. Last.fm has no public-client flow (no PKCE equivalent) and `auth.getSession` cannot be signed without the secret, so an installed application either ships one or asks every user to register.
+
+What it does not grant is access to anyone's account: scrobbling still requires a per-user session key from the approval flow. The realistic blast radius is someone burning the shared rate limit or getting the key revoked, which is exactly why bring-your-own is kept as an override rather than deleted — it is the escape hatch.
+
+`credentials()` resolves most-specific-first: the user's own from config, then `SPINSENSE_LASTFM_KEY`/`_SECRET`, then the built-in pair. Each tier is all-or-nothing — a lone key paired with the built-in secret would sign a request Last.fm rejects with an error pointing nowhere useful. The built-in pair is never written into `config.json`, so a later build can replace a revoked key without every install pinning the dead one.
 
 **How the handshake works.** Last.fm's web flow accepts a per-request `cb` parameter that overrides the callback registered on the API account. That is what makes a redirect viable for a box with no fixed address: the browser tells us the origin it is *already* reaching SpinSense on, we validate it is a bare `http(s)://host` (it goes into a URL we hand to a third party, so it is checked, not trusted), and Last.fm returns the user to `/api/lastfm/callback?token=…`. One click, Last.fm's own login page, and the user's password never touches SpinSense.
 

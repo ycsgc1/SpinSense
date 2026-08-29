@@ -60,6 +60,65 @@ class SignatureTest(unittest.TestCase):
         self.assertEqual(params, {"method": "m"})
 
 
+class CredentialResolutionTest(unittest.TestCase):
+    """Most specific wins: the user's own key, then the environment, then the
+    application key SpinSense ships with."""
+
+    def setUp(self):
+        self._env = {k: os.environ.pop(k, None)
+                     for k in ("SPINSENSE_LASTFM_KEY", "SPINSENSE_LASTFM_SECRET")}
+        self._builtin = (lastfm.BUILTIN_API_KEY, lastfm.BUILTIN_API_SECRET)
+        lastfm.BUILTIN_API_KEY, lastfm.BUILTIN_API_SECRET = "BK", "BS"
+
+    def tearDown(self):
+        lastfm.BUILTIN_API_KEY, lastfm.BUILTIN_API_SECRET = self._builtin
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_built_in_is_the_default(self):
+        self.assertEqual(lastfm.credentials({}), ("BK", "BS"))
+        self.assertFalse(lastfm.uses_own_credentials({}))
+
+    def test_environment_overrides_the_built_in(self):
+        os.environ["SPINSENSE_LASTFM_KEY"] = "EK"
+        os.environ["SPINSENSE_LASTFM_SECRET"] = "ES"
+        self.assertEqual(lastfm.credentials({}), ("EK", "ES"))
+
+    def test_user_config_beats_everything(self):
+        os.environ["SPINSENSE_LASTFM_KEY"] = "EK"
+        os.environ["SPINSENSE_LASTFM_SECRET"] = "ES"
+        cfg = {"API_Key": "UK", "API_Secret": "US"}
+        self.assertEqual(lastfm.credentials(cfg), ("UK", "US"))
+        self.assertTrue(lastfm.uses_own_credentials(cfg))
+
+    def test_half_a_pair_is_ignored_at_every_tier(self):
+        # Mixing a user key with the built-in secret signs a request Last.fm
+        # rejects, with an error that points nowhere useful.
+        self.assertEqual(lastfm.credentials({"API_Key": "UK"}), ("BK", "BS"))
+        self.assertEqual(lastfm.credentials({"API_Secret": "US"}), ("BK", "BS"))
+        os.environ["SPINSENSE_LASTFM_KEY"] = "EK"
+        self.assertEqual(lastfm.credentials({}), ("BK", "BS"))
+
+    def test_whitespace_only_values_do_not_count(self):
+        self.assertEqual(lastfm.credentials({"API_Key": "  ", "API_Secret": " "}),
+                         ("BK", "BS"))
+
+    def test_no_credentials_anywhere_resolves_empty(self):
+        lastfm.BUILTIN_API_KEY, lastfm.BUILTIN_API_SECRET = "", ""
+        self.assertEqual(lastfm.credentials({}), ("", ""))
+
+    def test_connected_needs_a_session_as_well_as_a_key(self):
+        self.assertFalse(lastfm.is_connected({}))
+        self.assertTrue(lastfm.is_connected({"Session_Key": "SK"}))
+
+    def test_a_session_alone_is_not_enough_without_a_key(self):
+        lastfm.BUILTIN_API_KEY, lastfm.BUILTIN_API_SECRET = "", ""
+        self.assertFalse(lastfm.is_connected({"Session_Key": "SK"}))
+
+
 class CallbackUrlTest(unittest.TestCase):
     """The origin comes from the browser and ends up inside a URL we hand to
     Last.fm, so it is validated rather than trusted."""
@@ -430,13 +489,16 @@ class StatusTest(_LastFmHarness):
         self.write_config()
         st = lastfm.status(db_path=self.db_path)
         self.assertFalse(st["connected"])
-        self.assertFalse(st["has_credentials"])
+        self.assertFalse(st["using_own_key"])
         self.assertEqual(st["pending"], 0)
 
-    def test_credentials_without_a_session_is_not_connected(self):
+    def test_own_credentials_without_a_session_is_not_connected(self):
+        # Having a key — theirs or ours — is necessary but not sufficient;
+        # scrobbling needs a per-user session from the approval flow.
         self.write_config(API_Key="K", API_Secret="S")
         st = lastfm.status(db_path=self.db_path)
-        self.assertTrue(st["has_credentials"])
+        self.assertTrue(st["using_own_key"])
+        self.assertTrue(st["can_connect"])
         self.assertFalse(st["connected"])
 
     def test_connected_reports_the_queue(self):

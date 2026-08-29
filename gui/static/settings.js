@@ -220,6 +220,7 @@
 
   const LF_STATE = document.getElementById("lastfm-state");
   const LF_SETUP = document.getElementById("lastfm-setup");
+  const LF_OWN_KEY = document.getElementById("lastfm-own-key");
   const LF_MANUAL = document.getElementById("lastfm-manual");
   const LF_MANUAL_LINK = document.getElementById("lastfm-manual-link");
   const LF_KEY = document.getElementById("lastfm-api-key");
@@ -278,10 +279,19 @@
         '<p class="text-body-sm text-on-surface-variant">Not connected. ' +
         'Scrobbling is off until you link an account.</p>';
       LF_SETUP.classList.remove("hidden");
-      if (status.has_credentials) {
-        // Keys are already saved; don't make the user hunt them down again.
+      if (status.using_own_key) {
+        // Their own keys are already saved; don't make them hunt them down
+        // again, but show the section so it's clear an override is in effect.
         LF_KEY.placeholder = "(saved)";
         LF_SECRET.placeholder = "(saved)";
+        if (LF_OWN_KEY) LF_OWN_KEY.open = true;
+      }
+      if (status.can_connect === false) {
+        // A build with no bundled application key. Supplying one isn't
+        // optional here, so lead with it rather than hiding it away.
+        if (LF_OWN_KEY) LF_OWN_KEY.open = true;
+        lfToast("This build has no Last.fm application key — supply your own below.",
+                "error");
       }
     }
   }
@@ -300,10 +310,13 @@
   }
 
   async function connectLastFm() {
+    // Both blank is the normal path: the server uses the application key
+    // SpinSense ships with. Only a deliberate override sends anything.
     const api_key = LF_KEY.value.trim();
     const api_secret = LF_SECRET.value.trim();
-    if (!api_key || !api_secret) {
-      lfToast("Paste both the API key and the shared secret.", "error");
+    if ((api_key || api_secret) && !(api_key && api_secret)) {
+      lfToast("Supply both the API key and the shared secret, or neither.", "error");
+      if (LF_OWN_KEY) LF_OWN_KEY.open = true;
       return;
     }
     LF_CONNECT.disabled = true;

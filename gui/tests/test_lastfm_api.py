@@ -22,7 +22,7 @@ class LastFmApiTest(unittest.TestCase):
         self.stored = {}
         self._orig = (lastfm.request_token, lastfm.complete_auth,
                       lastfm.disconnect, lastfm.flush, lastfm.status,
-                      lastfm.settings, lastfm._store)
+                      lastfm.settings, lastfm._store, lastfm.credentials)
         backend_main._pending_auth_token = None
 
         self.token_result = ("TOK", "")
@@ -42,10 +42,13 @@ class LastFmApiTest(unittest.TestCase):
         lastfm.status = lambda db_path=None: {"connected": True, "username": "gregory"}
         lastfm.settings = lambda: {"API_Key": "K", "API_Secret": "S"}
         lastfm._store = lambda **fields: self.stored.setdefault("saved", {}).update(fields) or True
+        self.builtin = ("BUILTIN_KEY", "BUILTIN_SECRET")
+        lastfm.credentials = lambda cfg=None: self.builtin
 
     def tearDown(self):
         (lastfm.request_token, lastfm.complete_auth, lastfm.disconnect,
-         lastfm.flush, lastfm.status, lastfm.settings, lastfm._store) = self._orig
+         lastfm.flush, lastfm.status, lastfm.settings, lastfm._store,
+         lastfm.credentials) = self._orig
         backend_main._pending_auth_token = None
 
     def test_status_is_proxied(self):
@@ -79,7 +82,7 @@ class LastFmApiTest(unittest.TestCase):
         self.assertIsNone(r.json()["auth_url"])
         self.assertIn("token=TOK", r.json()["manual_url"])
 
-    def test_auth_start_saves_credentials_only_after_lastfm_accepts_them(self):
+    def test_an_override_is_saved_only_after_lastfm_accepts_it(self):
         # A typo'd secret must not overwrite a working one.
         self.token_result = (None, "Invalid API key")
         r = self.client.post("/api/lastfm/auth/start",
@@ -87,10 +90,39 @@ class LastFmApiTest(unittest.TestCase):
         self.assertEqual(r.status_code, 502)
         self.assertNotIn("saved", self.stored)
 
-    def test_auth_start_requires_both_fields(self):
-        r = self.client.post("/api/lastfm/auth/start", json={"api_key": "K"})
+    def test_connecting_with_no_keys_uses_the_built_in_application(self):
+        # The ordinary one-click path: the browser sends no credentials at all.
+        r = self.client.post("/api/lastfm/auth/start",
+                             json={"origin": "http://h:3313"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.stored["requested"], self.builtin)
+        # The built-in pair must never be written into config, or a later build
+        # could not replace a revoked key.
+        self.assertNotIn("saved", self.stored)
+
+    def test_supplying_your_own_keys_overrides_and_persists_them(self):
+        r = self.client.post("/api/lastfm/auth/start",
+                             json={"api_key": "MINE", "api_secret": "SECRET",
+                                   "origin": "http://h:3313"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.stored["requested"], ("MINE", "SECRET"))
+        self.assertEqual(self.stored["saved"],
+                         {"API_Key": "MINE", "API_Secret": "SECRET"})
+
+    def test_half_an_override_is_rejected(self):
+        # Pairing one supplied half with the built-in other half signs a
+        # request Last.fm rejects for reasons the user cannot act on.
+        for body in ({"api_key": "K"}, {"api_secret": "S"}):
+            with self.subTest(body=body):
+                r = self.client.post("/api/lastfm/auth/start", json=body)
+                self.assertEqual(r.status_code, 400)
+                self.assertNotIn("requested", self.stored)
+
+    def test_a_build_with_no_application_key_asks_for_one(self):
+        self.builtin = ("", "")
+        r = self.client.post("/api/lastfm/auth/start", json={"origin": "http://h:3313"})
         self.assertEqual(r.status_code, 400)
-        self.assertNotIn("requested", self.stored)
+        self.assertIn("your own", r.json()["detail"])
 
     def test_auth_complete_consumes_the_pending_token(self):
         self.client.post("/api/lastfm/auth/start",
