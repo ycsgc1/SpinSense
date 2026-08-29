@@ -72,6 +72,10 @@ class LastFMConfig(BaseModel):
     Username: str = ""
     Scrobble_Now_Playing: bool = True
     Scrobble_Since: int = 0
+    # Minutes to hold a finished play before submitting it, so a wrong
+    # identification can be deleted or corrected first — Last.fm has no API to
+    # edit or remove a scrobble afterwards. 0 submits as soon as the sweep runs.
+    Submit_Delay_Mins: int = 10
 
 
 class MDNSConfig(BaseModel):

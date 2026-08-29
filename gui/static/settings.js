@@ -300,9 +300,14 @@
     if (!LF_STATE) return;
     if (status.connected) {
       const pending = status.pending || 0;
-      const queued = pending === 0
-        ? "Nothing waiting to be sent."
-        : `${pending} play${pending === 1 ? "" : "s"} waiting to be sent.`;
+      const held = status.held || 0;
+      const parts = [];
+      if (pending) parts.push(`${pending} ready to send`);
+      // Say why something isn't moving — an unexplained queue reads as broken.
+      if (held) {
+        parts.push(`${held} held for review (${status.delay_mins || 0} min)`);
+      }
+      const queued = parts.length ? parts.join(", ") + "." : "Nothing waiting to be sent.";
       LF_STATE.innerHTML = `
         <div class="flex items-center justify-between gap-md flex-wrap">
           <div>

@@ -604,9 +604,13 @@ async def lastfm_disconnect():
 
 @app.post("/api/lastfm/flush")
 async def lastfm_flush():
-    """Submit the pending queue now instead of waiting for the timer — the
-    'is this actually working?' button."""
-    return await lastfm.flush()
+    """Release the queue by hand, review window and all.
+
+    This is a person saying "I have looked at these, send them" — so it
+    deliberately submits plays still inside the hold that the background sweep
+    would leave alone.
+    """
+    return await lastfm.flush(release_held=True)
 
 
 @app.get("/api/stats")

@@ -67,9 +67,10 @@ Nothing inbound is ever exposed, and the session key survives restarts.
 | Setting | What it does | Default |
 |---|---|---|
 | **Scrobble plays** | Submit finished plays to your profile. Uses Last.fm's own eligibility rule: the track must be longer than 30 s and have played for at least half its length, or 4 minutes, whichever comes first. | Off until connected |
+| **Hold scrobbles for (minutes)** | How long a finished play waits before being submitted. Last.fm has no way to edit or delete a scrobble once sent, so this window is the only chance to catch a wrong identification — delete or correct the play in History during it and it never goes. **Send now** releases everything immediately. 0 submits as soon as each play ends. | 10 min |
 | **Update "now playing"** | Show the current track on your profile while it plays. Separate from scrobbling — this is the live indicator, scrobbles are the permanent record. | On |
 
-**What gets sent, and when.** Plays queue in the database and go out in batches every couple of minutes; **Send now** flushes immediately if you want to watch it work. Only plays from the moment you connected are ever submitted — connecting an account does not upload your back catalogue. Last.fm refuses scrobbles older than 14 days, so anything that ages out in a long outage is quietly retired rather than retried forever.
+**What gets sent, and when.** Plays queue in the database and go out in batches every couple of minutes, after clearing the hold above; **Send now** releases everything immediately, review window included. Only plays from the moment you connected are ever submitted — connecting an account does not upload your back catalogue. Last.fm refuses scrobbles older than 14 days, so anything that ages out in a long outage is quietly retired rather than retried forever.
 
 **If it stops working.** A revoked session (password change, app removed from your Last.fm settings) turns scrobbling off and says so on the Settings page; reconnecting fixes it, and the queue is preserved while you do. Plays already sent are marked, so nothing is ever scrobbled twice.
 

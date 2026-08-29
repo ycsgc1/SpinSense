@@ -155,12 +155,19 @@ class LastFmApiTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIsNone(backend_main._pending_auth_token)
 
-    def test_flush_is_proxied(self):
-        async def fake_flush(db_path=None):
+    def test_flush_releases_held_plays(self):
+        # "Send now" is a person saying they've looked at these, so it submits
+        # plays the background sweep would still be holding for review.
+        seen = {}
+
+        async def fake_flush(db_path=None, release_held=False):
+            seen["release_held"] = release_held
             return {"ok": True, "submitted": 3, "detail": "scrobbled 3"}
+
         lastfm.flush = fake_flush
         r = self.client.post("/api/lastfm/flush")
         self.assertEqual(r.json()["submitted"], 3)
+        self.assertTrue(seen["release_held"])
 
 
 class LastFmCallbackTest(unittest.TestCase):

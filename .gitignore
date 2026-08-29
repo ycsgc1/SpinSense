@@ -211,3 +211,7 @@ config.json
 data/
 .gstack/
 .DS_Store
+
+# Tronbyt lyrics app — a separate project that happens to talk to SpinSense's
+# API. It lives here for convenience; it is not part of this repository.
+tronbyt/

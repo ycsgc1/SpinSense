@@ -200,6 +200,11 @@
           <span class="relative shrink-0 w-11 h-6 rounded-full bg-surface-container-highest border border-outline-variant/40 peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-on-surface after:transition-transform peer-checked:after:translate-x-5"></span>
         </label>
 
+        <label class="block">
+          <span class="text-body-sm text-on-surface mb-1 block">Hold scrobbles for (minutes)<span class="help-tip" tabindex="0" role="note" aria-label="Help: Hold scrobbles"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Last.fm has no way to edit or delete a scrobble once it&rsquo;s sent, so this is your only chance to catch a wrong identification. A finished play waits this long before being submitted; delete or correct it in History during that window and it never goes. &ldquo;Send now&rdquo; releases everything immediately. Set to 0 to submit as soon as each play ends.</span></span></span>
+          <input type="number" name="LastFM.Submit_Delay_Mins" min="0" max="1440" step="1" class="form-input">
+        </label>
+
         <label class="flex items-center justify-between gap-md cursor-pointer">
           <span class="text-body-sm text-on-surface">Update &ldquo;now playing&rdquo;<span class="help-tip" tabindex="0" role="note" aria-label="Help: Update now playing"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Show the current track on your Last.fm profile as it plays. Separate from scrobbling: this is the live indicator, scrobbles are the permanent record.</span></span></span>
           <input type="checkbox" name="LastFM.Scrobble_Now_Playing" class="sr-only peer">
