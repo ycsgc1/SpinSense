@@ -67,11 +67,24 @@ class UnifyArtTest(unittest.TestCase):
         return play_history.record_play(title, "A", "Al", None, db_path=self.db_path)
 
     def art_of(self, pid):
-        path = os.path.join(self.art_dir, f"{pid}.jpg")
+        """Read a play's artwork the way the app does — via its recorded path.
+        Filenames are content-addressed, so there is nothing to guess."""
+        row = play_history.get_play(pid, db_path=self.db_path)
+        rel = (row or {}).get("art_path")
+        if not rel:
+            return None
+        path = os.path.join(os.path.dirname(self.art_dir), rel)
         if not os.path.exists(path):
             return None
         with open(path, "rb") as f:
             return f.read()
+
+    def set_art(self, pid, data):
+        """Give a play some existing artwork, as a prior download would have."""
+        name = ipc_manager.art_filename(pid, data)
+        with open(os.path.join(self.art_dir, name), "wb") as f:
+            f.write(data)
+        play_history.set_art_path(pid, f"art/{name}", db_path=self.db_path)
 
     def run_unify(self, ids, source, url=None):
         return asyncio.run(ipc_manager.unify_art(ids, source, url))
@@ -95,14 +108,34 @@ class UnifyArtTest(unittest.TestCase):
         self.run_unify(ids, ids[0], "http://a/cover.jpg")
         for pid in ids:
             row = play_history.get_play(pid, db_path=self.db_path)
-            self.assertEqual(row["art_path"], f"art/{pid}.jpg")
+            self.assertTrue(row["art_path"].startswith(f"art/{pid}-"))
+            self.assertTrue(row["art_path"].endswith(".jpg"))
+
+    def test_new_artwork_gets_a_new_url(self):
+        # The bug this exists to prevent: rewriting bytes at a stable URL is
+        # unserveable through any cache, and adding ?v= only fixed the browser.
+        pid = self.play("a")
+        self.set_art(pid, b"OLD-ART")
+        before = play_history.get_play(pid, db_path=self.db_path)["art_path"]
+        self.run_unify([pid], pid, "http://a/cover.jpg")
+        after = play_history.get_play(pid, db_path=self.db_path)["art_path"]
+        self.assertNotEqual(before, after)
+
+    def test_the_superseded_file_is_removed(self):
+        # Otherwise every album correction leaks a file; purge_deleted only
+        # cleans art belonging to deleted rows.
+        pid = self.play("a")
+        self.set_art(pid, b"OLD-ART")
+        old_rel = play_history.get_play(pid, db_path=self.db_path)["art_path"]
+        self.run_unify([pid], pid, "http://a/cover.jpg")
+        old_abs = os.path.join(os.path.dirname(self.art_dir), old_rel)
+        self.assertFalse(os.path.exists(old_abs))
 
     def test_without_a_url_the_run_adopts_the_edited_play_art(self):
         # Typing an album by hand used to skip artwork altogether.
         ids = [self.play("a"), self.play("b"), self.play("c")]
         source = ids[1]
-        with open(os.path.join(self.art_dir, f"{source}.jpg"), "wb") as f:
-            f.write(b"SOURCE-ART")
+        self.set_art(source, b"SOURCE-ART")
         changed = self.run_unify(ids, source)
         self.assertEqual(changed, ids)
         for pid in ids:
@@ -111,8 +144,7 @@ class UnifyArtTest(unittest.TestCase):
 
     def test_a_failed_fetch_falls_back_to_the_edited_play_art(self):
         ids = [self.play("a"), self.play("b")]
-        with open(os.path.join(self.art_dir, f"{ids[0]}.jpg"), "wb") as f:
-            f.write(b"SOURCE-ART")
+        self.set_art(ids[0], b"SOURCE-ART")
         self.fetch_result = None                # download failed
         self.run_unify(ids, ids[0], "http://a/cover.jpg")
         self.assertEqual(self.art_of(ids[1]), b"SOURCE-ART")
@@ -128,8 +160,7 @@ class UnifyArtTest(unittest.TestCase):
 
     def test_undecodable_image_falls_back_rather_than_raising(self):
         ids = [self.play("a"), self.play("b")]
-        with open(os.path.join(self.art_dir, f"{ids[0]}.jpg"), "wb") as f:
-            f.write(b"SOURCE-ART")
+        self.set_art(ids[0], b"SOURCE-ART")
         self.fetch_result = b"this is not an image"
         self.run_unify(ids, ids[0], "http://a/cover.jpg")
         self.assertEqual(self.art_of(ids[1]), b"SOURCE-ART")

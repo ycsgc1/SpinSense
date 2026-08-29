@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import json
 import os
-import time
 import urllib.parse
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -120,17 +119,17 @@ async def setup_wizard_gate(request: Request, call_next):
 async def no_cache_app_assets(request: Request, call_next):
     """Force revalidation of anything whose URL is stable but whose bytes move.
 
-    That's the app's HTML and static JS/CSS (a rebuild must not serve a stale
-    asset against fresh markup) and, less obviously, album art: `/art/{id}.jpg`
-    is rewritten in place whenever a play's album is corrected, so a cached copy
-    at that same URL is simply wrong. Leaving it cacheable is what made a
-    run-wide art change revert on the next page load — and, behind a caching
-    reverse proxy, revert in a way no amount of clearing the *browser* cache
-    could fix.
+    That's the app's HTML and static JS/CSS: a rebuild must never serve a stale
+    asset against fresh markup.
 
-    `no-cache` is not `no-store`: the browser still keeps the file and a
-    revalidation costs one 304. `/api` stays cacheable — its responses are
-    generated fresh anyway."""
+    `/art/` is included as a belt-and-braces measure rather than the real fix.
+    Artwork filenames are content-addressed now, so changed art is a changed
+    URL and no cache can serve the old one — but a caching layer that ignores
+    `Cache-Control` was strongly suspected here, and revalidation costs one 304
+    on a file measured in kilobytes.
+
+    `no-cache` is not `no-store`: the browser still keeps the file. `/api` stays
+    cacheable — its responses are generated fresh anyway."""
     response = await call_next(request)
     ctype = response.headers.get("content-type", "")
     path = request.url.path
@@ -480,10 +479,9 @@ async def set_album_route(play_id: int, request: Request):
     arted = await unify_art(ids, play_id, art_url)
 
     rows = await asyncio.to_thread(_rows_for, ids)
-    return {"status": "ok", "updated": len(ids), "arted": len(arted), "rows": rows,
-            # Art lives at a stable /art/{id}.jpg whose contents just changed, so
-            # hand the client something to bust its own cache with.
-            "art_version": int(time.time())}
+    # No cache-busting parameter needed: artwork filenames are content-addressed,
+    # so new art arrives as a genuinely new URL in each row's art_path.
+    return {"status": "ok", "updated": len(ids), "arted": len(arted), "rows": rows}
 
 
 def _rows_for(ids: list[int]) -> list[dict]:

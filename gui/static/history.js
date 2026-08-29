@@ -312,7 +312,7 @@
     MODAL_SAVE.disabled = !MODAL_TEXT.value.trim();
   });
 
-  function applyRowUpdates(rows, artVersion) {
+  function applyRowUpdates(rows) {
     for (const row of rows) {
       const li = LIST.querySelector(`li[data-id="${row.id}"]`);
       if (!li) continue;   // outside the loaded page; it'll be right on load
@@ -321,10 +321,9 @@
       li.dataset.album = row.album || "";
       const img = li.querySelector("img");
       if (img && row.art_path) {
-        // /art/{id}.jpg is a stable URL whose bytes just changed, and /art is
-        // deliberately cacheable — without a new query the browser keeps the
-        // old cover and the run still looks mismatched.
-        img.src = `/${row.art_path}?v=${artVersion || Date.now()}`;
+        // art_path is content-addressed, so different artwork is a different
+        // URL. Nothing between here and the disk can serve the old cover.
+        img.src = `/${row.art_path}`;
       }
     }
   }
@@ -350,7 +349,7 @@
       // Redraw every row the server actually changed, not just the one that
       // was clicked — applying to a run rewrote them all, and leaving the rest
       // showing their old album and cover is what made the feature look broken.
-      applyRowUpdates(body.rows || [], body.art_version);
+      applyRowUpdates(body.rows || []);
       const n = body.updated || 1;
       showToast(`Album updated (${n} ${n === 1 ? "play" : "plays"})`, false);
       closeModal();

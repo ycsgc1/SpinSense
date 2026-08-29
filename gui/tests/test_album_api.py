@@ -84,7 +84,6 @@ class SetAlbumTest(AlbumApiBase):
         body = self.client.post(f"/api/plays/{pid}/album",
                                 json={"album": "New"}).json()
         self.assertEqual(body["rows"], [{"id": pid, "album": "New", "art_path": None}])
-        self.assertIsInstance(body["art_version"], int)
 
     def test_apply_to_run_updates_whole_run(self):
         import sqlite3

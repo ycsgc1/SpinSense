@@ -1,5 +1,6 @@
 import asyncio
 import collections
+import hashlib
 import io
 import json
 import logging
@@ -17,6 +18,15 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 ART_DIR = os.path.join(play_history.DATA_DIR, "art")
+
+
+def _data_root() -> str:
+    """The directory `art_path` values are relative to.
+
+    Derived from ART_DIR rather than read independently, so the two cannot
+    disagree about where artwork lives.
+    """
+    return os.path.dirname(ART_DIR)
 
 
 # Stands in for a real frame on /api/status until the engine reports, so it
@@ -116,48 +126,6 @@ def _spawn_now_playing(track: dict) -> None:
     task.add_done_callback(_now_playing_tasks.discard)
 
 
-async def _download_and_store_art(play_id: int, art_url: str) -> None:
-    """Fire-and-forget: fetch art_url, scale to 64x64 JPEG, save under ART_DIR,
-    update the SQLite row with the relative path. Errors are swallowed (the play
-    row stays recorded; frontend renders the placeholder)."""
-    # Late-imported so the rest of ipc_manager stays importable in a minimal
-    # test/dev environment where aiohttp + Pillow aren't installed.
-    import aiohttp
-    from PIL import Image
-
-    try:
-        os.makedirs(ART_DIR, exist_ok=True)
-        timeout = aiohttp.ClientTimeout(total=5)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(art_url) as resp:
-                if resp.status != 200:
-                    log.warning("art fetch %s returned HTTP %s", art_url, resp.status)
-                    return
-                data = await resp.read()
-
-        def _save() -> None:
-            with Image.open(io.BytesIO(data)) as img:
-                img = img.convert("RGB")
-                img.thumbnail((64, 64))
-                img.save(
-                    os.path.join(ART_DIR, f"{play_id}.jpg"),
-                    "JPEG",
-                    quality=75,
-                )
-
-        await asyncio.to_thread(_save)
-        await asyncio.to_thread(play_history.set_art_path, play_id, f"art/{play_id}.jpg")
-    except Exception as e:
-        log.warning("art download failed for play %s: %s", play_id, e)
-
-
-def spawn_art_download(play_id: int, art_url: str) -> None:
-    """create_task + strong ref until done. Used by the UDS record path, where
-    a play is being written and nothing is waiting on the artwork."""
-    _art_tasks.add(task := asyncio.create_task(_download_and_store_art(play_id, art_url)))
-    task.add_done_callback(_art_tasks.discard)
-
-
 def _thumbnail(data: bytes) -> bytes:
     """Full-size artwork bytes -> the 64x64 JPEG we actually store."""
     import io as _io
@@ -186,6 +154,71 @@ async def _fetch_art(art_url: str) -> bytes | None:
     except Exception as e:
         log.warning("art fetch failed for %s: %s", art_url, e)
         return None
+
+
+def art_filename(play_id: int, data: bytes) -> str:
+    """Content-addressed name for a play's artwork.
+
+    Artwork used to live at a fixed `art/{id}.jpg` and be rewritten in place
+    when a play's album was corrected — a stable URL with changing bytes, which
+    is unserveable through any cache. Adding `?v=` to the URL fixed it in the
+    browser and not in the reverse proxy in front of it, since some caches key
+    on the path alone and some rewrite `expires` for image extensions
+    regardless of what we send.
+
+    A filename derived from the bytes sidesteps every one of those: new
+    artwork is simply a different URL, so nothing anywhere can serve the old
+    one, and correct caching stays possible instead of being fought.
+    """
+    return f"{play_id}-{hashlib.sha256(data).hexdigest()[:8]}.jpg"
+
+
+def _replace_art_file(play_id: int, data: bytes) -> str:
+    """Write artwork under its content name, point the row at it, and unlink
+    whatever the row referenced before. Returns the new relative path."""
+    os.makedirs(ART_DIR, exist_ok=True)
+    previous = None
+    try:
+        row = play_history.get_play(play_id)
+        previous = (row or {}).get("art_path")
+    except Exception:
+        pass
+
+    name = art_filename(play_id, data)
+    rel = f"art/{name}"
+    with open(os.path.join(ART_DIR, name), "wb") as fh:
+        fh.write(data)
+    play_history.set_art_path(play_id, rel)
+
+    if previous and previous != rel:
+        # The old file is unreferenced now. purge_deleted() only cleans art for
+        # deleted rows, so without this every album correction leaks a file.
+        try:
+            os.remove(os.path.join(_data_root(), previous))
+        except OSError:
+            pass
+    return rel
+
+
+async def _download_and_store_art(play_id: int, art_url: str) -> None:
+    """Fire-and-forget: fetch art_url, thumbnail it, store it under a
+    content-addressed name, and point the row at it. Errors are swallowed —
+    the play stays recorded and the frontend renders the placeholder."""
+    raw = await _fetch_art(art_url)
+    if raw is None:
+        return
+    try:
+        thumb = await asyncio.to_thread(_thumbnail, raw)
+        await asyncio.to_thread(_replace_art_file, play_id, thumb)
+    except Exception as e:
+        log.warning("art store failed for play %s: %s", play_id, e)
+
+
+def spawn_art_download(play_id: int, art_url: str) -> None:
+    """create_task + strong ref until done. Used by the UDS record path, where
+    a play is being written and nothing is waiting on the artwork."""
+    _art_tasks.add(task := asyncio.create_task(_download_and_store_art(play_id, art_url)))
+    task.add_done_callback(_art_tasks.discard)
 
 
 async def unify_art(play_ids: list[int], source_play_id: int,
@@ -218,16 +251,13 @@ async def unify_art(play_ids: list[int], source_play_id: int,
         return []
 
     def _write_all() -> list[int]:
-        os.makedirs(ART_DIR, exist_ok=True)
         written = []
         for pid in play_ids:
             try:
-                with open(os.path.join(ART_DIR, f"{pid}.jpg"), "wb") as fh:
-                    fh.write(thumb)
+                _replace_art_file(pid, thumb)
             except OSError as e:
                 log.warning("could not write art for play %s: %s", pid, e)
                 continue
-            play_history.set_art_path(pid, f"art/{pid}.jpg")
             written.append(pid)
         return written
 
@@ -235,8 +265,17 @@ async def unify_art(play_ids: list[int], source_play_id: int,
 
 
 def _read_stored_art(play_id: int) -> bytes | None:
+    """The artwork a play currently shows, read via its recorded path.
+
+    Must go through art_path rather than guessing a filename: names are
+    content-addressed now, so there is nothing to guess.
+    """
     try:
-        with open(os.path.join(ART_DIR, f"{play_id}.jpg"), "rb") as fh:
+        row = play_history.get_play(play_id)
+        rel = (row or {}).get("art_path")
+        if not rel:
+            return None
+        with open(os.path.join(_data_root(), rel), "rb") as fh:
             return fh.read()
     except OSError:
         return None
