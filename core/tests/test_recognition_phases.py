@@ -139,41 +139,39 @@ class ScanDecisionTest(unittest.TestCase):
 
 
 class IdleBlipTest(unittest.TestCase):
+    """Retrigger_On_Track_Change drops the WebSocket to idle for a moment so
+    Home Assistant automations that fire on "started playing" re-fire per
+    track. With MQTT gone the blip is the whole mechanism, not half of it."""
+
     def setUp(self):
         self.events = []
         async def fake_itunes(artist, title): return (None, None, None, False)
-        async def fake_img(url): return ""
-        def fake_publish_state(status, artist="", title="", album="", art_url="", art_base64=""):
-            self.events.append(f"mqtt:{status}")
         async def fake_idle_blip(): self.events.append("idle_blip")
         async def fake_phase(p): self.events.append(f"phase:{p}")
-        self._orig = (core_engine.fetch_itunes_metadata, core_engine.fetch_image_base64,
-                      core_engine.publish_state, core_engine._publish_idle_blip, core_engine._publish_phase)
+        self._orig = (core_engine.fetch_itunes_metadata,
+                      core_engine._publish_idle_blip, core_engine._publish_phase)
         core_engine.fetch_itunes_metadata = fake_itunes
-        core_engine.fetch_image_base64 = fake_img
-        core_engine.publish_state = fake_publish_state
         core_engine._publish_idle_blip = fake_idle_blip
         core_engine._publish_phase = fake_phase
         core_engine.state["last_song"] = ""
 
     def tearDown(self):
-        (core_engine.fetch_itunes_metadata, core_engine.fetch_image_base64,
-         core_engine.publish_state, core_engine._publish_idle_blip, core_engine._publish_phase) = self._orig
+        (core_engine.fetch_itunes_metadata,
+         core_engine._publish_idle_blip, core_engine._publish_phase) = self._orig
         core_engine.runtime["retrigger_on_track_change"] = False
 
-    def test_blip_between_stop_and_play_when_flag_on(self):
+    def test_blip_precedes_the_playing_phase_when_flag_on(self):
         core_engine.runtime["retrigger_on_track_change"] = True
         asyncio.run(core_engine._handle_match({"title": "T", "artist": "A"}))
         self.assertIn("idle_blip", self.events)
-        self.assertLess(self.events.index("mqtt:stopped"), self.events.index("idle_blip"))
-        self.assertLess(self.events.index("idle_blip"), self.events.index("mqtt:playing"))
+        self.assertLess(self.events.index("idle_blip"),
+                        self.events.index("phase:playing"))
 
     def test_no_blip_when_flag_off(self):
         core_engine.runtime["retrigger_on_track_change"] = False
         asyncio.run(core_engine._handle_match({"title": "T2", "artist": "A"}))
         self.assertNotIn("idle_blip", self.events)
-        self.assertNotIn("mqtt:stopped", self.events)
-        self.assertIn("mqtt:playing", self.events)
+        self.assertIn("phase:playing", self.events)
 
 
 class ShazamNormalizeTest(unittest.TestCase):
@@ -222,29 +220,21 @@ class HandleMatchArtTest(unittest.TestCase):
         self.published = []
         async def fake_itunes(artist, title):
             return self.itunes_return
-        async def fake_img(url):
-            return "b64" if url else ""
         async def fake_phase(p):
             return None
         async def fake_blip():
             return None
-        def fake_publish(status, artist="", title="", album="", art_url="", art_base64=""):
-            self.published.append(dict(status=status, album=album, art_url=art_url))
-        self._orig = (core_engine.fetch_itunes_metadata, core_engine.fetch_image_base64,
-                      core_engine._publish_phase, core_engine._publish_idle_blip,
-                      core_engine.publish_state)
+        self._orig = (core_engine.fetch_itunes_metadata,
+                      core_engine._publish_phase, core_engine._publish_idle_blip)
         core_engine.fetch_itunes_metadata = fake_itunes
-        core_engine.fetch_image_base64 = fake_img
         core_engine._publish_phase = fake_phase
         core_engine._publish_idle_blip = fake_blip
-        core_engine.publish_state = fake_publish
         core_engine.state["last_song"] = ""
         self.itunes_return = (None, None, None, False)
 
     def tearDown(self):
-        (core_engine.fetch_itunes_metadata, core_engine.fetch_image_base64,
-         core_engine._publish_phase, core_engine._publish_idle_blip,
-         core_engine.publish_state) = self._orig
+        (core_engine.fetch_itunes_metadata,
+         core_engine._publish_phase, core_engine._publish_idle_blip) = self._orig
 
     def test_itunes_art_is_primary(self):
         self.itunes_return = ("iTunes Album", "itunes_art.jpg", None, False)
@@ -617,28 +607,20 @@ class DurationCaptureTest(unittest.TestCase):
     def setUp(self):
         async def fake_itunes(artist, title):
             return (None, None, None, False)
-        async def fake_img(url):
-            return ""
         async def fake_phase(p):
             return None
         async def fake_blip():
             return None
-        def fake_publish(status, artist="", title="", album="", art_url="", art_base64=""):
-            return None
-        self._orig = (core_engine.fetch_itunes_metadata, core_engine.fetch_image_base64,
-                      core_engine._publish_phase, core_engine._publish_idle_blip,
-                      core_engine.publish_state)
+        self._orig = (core_engine.fetch_itunes_metadata,
+                      core_engine._publish_phase, core_engine._publish_idle_blip)
         core_engine.fetch_itunes_metadata = fake_itunes
-        core_engine.fetch_image_base64 = fake_img
         core_engine._publish_phase = fake_phase
         core_engine._publish_idle_blip = fake_blip
-        core_engine.publish_state = fake_publish
         core_engine.state["last_song"] = ""
 
     def tearDown(self):
-        (core_engine.fetch_itunes_metadata, core_engine.fetch_image_base64,
-         core_engine._publish_phase, core_engine._publish_idle_blip,
-         core_engine.publish_state) = self._orig
+        (core_engine.fetch_itunes_metadata,
+         core_engine._publish_phase, core_engine._publish_idle_blip) = self._orig
 
     def test_itunes_duration_reaches_state_and_frame(self):
         async def fake_itunes(artist, title):

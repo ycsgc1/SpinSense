@@ -9,7 +9,7 @@ Integrate your analogue record player into your digital life. SpinSense listens 
 ## ✨ Features
 
 - **Automatic track ID** — a Shazam-compatible recognizer identifies whatever's on the platter, with an optional **free AcoustID** (or AudD) backup for the tracks Shazam can't get.
-- **Zero-config Home Assistant discovery** — auto-appears as a `media_player` via **mDNS** (no broker, recommended), or publish state over **MQTT** to your own broker.
+- **Zero-config Home Assistant discovery** — auto-appears as a `media_player` via **mDNS**. No broker, no IP, nothing to type.
 - **Last.fm scrobbling** — finished plays land on your Last.fm profile, with a live "now playing" indicator. Uses your own API key, so the rate limit is yours.
 - **Listening stats** — a Wrapped-style Stats page: top artists and tracks, plays over time, genres and decades, filterable by month / year / all-time.
 - **Runs where your deck is** — Docker-first; works on a Raspberry Pi (ARM) next to the turntable or on your x64 NAS.
@@ -72,7 +72,7 @@ Or swap `image:` for a `build:` block to build from source.
 
 > **Testing a beta.** Point `image:` at `ghcr.io/ycsgc1/spinsense:beta` and hit Update in Dockge. Keep the same `./data` volume and your history, config and calibration carry straight over — the database migrations are additive and a beta will never rewrite rows an older build wrote. Going back to `:latest` afterwards works the same way: newer columns are simply ignored.
 
-> **Why host networking?** mDNS uses multicast, which doesn't cross Docker's bridge network. `network_mode: host` lets Home Assistant discover SpinSense — and means the app binds `SPINSENSE_PORT` directly on the host (no `ports:` mapping). If you don't need auto-discovery you can use bridge networking with `ports: ["3313:3313"]` instead, and integrate via MQTT.
+> **Why host networking?** mDNS uses multicast, which doesn't cross Docker's bridge network. `network_mode: host` lets Home Assistant discover SpinSense — and means the app binds `SPINSENSE_PORT` directly on the host (no `ports:` mapping). Without auto-discovery you can use bridge networking with `ports: ["3313:3313"]` and add the integration by hand, entering the host and port yourself.
 
 > **Keep your history.** The SQLite database and album-art cache live under `SPINSENSE_DATA_DIR`. The `./data:/app/data` volume keeps them safe across rebuilds and updates — without it, a rebuild starts from an empty database.
 
@@ -91,7 +91,6 @@ Install the companion integration so Home Assistant can discover SpinSense:
 1. In **HACS → Custom repositories**, add `https://github.com/ycsgc1/homeassistant-spinsense` with category **Integration**, then install it and restart Home Assistant.
 2. With SpinSense running (host networking), it's auto-discovered under **Settings → Devices & Services → Discovered** — accept it to add the `media_player` entity. No IP or port to type in.
 
-Prefer MQTT? Skip the integration, enable MQTT in the setup wizard (or later in **Settings → MQTT Broker**), and SpinSense publishes state on plain `home/vinyl/*` topics you can wire up with manual MQTT sensors.
 
 ---
 
@@ -135,9 +134,6 @@ Two independent toggles — run one, both, or neither:
 ![Setup wizard — Home Assistant auto-discovery](docs/images/Connection_Selection.png)
 
 - **Home Assistant auto-discovery (mDNS)** *(on by default)* — zero-config; install the HACS integration and it finds SpinSense automatically. Recommended.
-- **MQTT (advanced)** *(off by default)* — enable to publish to your own broker; this reveals the host / port / credentials and a "Test connection" button:
-
-![Setup wizard — MQTT broker fields](docs/images/MQTT_Interface.png)
 
 ### 5. Finish
 
@@ -145,7 +141,7 @@ Save and finish applies everything to the running engine — no restart needed. 
 
 ### Beyond the wizard
 
-The wizard covers the essentials. Every Settings field — recognition tuning, the optional **free AcoustID** / AudD backup recognizers, MQTT, and environment variables — is documented in the **[Configuration reference →](docs/CONFIGURATION.md)**. Settings save live, no restart.
+The wizard covers the essentials. Every Settings field — recognition tuning, the optional **free AcoustID** / AudD backup recognizers, Last.fm scrobbling, and environment variables — is documented in the **[Configuration reference →](docs/CONFIGURATION.md)**. Settings save live, no restart.
 
 ---
 
@@ -179,14 +175,14 @@ SpinSense doesn't guess — it watches the RMS volume of your input device:
 
 1. **Detection** — input rises above your calibrated threshold.
 2. **Recognition** — it captures a short high-fidelity sample and identifies the track.
-3. **Publish** — artist, title, album, and art are pushed to Home Assistant (via mDNS/HTTP or MQTT).
+3. **Publish** — artist, title, album, and art are pushed to Home Assistant over HTTP and a WebSocket.
 4. **Silence logic** — when the side ends or the record stops, it waits out a silence interval, then marks the player stopped.
 
 ## 🛠 Project Structure
 
 Modular and Docker-first:
 
-- **`/core`** — the Python recognition engine (audio capture, identification, MQTT).
+- **`/core`** — the Python recognition engine (audio capture, identification, track-end prediction).
 - **`/gui`** — a FastAPI web interface for the dashboard, history, settings, wizard, and the `/api` + WebSocket the Home Assistant integration consumes.
 - **`/docker`** — build files for Pi and NAS.
 

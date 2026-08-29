@@ -15,7 +15,7 @@ SpinSense bridges an analogue turntable and a digital smart home. It listens to 
 1. **Local & private.** Recognition results, history, and album art stay on the user's hardware. The only network call to a third party is the Shazam audio query (the recognizer it wraps) and the iTunes metadata lookup.
 2. **Zero-config when possible.** mDNS discovery means a fresh install is reachable from Home Assistant with no IP, port, or broker entered anywhere.
 3. **Docker-first.** A single container, a single compose file, a prebuilt multi-arch image. The setup-wizard handles everything beyond that in a browser.
-4. **Hot-reloadable.** Configuration changes (mic, threshold, MQTT broker, mDNS toggle) take effect on the running engine without a restart.
+4. **Hot-reloadable.** Configuration changes (mic, threshold, recognition tuning, mDNS toggle) take effect on the running engine without a restart.
 
 ---
 
@@ -34,9 +34,9 @@ SpinSense bridges an analogue turntable and a digital smart home. It listens to 
 │  │                       │  │  WS     │                          │
 │  │  ┌─audio loop         │  │         │   (or, optional)         │
 │  │  ├─Shazam recognition │  │         │   ┌──────────────────┐   │
-│  │  ├─iTunes metadata    │  │  MQTT   │   │  MQTT broker     │   │
-│  │  ├─MQTT publisher     │──┼─────────┼──▶│  + HA discovery  │   │
-│  │  └─config watcher     │  │         │   └──────────────────┘   │
+│  │  ├─iTunes metadata    │  │         │                          │
+│  │  ├─track-end clock    │  │         │                          │
+│  │  └─config watcher     │  │         │                          │
 │  └───────────────────────┘  │         └──────────────────────────┘
 │           │ UDS             │
 │           │ /tmp/spinsense* │
@@ -58,7 +58,7 @@ SpinSense bridges an analogue turntable and a digital smart home. It listens to 
 ```
 
 **Two processes inside one container** (`docker/entrypoint.sh`):
-1. The **engine** (`python core/core_engine.py`) runs in the background. It owns audio capture, detection, recognition, the MQTT client, and the `config.json` file watcher.
+1. The **engine** (`python core/core_engine.py`) runs in the background. It owns audio capture, detection, recognition, metadata enrichment, and the `config.json` file watcher.
 2. The **GUI/backend** (`uvicorn backend_main:app`) runs in the foreground (PID 1 by container convention). It owns the web UI, the integration HTTP/WebSocket contract, the SQLite history database, the album-art cache, and the mDNS advertiser.
 
 They communicate over **two named UDS sockets** under `/tmp` (see §3). This split lets the engine focus on real-time audio work without any HTTP framework overhead, and lets the GUI restart independently for hot reloads during development.
@@ -106,13 +106,11 @@ class SpinSenseConfig(BaseModel):
     System: SystemConfig         # Auto_Start, Engine_Status, Setup_Wizard_State
     Hardware: HardwareConfig     # Mic_Device
     Audio: AudioConfig           # Volume_Threshold, Song_Sample_Length, *_Silence_Interval
-    MQTT: MQTTConfig             # Enabled + Broker{Host,Port,User,Password} + Discovery + Topics
     Discovery: DiscoveryConfig   # mDNS{Enabled, Service_Name}
 ```
 
 **Defaults that matter:**
 - `Volume_Threshold = 0.01` (linear RMS, = −40 dBFS). Internal storage stays linear; the UI converts to dB.
-- `MQTT.Enabled = False`. mDNS is the default integration path.
 - `Discovery.mDNS.Enabled = True`. Zero-config out of the box.
 - `Setup_Wizard_State = "pending"`. The middleware redirects to `/setup` on first run.
 
@@ -122,7 +120,6 @@ class SpinSenseConfig(BaseModel):
 | --- | --- |
 | Audio thresholds | Picked up on next audio-loop iteration |
 | Mic device | `mic_change_event.set()` → audio loop tears down + reopens the InputStream |
-| MQTT broker fields *or* `MQTT.Enabled` | Cancel in-flight connect; disconnect; reconnect if newly enabled. Toggling Enabled is live. |
 | `Discovery.mDNS.Enabled` | Backend's advertiser starts / stops in place |
 
 **Why a file watcher and not in-process pub/sub?** The GUI process writes config.json (validated, via `POST /api/config`); the engine reads it. Two processes, one file. mtime polling at 2 s is the simplest possible boundary that doesn't require RPC.
@@ -182,8 +179,7 @@ main loop @ 1 Hz:
 1. Capture `Song_Sample_Length` seconds (default 5 s) into an in-memory WAV buffer.
 2. Send to `shazamio.Shazam.recognize()`.
 3. On hit: fetch high-res album art from iTunes (`fetch_itunes_metadata`).
-4. Base64-encode the art for MQTT payloads (HA reads it that way).
-5. Publish to MQTT topics (if enabled and connected) and write the play to SQLite (via UDS frame to backend).
+4. Publish the result over the UDS status frame, which the backend broadcasts to the dashboard and Home Assistant, and writes to SQLite.
 
 **Why the `rms > threshold` model and not a continuous Shazam stream?** API budget, and silence-after-side handling. The engine spends most of its time idle, watching one float. Recognition only runs when the needle drops.
 
@@ -301,7 +297,7 @@ Routing middleware (`backend_main.setup_wizard_gate`):
 1. **Welcome** — intro, "Get started" or "Skip setup".
 2. **Microphone** — dropdown populated from `/api/devices`.
 3. **Calibrate threshold** — chooser sub-flow (Auto vs Manual; see §7).
-4. **Home Assistant & Integrations** — two **independent** toggles: mDNS (on by default, zero-config, recommended) and MQTT (off by default, advanced). Enabling MQTT reveals the broker fields and a "Test connection" button. Either, both, or neither is valid.
+4. **Home Assistant** — a single mDNS toggle, on by default. Zero-config with the companion HACS integration.
 5. **Done** — "Save and finish" writes everything to `config.json`. The engine's file watcher picks it up within ~2 s. No restart.
 
 **Three exits:**
@@ -315,9 +311,9 @@ Re-entry is always available via **Settings → Re-run setup wizard**.
 
 ## 9. Discovery & Integrations
 
-Two integration paths, independently toggleable in §8 step 4.
+One integration path, toggleable in §8 step 4.
 
-### 9.1 mDNS (default, recommended)
+### 9.1 mDNS
 
 `gui/discovery.py` advertises `_spinsense._tcp.local.` on `SPINSENSE_PORT` whenever the GUI process is running and `Discovery.mDNS.Enabled` is true. The companion HACS integration ([ycsgc1/homeassistant-spinsense](https://github.com/ycsgc1/homeassistant-spinsense)) declares the same service type in its `manifest.json` `zeroconf` key, so Home Assistant's discovery surfaces SpinSense automatically under Settings → Devices & Services → Discovered.
 
@@ -325,20 +321,7 @@ The integration's config flow reads `discovery_info.host` + `.port` (no IP or po
 
 **Why mDNS requires `network_mode: host`.** Multicast does not cross Docker's bridge network. Under host mode the container binds `SPINSENSE_PORT` directly on the host; there is no `ports:` mapping (and adding one would do nothing). This is why the default port is **3313** (a nod to 33⅓ RPM) instead of 8000 — colliding with every other "default 8000" container under host networking would be a fresh-install footgun.
 
-**Failure mode.** mDNS bind failures (UDP 5353 already in use, no network) are non-fatal. The GUI logs and carries on serving HTTP; the user can still reach the dashboard, and MQTT remains as a fallback.
-
-### 9.2 MQTT (optional, advanced)
-
-Opt-in toggle. When enabled, the engine connects to the user's broker with the configured credentials and:
-
-- Publishes track state to `home/vinyl/{state,title,artist,album,album_art}` (album art base64-encoded).
-- Publishes Home Assistant MQTT-discovery payload to `homeassistant/media_player/spinsense/config` on connect, so HA's MQTT integration auto-creates a `media_player` entity without any user wiring.
-
-Topics are currently hardcoded in `core_engine.py` (`BASE_TOPIC = "home/vinyl"`). The `MQTT.Discovery.Discovery_Topic` and `MQTT.Topics.*` config fields exist in the schema for forward compatibility but are not yet wired — flagged as future cleanup.
-
-**Live enable/disable.** Toggling `MQTT.Enabled` in the GUI is reconciled by the config watcher: enabling reconnects, disabling disconnects. No engine restart.
-
----
+**Failure mode.** mDNS bind failures (UDP 5353 already in use, no network) are non-fatal. The GUI logs and carries on serving HTTP; the dashboard still works, and the integration can be added by hand with the host and port.
 
 ## 10. HTTP / WebSocket Contract
 
@@ -354,7 +337,6 @@ The HA integration depends on this surface. Breaking changes here ripple to a se
 | `POST /api/config` | Pydantic-validated config write; 400 on validation failure with `{"detail": "..."}` |
 | `GET /api/devices` | Audio input devices visible to the container |
 | `GET /api/setup-state` | `{"state": "pending\|skipped\|completed"}` |
-| `POST /api/mqtt/test` | Short-lived 3.5 s paho connect; returns `{ok, detail}` |
 | `POST /api/calibrate/start` body `{phase}` | Forwarded to engine; 503 if engine unreachable |
 | `GET /api/calibrate/status` | Forwarded to engine; returns running/done/none + stats blob |
 | `POST /api/calibrate/clear` | Forwarded to engine |
@@ -529,7 +511,6 @@ buys the same thing with less to maintain.
 - **mtime polling cadence.** 2 s. Fast enough that the UI feels live; slow enough that the engine's normal audio loop is unbothered.
 - **Track-end checks are budgeted, not throttled.** The cap is per *track*, not per unit time, and it resets only when the track changes or real silence clears it. This is deliberate: a rate limit would still let one badly-tagged record scan all afternoon, where a budget cannot.
 - **Detection suppression during calibration.** While a 5 s capture is `"running"`, the engine's audio loop skips the threshold-comparison branch entirely (samples still accumulate; the live meter still publishes). This prevents recognition firing on the calibration audio itself.
-- **MQTT reconnect under config change.** Cancels the in-flight connect task, calls `mqtt_client.loop_stop()` + `disconnect()`, then re-enters `connect_mqtt_loop`. Brief connection blip is acceptable.
 - **mDNS advertiser reconcile.** Lives in the GUI process. Stopping requires un-registering the `ServiceInfo`; starting binds a fresh one. Bind failures log and continue serving HTTP.
 
 ---
@@ -543,7 +524,7 @@ spinsense/                 # domain logic shared by BOTH processes
   itunes.py                # the one iTunes Search client
   tests/
 core/
-  core_engine.py           # the engine process: audio + recognition + MQTT
+  core_engine.py           # the engine process: audio + recognition + enrichment
   track_clock.py           # pure: track-end prediction + the play clock (§6.1)
   tests/                   # unittest; runs without audio hardware (mocks indata)
 gui/

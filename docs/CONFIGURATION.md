@@ -2,7 +2,7 @@
 
 Every setting below lives on the **Settings** page of the SpinSense web UI (`http://<your-host-ip>:3313` → **Settings**). Changes are **saved live** — the running engine hot-reloads them, no restart needed.
 
-Settings are persisted to `config.json` under your data directory (`SPINSENSE_DATA_DIR`, e.g. `./data/config.json`). You can edit that file directly if you prefer, but the UI is the recommended way. Secrets (MQTT password, AudD token) are stored in plaintext — fine for a self-hosted LAN box; just don't commit `config.json` anywhere public.
+Settings are persisted to `config.json` under your data directory (`SPINSENSE_DATA_DIR`, e.g. `./data/config.json`). You can edit that file directly if you prefer, but the UI is the recommended way. Secrets (the AudD token, your Last.fm session) are stored in plaintext — fine for a self-hosted LAN box; just don't commit `config.json` anywhere public.
 
 ---
 
@@ -19,7 +19,7 @@ How SpinSense tells music from silence, how it samples for recognition, and whic
 | **Stopped silence interval** | How long silence must persist before SpinSense marks the record **stopped** and clears "now playing". Longer tolerates quiet passages within a song; shorter marks "stopped" sooner after the needle lifts. Keep this ≥ the new-song interval. | 5 s | 1 … 600 s |
 | **Detect the end of a track** | Uses the track's known length as a second way to spot a transition. Once a song should be over and no gap was heard, SpinSense re-identifies once to see what's actually playing. Catches the transitions that silence detection misses on records with very short or very quiet inter-track gaps. Only applies to tracks whose length was found (iTunes / AudD); strictly limited to 3 extra checks per song. | On | toggle |
 | **Track-end grace (seconds)** | How long past a song's expected end SpinSense waits before re-identifying. It uses whichever is longer, this or 10 % of the track's length (capped at 60 s), so long tracks get proportionally more slack. Raise it if you see needless re-identifications; lower it to catch missed transitions sooner. | 20 s | 0 … 300 s |
-| **Re-announce each track to Home Assistant** | When on, each new song briefly drops Home Assistant to idle before playing again (over both the integration and MQTT), so automations that trigger on "started playing" re-fire on every track. Off keeps playback smooth, with no idle blip. | Off | toggle |
+| **Re-announce each track to Home Assistant** | When on, each new song briefly drops Home Assistant to idle before playing again, so automations that trigger on "started playing" re-fire on every track. Off keeps playback smooth, with no idle blip. | Off | toggle |
 | **Boost quiet samples** | Raises the level of each recording before it goes to the recognizer, so quiet pressings and quiet songs sit in the same range as loud ones. Never makes a loud sample louder, never amplifies by more than 30 dB, and never clips. Quiet tracks are where identification fails most; this is the cheapest thing that helps. | On | toggle |
 | **Boost target (dBFS)** | How loud a boosted sample should end up. 0 dBFS is the digital maximum; &minus;3 leaves headroom. Only used when the boost is on. | &minus;3 dBFS | &minus;30 … 0 |
 | **Backup recognizer** | A second recognizer to try when the primary (Shazam) can't identify a track on its first attempt. See [Backup recognizers](#backup-recognizers) below. | None | None / AudD / AcoustID |
@@ -81,7 +81,7 @@ Optional, under **Use your own Last.fm API key** in Settings. Worth doing if you
 
 There's also `SPINSENSE_LASTFM_KEY` / `SPINSENSE_LASTFM_SECRET` as environment variables, if you'd rather not put them in `config.json`.
 
-> **A note on secrets.** SpinSense's own application key is public by design — it ships in the repository and in every image, because Last.fm has no flow that lets an installed app authenticate without one. It grants no access to anyone's account: scrobbling still requires the per-user session key from the approval flow. Your own key and secret, if you supply them, live in `config.json` in plaintext alongside the MQTT password and AudD token — fine for a self-hosted box on your own LAN, just don't commit `config.json` anywhere public. The session key permits scrobbling to your account and nothing else; it is not your password.
+> **A note on secrets.** SpinSense's own application key is public by design — it ships in the repository and in every image, because Last.fm has no flow that lets an installed app authenticate without one. It grants no access to anyone's account: scrobbling still requires the per-user session key from the approval flow. Your own key and secret, if you supply them, live in `config.json` in plaintext alongside the AudD token — fine for a self-hosted box on your own LAN, just don't commit `config.json` anywhere public. The session key permits scrobbling to your account and nothing else; it is not your password.
 
 ---
 
@@ -103,31 +103,15 @@ It's held in memory and clears on restart — it's there to answer "what just ha
 
 ---
 
-## Home Assistant & discovery
+## Home Assistant discovery
 
-SpinSense can be discovered two independent ways — run one, both, or neither.
-
-### mDNS (recommended, zero-config)
-
-Advertises SpinSense on the LAN so the [companion HACS integration](https://github.com/ycsgc1/homeassistant-spinsense) auto-discovers it — no broker, no IP to type.
+Advertises SpinSense on the LAN so the [companion HACS integration](https://github.com/ycsgc1/homeassistant-spinsense) auto-discovers it — nothing to type, no broker in between.
 
 | Setting | What it does | Default |
 |---|---|---|
 | **mDNS discovery** | Advertise the `_spinsense._tcp` service for Home Assistant auto-discovery. Requires `network_mode: host` (multicast doesn't cross Docker's bridge network). | On |
 | **Service name** | The name shown during discovery. Empty derives one from the host's hostname. | *(hostname)* |
 
-### MQTT (advanced)
-
-Publishes track state to your own MQTT broker on plain topics (`home/vinyl/*`) — wire them into Home Assistant with [manual MQTT sensors](https://www.home-assistant.io/integrations/sensor.mqtt/). Off by default.
-
-| Setting | What it does | Default |
-|---|---|---|
-| **Enable MQTT** | Connect to the broker and publish state. | Off |
-| **Host** | Broker hostname or IP. | `127.0.0.1` |
-| **Port** | Broker port. | `1883` |
-| **Username** / **Password** | Broker credentials (leave blank for anonymous). Password stored in plaintext in `config.json`. | *(empty)* |
-
-In Settings the broker fields stay collapsed until **Enable MQTT** is switched on; a **Test connection** button verifies host/port/credentials before saving.
 
 ---
 

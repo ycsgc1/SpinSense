@@ -79,13 +79,9 @@ select.form-input {
     padding-right: 2rem;
 }
 
-/* Toast kinds on the sticky save bar + the wizard MQTT inline status. */
+/* Toast kinds on the sticky save bar and inline status messages. */
 .settings-toast[data-kind="ok"]    { color: #4edea3; }   /* secondary */
 .settings-toast[data-kind="error"] { color: #ffb4ab; }   /* error */
-#wizard-mqtt-status[data-kind="ok"]    { color: #4edea3; }
-#wizard-mqtt-status[data-kind="error"] { color: #ffb4ab; }
-#mqtt-test-status[data-kind="ok"]      { color: #4edea3; }
-#mqtt-test-status[data-kind="error"]   { color: #ffb4ab; }
 
 /* Setup wizard progress dots. setup.js toggles data-active on the current
    step's dot; the others stay dimmed. */

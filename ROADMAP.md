@@ -58,9 +58,6 @@ a spike against real records before designing anything on top of it.
 ## Docs
 - **Home Assistant `media_player` screenshot** — the one missing "payoff" image; add it to the README's "In Home Assistant" subsection. Drop the file in `docs/images/` (e.g. `ha-entity.png`) and wire it in.
 
-## Known limitations (noted, not bugs)
-- The engine **hardcodes the MQTT topics** (`MQTT.Topics.*`): `config.json` exposes the fields but `core/core_engine.py` ignores them. Either wire them up or remove the dead config fields. *(The dead `MQTT.Discovery` config was removed in 1.4.0.0.)*
-
 ---
 
 *See [CHANGELOG.md](CHANGELOG.md) for what shipped in 1.0.*

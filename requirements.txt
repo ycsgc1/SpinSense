@@ -1,7 +1,6 @@
 aiohttp==3.9.5
 numpy==1.26.4
 sounddevice==0.4.6
-paho-mqtt==2.1.0
 shazamio==0.5.1
 fastapi==0.111.0
 uvicorn[standard]==0.29.0

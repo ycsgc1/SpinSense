@@ -1,5 +1,5 @@
 // setup.js — multi-step wizard. Owns step navigation, the mic + threshold +
-// MQTT form fields, MQTT test-connection, skip/finish/close flow. Saves via
+// Home Assistant discovery, skip/finish/close flow. Saves via
 // POST /api/config like Settings does.
 (function () {
   const STEPS = Array.from(document.querySelectorAll(".wizard-step"));
@@ -39,21 +39,6 @@
   const RMS_BAR_MANUAL = document.getElementById("wizard-rms-bar-manual");
   const RMS_TICK_MANUAL = document.getElementById("wizard-rms-tick-manual");
 
-  const MQTT_HOST = document.getElementById("wizard-mqtt-host");
-  const MQTT_PORT = document.getElementById("wizard-mqtt-port");
-  const MQTT_USER = document.getElementById("wizard-mqtt-user");
-  const MQTT_PASS = document.getElementById("wizard-mqtt-pass");
-  const MQTT_TEST = document.getElementById("wizard-mqtt-test");
-  const MQTT_STATUS = document.getElementById("wizard-mqtt-status");
-  const MQTT_SKIP = document.getElementById("wizard-mqtt-skip");
-  const MDNS_ENABLED = document.getElementById("wizard-mdns-enabled");
-  const MQTT_ENABLED = document.getElementById("wizard-mqtt-enabled");
-  const MQTT_FIELDS = document.getElementById("wizard-mqtt-fields");
-
-  const POPUP = document.getElementById("wizard-mqtt-popup");
-  const POPUP_DETAIL = document.getElementById("wizard-mqtt-popup-detail");
-  const POPUP_RETRY = document.getElementById("wizard-mqtt-popup-retry");
-  const POPUP_SKIP = document.getElementById("wizard-mqtt-popup-skip");
 
   const FINISH_BTN = document.getElementById("wizard-finish");
 
@@ -181,13 +166,7 @@
       const storedDb = dbUtil.rmsToDb(storedRms);
       syncThresholdControls("result", storedDb);
       syncThresholdControls("manual", storedDb);
-      MQTT_HOST.value = getNested(initialConfig, "MQTT.Broker.Host") ?? "";
-      MQTT_PORT.value = getNested(initialConfig, "MQTT.Broker.Port") ?? 1883;
-      MQTT_USER.value = getNested(initialConfig, "MQTT.Broker.User") ?? "";
-      MQTT_PASS.value = getNested(initialConfig, "MQTT.Broker.Password") ?? "";
       if (MDNS_ENABLED) MDNS_ENABLED.checked = getNested(initialConfig, "Discovery.mDNS.Enabled") ?? true;
-      if (MQTT_ENABLED) MQTT_ENABLED.checked = getNested(initialConfig, "MQTT.Enabled") ?? false;
-      if (MQTT_FIELDS) MQTT_FIELDS.classList.toggle("hidden", !(MQTT_ENABLED && MQTT_ENABLED.checked));
     } catch (e) {
       console.error("Wizard: failed to apply config to form", e);
     }
@@ -202,14 +181,6 @@
     );
     setNested(payload, "Audio.Volume_Threshold", dbUtil.dbToRms(sliderDb));
     setNested(payload, "Discovery.mDNS.Enabled", !!(MDNS_ENABLED && MDNS_ENABLED.checked));
-    const mqttOn = !!(MQTT_ENABLED && MQTT_ENABLED.checked);
-    setNested(payload, "MQTT.Enabled", mqttOn);
-    if (mqttOn) {
-      setNested(payload, "MQTT.Broker.Host", MQTT_HOST.value);
-      setNested(payload, "MQTT.Broker.Port", Number(MQTT_PORT.value || 1883));
-      setNested(payload, "MQTT.Broker.User", MQTT_USER.value);
-      setNested(payload, "MQTT.Broker.Password", MQTT_PASS.value);
-    }
     setNested(payload, "System.Setup_Wizard_State", state);
     return payload;
   }
@@ -227,48 +198,6 @@
       return false;
     }
     return true;
-  }
-
-  function setMqttStatus(text, kind) {
-    MQTT_STATUS.textContent = text;
-    MQTT_STATUS.dataset.kind = kind || "";
-  }
-
-  function openPopup(detail) {
-    POPUP_DETAIL.textContent = detail;
-    POPUP.classList.remove("hidden");
-  }
-  function closePopup() {
-    POPUP.classList.add("hidden");
-  }
-
-  async function testMqtt() {
-    setMqttStatus("Testing…", "");
-    MQTT_TEST.disabled = true;
-    try {
-      const res = await fetch("/api/mqtt/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          host: MQTT_HOST.value,
-          port: Number(MQTT_PORT.value || 1883),
-          user: MQTT_USER.value,
-          password: MQTT_PASS.value,
-        }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (res.ok && body.ok) {
-        setMqttStatus("Connected ✓", "ok");
-      } else {
-        setMqttStatus("", "");
-        openPopup(body.detail || `HTTP ${res.status}`);
-      }
-    } catch (e) {
-      setMqttStatus("", "");
-      openPopup("Network error: " + e.message);
-    } finally {
-      MQTT_TEST.disabled = false;
-    }
   }
 
   // --- Event wiring ---
@@ -290,26 +219,6 @@
     captureAbortKey++;
     clearCalibrationBestEffort();
     window.location.href = "/";
-  });
-
-  if (MQTT_ENABLED && MQTT_FIELDS) {
-    MQTT_ENABLED.addEventListener("change", () => {
-      MQTT_FIELDS.classList.toggle("hidden", !MQTT_ENABLED.checked);
-    });
-  }
-
-  MQTT_TEST.addEventListener("click", testMqtt);
-  MQTT_SKIP.addEventListener("click", () => {
-    showStep(step + 1);
-  });
-
-  POPUP_RETRY.addEventListener("click", () => {
-    closePopup();
-    testMqtt();
-  });
-  POPUP_SKIP.addEventListener("click", () => {
-    closePopup();
-    showStep(step + 1);
   });
 
   FINISH_BTN.addEventListener("click", async () => {

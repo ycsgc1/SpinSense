@@ -10,8 +10,6 @@ from collections import deque
 import aiohttp
 import numpy as np
 import sounddevice as sd
-import paho.mqtt.client as mqtt
-import base64
 from shazamio import Shazam
 
 import track_clock
@@ -45,24 +43,6 @@ DEFAULT_CONFIG = {
         "AudD_API_Token": "",
         # NOTE: keep these defaults in sync with gui/config_manager.AudioConfig.
     },
-    "MQTT": {
-        # NOTE: keep these defaults in sync with gui/config_manager.MQTTConfig —
-        # whichever process creates config.json first wins, so a divergence here
-        # silently decides the user's broker settings.
-        "Enabled": False,
-        "Broker": {
-            "Host": "127.0.0.1",
-            "Port": 1883,
-            "User": "",
-            "Password": "",
-        },
-        "Topics": {
-            "State": "home/vinyl/state",
-            "Title": "home/vinyl/title",
-            "Artist": "home/vinyl/artist",
-            "Album_Art": "home/vinyl/album_art",
-        },
-    },
 }
 
 
@@ -86,11 +66,8 @@ def _normalize_mic(cfg):
 
 # Mutable mirror of the parts of config that the engine actually reads. The
 # file watcher re-populates this dict on every config.json change; the audio
-# loop, recognize_audio(), and the MQTT connect loop read from it on every
-# iteration so changes take effect without a restart.
-# MQTT.Enabled is mirrored into MQTT_WANTED below at startup and refreshed live
-# by the config watcher (_apply_config_diff), so toggling MQTT on/off in the GUI
-# takes effect without an engine restart. (mDNS is handled in the GUI process.)
+# loop and recognize_audio() read from it on every iteration, so changes take
+# effect without a restart. (mDNS is handled in the GUI process.)
 runtime = {
     "threshold": 0.01,
     "sample_len": 5.0,
@@ -104,10 +81,6 @@ runtime = {
     "fallback_provider": "none",
     "audd_token": "",
     "mic_device": None,
-    "mqtt_host": "127.0.0.1",
-    "mqtt_port": 1883,
-    "mqtt_user": "",
-    "mqtt_pass": "",
     "retrigger_on_track_change": False,
 }
 
@@ -126,39 +99,14 @@ def _populate_runtime(cfg):
     runtime["fallback_provider"] = cfg.get('Audio', {}).get('Fallback_Provider', 'none')
     runtime["audd_token"]       = cfg.get('Audio', {}).get('AudD_API_Token', '')
     runtime["mic_device"]       = _normalize_mic(cfg)
-    runtime["mqtt_host"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Host', '127.0.0.1')
-    runtime["mqtt_port"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Port', 1883)
-    runtime["mqtt_user"]        = cfg.get('MQTT', {}).get('Broker', {}).get('User', '')
-    runtime["mqtt_pass"]        = cfg.get('MQTT', {}).get('Broker', {}).get('Password', '')
 
 
 _initial_cfg = _load_config()
 _populate_runtime(_initial_cfg)
-# Config toggle: whether the user wants MQTT at all (read at startup, like the
-# other MQTT settings). Distinct from MQTT_ENABLED below, which is the runtime
-# "are we currently connected to the broker" flag.
-MQTT_WANTED = bool(_initial_cfg.get("MQTT", {}).get("Enabled", False))
 try:
     _config_mtime = os.path.getmtime(CONFIG_PATH)
 except OSError:
     _config_mtime = None
-
-# MQTT topics + discovery topic remain hardcoded — the corresponding config
-# fields aren't read by the engine. Tracked as a future cleanup; not in scope
-# for this pass.
-BASE_TOPIC = "home/vinyl"
-TOPIC_STATE = f"{BASE_TOPIC}/state"
-TOPIC_TITLE = f"{BASE_TOPIC}/title"
-TOPIC_ARTIST = f"{BASE_TOPIC}/artist"
-TOPIC_ALBUM = f"{BASE_TOPIC}/album"
-TOPIC_ARTART = f"{BASE_TOPIC}/album_art"
-LEGACY_TOPIC = f"{BASE_TOPIC}/now_playing"
-
-# --- 2. MQTT Setup ---
-mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-# Runtime connection-state flag: True only once a broker connection is live.
-# connect_mqtt_loop() flips it; publish_state() gates on it.
-MQTT_ENABLED = False
 
 # Cross-task signal: the config watcher sets this when the mic device changes
 # so the audio loop tears down + rebuilds the InputStream on its next pass.
@@ -307,15 +255,12 @@ async def command_listener_loop():
         await server.serve_forever()
 
 
-# Single-flight handle on the connect loop so a broker change doesn't spawn
-# parallel connect attempts on the same paho Client.
-_mqtt_task: asyncio.Task | None = None
-# Strong refs to the other long-lived loops (config watcher, command listener),
+# Strong refs to the long-lived loops (config watcher, command listener),
 # so the event loop's weak task tracking can't GC them mid-run.
 _config_task: asyncio.Task | None = None
 _command_task: asyncio.Task | None = None
-# Strong refs to short-lived fire-and-forget tasks (calibration finish, MQTT
-# reconnect) for the same reason; discarded automatically when each completes.
+# Strong refs to short-lived fire-and-forget tasks (the calibration finish
+# timer) for the same reason; discarded automatically when each completes.
 _bg_tasks: set = set()
 
 
@@ -324,75 +269,6 @@ def _spawn_bg(coro) -> None:
     task = asyncio.create_task(coro)
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
-
-
-async def connect_mqtt_loop():
-    """Initial connect + retries. Re-entered by _reconnect_mqtt() whenever the
-    config watcher detects a broker change."""
-    global MQTT_ENABLED
-    if not MQTT_WANTED:
-        print("📡 MQTT disabled in config — skipping broker connection.")
-        return
-    if runtime["mqtt_user"] and runtime["mqtt_pass"]:
-        mqtt_client.username_pw_set(runtime["mqtt_user"], runtime["mqtt_pass"])
-    print(f"📡 MQTT connecting to {runtime['mqtt_host']}:{runtime['mqtt_port']}...")
-    while not MQTT_ENABLED:
-        try:
-            await asyncio.to_thread(
-                mqtt_client.connect,
-                runtime["mqtt_host"],
-                runtime["mqtt_port"],
-                60,
-            )
-            mqtt_client.loop_start()
-            MQTT_ENABLED = True
-            print("✅ MQTT Connected!")
-        except Exception as e:
-            print(f"⚠️ MQTT Connection Failed: {e}. Retrying in 10s...")
-            await asyncio.sleep(10)
-
-
-async def _reconnect_mqtt():
-    """Tear down the current MQTT client connection and re-enter the connect
-    loop. Used when the broker fields change, or when the MQTT enable toggle
-    flips: connect_mqtt_loop() returns immediately if MQTT is now disabled, so
-    this doubles as a clean teardown. Safe to call when no connection exists."""
-    global MQTT_ENABLED, _mqtt_task
-    print("📡 MQTT settings changed, reapplying…")
-    if _mqtt_task and not _mqtt_task.done():
-        _mqtt_task.cancel()
-        try:
-            await _mqtt_task
-        except (asyncio.CancelledError, Exception):
-            pass
-    try:
-        if MQTT_ENABLED:
-            await asyncio.to_thread(mqtt_client.loop_stop)
-            await asyncio.to_thread(mqtt_client.disconnect)
-    except Exception as e:
-        print(f"⚠️ MQTT disconnect failed (continuing): {e}")
-    MQTT_ENABLED = False
-    _mqtt_task = asyncio.create_task(connect_mqtt_loop())
-
-
-def publish_state(status, artist="", title="", album="", art_url="", art_base64=""):
-    if MQTT_ENABLED:
-        mqtt_client.publish(TOPIC_STATE, status, retain=True)
-        mqtt_client.publish(TOPIC_TITLE, title, retain=True)
-        mqtt_client.publish(TOPIC_ARTIST, artist, retain=True)
-        mqtt_client.publish(TOPIC_ALBUM, album, retain=True)
-        if art_base64:
-            mqtt_client.publish(TOPIC_ARTART, art_base64, retain=True)
-        else:
-            mqtt_client.publish(TOPIC_ARTART, "", retain=True)
-        payload = json.dumps({
-            "status": status, "artist": artist, "title": title,
-            "album": album, "art_url": art_url,
-        })
-        mqtt_client.publish(LEGACY_TOPIC, payload, retain=True)
-        print(f"📡 Published State -> Status: {status.upper()} | {artist} - {title}")
-    else:
-        print(f"[MOCK MQTT] Published State -> Status: {status.upper()} | {artist} - {title}")
 
 
 # --- 3. Shazam, iTunes, & Audio Logic ---
@@ -655,20 +531,6 @@ async def fetch_itunes_metadata(artist, title):
             print(f"[!] Now assuming the record is {album!r}")
         album_context = {"id": collection_id, "name": album, "at": now_mono}
     return album, art_url, duration_secs, exclusive
-
-
-async def fetch_image_base64(url):
-    if not url:
-        return ""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    img_bytes = await response.read()
-                    return base64.b64encode(img_bytes).decode('utf-8')
-    except Exception as e:
-        print(f"⚠️ Failed to encode album art to base64: {e}")
-    return ""
 
 
 def _extract_enrichment(track: dict) -> dict:
@@ -989,11 +851,6 @@ async def _handle_match(track: dict, reason: str = "onset") -> None:
     if not duration_secs:
         duration_secs = track.get('duration_secs')
 
-    art_base64 = ""
-    if art_url:
-        print("[!] Encoding album art to Base64 for Home Assistant...")
-        art_base64 = await fetch_image_base64(art_url)
-
     result_str = f"{artist} - {title}"
     state["artist"] = artist
     state["title"] = title
@@ -1026,16 +883,13 @@ async def _handle_match(track: dict, reason: str = "onset") -> None:
         print(f"💿 Album:     {album}")
         print(f"🖼️  Art URL:   {art_url}")
         if runtime.get("retrigger_on_track_change"):
-            # Re-announce on BOTH protocols: stopped on MQTT + idle on the WS,
-            # so HA automations re-fire on the track change either way.
-            publish_state("stopped")
+            # Drop to idle for a moment so Home Assistant automations that
+            # trigger on "started playing" re-fire for the new track.
             await _publish_idle_blip()
             await asyncio.sleep(0.5)
-        publish_state("playing", artist, title, album, art_url, art_base64)
         state["last_song"] = result_str
     else:
         print(f"      (Confirmed same track: {state['last_song']})")
-        publish_state("playing", artist, title, album, art_url, art_base64)
 
     state["in_song"] = True
     state["back_off"] = False
@@ -1203,11 +1057,10 @@ def _reset_stall_watch() -> None:
 
 
 async def audio_monitor_loop():
-    global _mqtt_task, _config_task, _command_task
+    global _config_task, _command_task
     # Hold strong references to these long-lived tasks: the event loop only
     # keeps a weak ref, so an unreferenced create_task() can be garbage-collected
     # mid-run, silently killing config hot-reload / the command socket.
-    _mqtt_task = asyncio.create_task(connect_mqtt_loop())
     _config_task = asyncio.create_task(config_watch_loop())
     _command_task = asyncio.create_task(command_listener_loop())
     print("--- SpinSense engine active ---")
@@ -1335,7 +1188,6 @@ async def audio_monitor_loop():
             state["back_off"] = new_bo
             if stop:
                 print(f"\n[ STOPPED ] {runtime['stopped_silence']}s silence limit reached.")
-                publish_state("stopped")
                 _clear_track_state(set_backoff=False)
                 state["silence_counter"] = 0
 
@@ -1365,31 +1217,11 @@ async def config_watch_loop():
         _config_mtime = m
 
 
-def _should_reapply_mqtt(old_wanted: bool, new_wanted: bool, broker_changed: bool) -> bool:
-    """Whether an MQTT teardown/reconnect is needed after a config change.
-    Re-apply when the enable toggle flipped (either direction), or when the
-    broker settings changed while MQTT is (still) enabled."""
-    return old_wanted != new_wanted or (new_wanted and broker_changed)
-
-
 def _apply_config_diff(new_cfg):
     """Re-populate the runtime dict and dispatch side-effects per category."""
-    global MQTT_WANTED
     old_mic = runtime["mic_device"]
-    old_mqtt = (
-        runtime["mqtt_host"], runtime["mqtt_port"],
-        runtime["mqtt_user"], runtime["mqtt_pass"],
-    )
-    old_wanted = MQTT_WANTED
-
     _populate_runtime(new_cfg)
-    MQTT_WANTED = bool(new_cfg.get("MQTT", {}).get("Enabled", False))
-
     new_mic = runtime["mic_device"]
-    new_mqtt = (
-        runtime["mqtt_host"], runtime["mqtt_port"],
-        runtime["mqtt_user"], runtime["mqtt_pass"],
-    )
 
     print(
         f"⚙️ Config reloaded — threshold={runtime['threshold']:.4f}, "
@@ -1401,14 +1233,9 @@ def _apply_config_diff(new_cfg):
         print(f"🎤 Mic device change queued: {old_mic!r} → {new_mic!r}")
         mic_change_event.set()
 
-    if _should_reapply_mqtt(old_wanted, MQTT_WANTED, old_mqtt != new_mqtt):
-        _spawn_bg(_reconnect_mqtt())
-
 
 if __name__ == "__main__":
     try:
         asyncio.run(audio_monitor_loop())
     except KeyboardInterrupt:
         print("\nShutting down...")
-        if MQTT_ENABLED:
-            mqtt_client.loop_stop()

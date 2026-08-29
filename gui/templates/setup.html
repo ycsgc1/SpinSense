@@ -235,58 +235,23 @@
       </div>
     </section>
 
-    <!-- Step 3: MQTT -->
+    <!-- Step 3: Home Assistant -->
     <section class="wizard-step hidden" data-step="3">
       <span class="material-symbols-outlined text-primary block mb-sm" style="font-size: 36px;">router</span>
       <h2 class="font-headline text-headline-md text-on-background">Connect to Home Assistant</h2>
       <p class="text-body-sm text-on-surface-variant mt-sm">
-        Choose how SpinSense appears in Home Assistant. mDNS auto-discovery is on by default — zero-config with the SpinSense HACS integration. Prefer your own broker? Enable MQTT below.
+        SpinSense advertises itself on your network, so the SpinSense HACS integration finds it
+        with nothing to type &mdash; no IP, no port, no broker.
       </p>
 
       <div class="mt-md space-y-3">
         <label class="flex items-center justify-between gap-md p-3 rounded-lg bg-surface-container-high">
           <span>
             <span class="text-body-md text-on-surface block">Home Assistant auto-discovery (mDNS)</span>
-            <span class="text-body-sm text-on-surface-variant">Zero-config. Install the SpinSense HACS integration and it finds this device automatically. Recommended.</span>
+            <span class="text-body-sm text-on-surface-variant">Install the SpinSense HACS integration and it finds this device automatically. Leave on unless you have a reason not to.</span>
           </span>
           <input type="checkbox" id="wizard-mdns-enabled" class="form-checkbox h-5 w-5" checked>
         </label>
-        <label class="flex items-center justify-between gap-md p-3 rounded-lg bg-surface-container-high">
-          <span>
-            <span class="text-body-md text-on-surface block">MQTT (advanced)</span>
-            <span class="text-body-sm text-on-surface-variant">Publish to your own MQTT broker instead of (or in addition to) mDNS.</span>
-          </span>
-          <input type="checkbox" id="wizard-mqtt-enabled" class="form-checkbox h-5 w-5">
-        </label>
-      </div>
-
-      <div id="wizard-mqtt-fields" class="hidden">
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-md mt-md">
-        <label class="block md:col-span-2">
-          <span class="text-body-sm text-on-surface mb-1 block">Host</span>
-          <input type="text" id="wizard-mqtt-host" name="MQTT.Broker.Host" autocomplete="off" class="form-input" placeholder="192.168.1.100">
-        </label>
-        <label class="block">
-          <span class="text-body-sm text-on-surface mb-1 block">Port</span>
-          <input type="number" id="wizard-mqtt-port" name="MQTT.Broker.Port" min="1" max="65535" step="1" class="form-input" value="1883">
-        </label>
-        <label class="block">
-          <span class="text-body-sm text-on-surface mb-1 block">Username</span>
-          <input type="text" id="wizard-mqtt-user" name="MQTT.Broker.User" autocomplete="off" class="form-input">
-        </label>
-        <label class="block md:col-span-2">
-          <span class="text-body-sm text-on-surface mb-1 block">Password</span>
-          <input type="password" id="wizard-mqtt-pass" name="MQTT.Broker.Password" autocomplete="off" class="form-input">
-        </label>
-      </div>
-
-      <div class="flex items-center gap-xs mt-md">
-        <button type="button" id="wizard-mqtt-test"
-                class="bg-surface-container-high border border-outline-variant/40 text-on-surface font-medium px-md py-2 rounded-full hover:bg-surface-container-highest transition-colors">
-          Test connection
-        </button>
-        <span id="wizard-mqtt-status" class="text-body-sm" aria-live="polite"></span>
-      </div>
       </div>
 
       <div class="flex justify-between items-center mt-lg">
@@ -294,16 +259,10 @@
                 class="text-label-md text-on-surface-variant hover:text-on-surface transition-colors">
           Back
         </button>
-        <div class="flex items-center gap-md">
-          <button type="button" id="wizard-mqtt-skip"
-                  class="text-label-md text-on-surface-variant hover:text-on-surface transition-colors">
-            Skip MQTT
-          </button>
-          <button type="button" data-wizard-next
-                  class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full hover:opacity-90 transition-opacity">
-            Continue
-          </button>
-        </div>
+        <button type="button" data-wizard-next
+                class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full hover:opacity-90 transition-opacity">
+          Continue
+        </button>
       </div>
     </section>
 
@@ -327,28 +286,6 @@
     </section>
   </div>
 
-  <!-- MQTT failure popup -->
-  <div id="wizard-mqtt-popup" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-    <div class="glass-panel rounded-xl p-md md:p-lg max-w-md mx-md">
-      <div class="flex items-start gap-sm">
-        <span class="material-symbols-outlined text-error mt-0.5">error</span>
-        <div class="flex-1">
-          <p class="text-body-md text-on-surface font-medium">Couldn't reach broker</p>
-          <p id="wizard-mqtt-popup-detail" class="text-body-sm text-on-surface-variant mt-1"></p>
-        </div>
-      </div>
-      <div class="flex justify-end gap-md mt-md">
-        <button type="button" id="wizard-mqtt-popup-skip"
-                class="text-label-md text-on-surface-variant hover:text-on-surface transition-colors px-md py-2">
-          Skip MQTT
-        </button>
-        <button type="button" id="wizard-mqtt-popup-retry"
-                class="bg-primary text-on-primary font-medium px-lg py-2 rounded-full hover:opacity-90 transition-opacity">
-          Try again
-        </button>
-      </div>
-    </div>
-  </div>
 </div>
 {% endblock %}
 

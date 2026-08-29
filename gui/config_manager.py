@@ -35,29 +35,12 @@ class AudioConfig(BaseModel):
     Fallback_Provider: Literal["none", "audd", "acoustid"] = "none"
     AudD_API_Token: str = ""
 
-class MQTTBrokerConfig(BaseModel):
-    Host: str = "127.0.0.1"
-    Port: int = 1883
-    User: str = ""
-    Password: str = ""
-
-class MQTTTopicsConfig(BaseModel):
-    State: str = "home/vinyl/state"
-    Title: str = "home/vinyl/title"
-    Artist: str = "home/vinyl/artist"
-    Album_Art: str = "home/vinyl/album_art"
-
-class MQTTConfig(BaseModel):
-    Enabled: bool = False
-    Broker: MQTTBrokerConfig = MQTTBrokerConfig()
-    Topics: MQTTTopicsConfig = MQTTTopicsConfig()
-
 class LastFMConfig(BaseModel):
     """Scrobbling credentials. The user registers their own API application at
     last.fm/api/account/create, so the rate limit and the terms are theirs.
 
     Session_Key is obtained by the two-step auth flow in gui/lastfm.py and is
-    permanent until revoked. Like the MQTT password and the AudD token it is
+    permanent until revoked. Like the AudD token it is
     stored in plaintext — fine for a self-hosted LAN box, worth knowing before
     committing config.json anywhere.
 
@@ -94,7 +77,6 @@ class SpinSenseConfig(BaseModel):
     System: SystemConfig = SystemConfig()
     Hardware: HardwareConfig = HardwareConfig()
     Audio: AudioConfig = AudioConfig()
-    MQTT: MQTTConfig = MQTTConfig()
     LastFM: LastFMConfig = LastFMConfig()
     Discovery: DiscoveryConfig = DiscoveryConfig()
 
@@ -109,7 +91,7 @@ def load_config() -> dict:
     A file that exists but fails to read or validate is NEVER overwritten. This
     is called on every page request by the setup-wizard middleware, so a single
     truncated read — the engine writing the file, a half-finished editor save —
-    used to be enough to replace the user's MQTT password, AudD token and
+    used to be enough to replace the user's AudD token and
     calibrated threshold with defaults, silently and irreversibly. We now fall
     back to defaults in memory and leave the file alone, so the next successful
     read recovers everything.

@@ -11,7 +11,6 @@ Images used by the main `README.md`. Filenames are referenced directly, so keep 
 | `Music_Level_Auto_Calibration.png` | Setup → auto-calibrate, capture a song |
 | `Manual_Threshold_Calibration.png` | Setup → manual threshold |
 | `Connection_Selection.png` | Setup → Home Assistant step (mDNS) |
-| `MQTT_Interface.png` | Setup → Home Assistant step (MQTT enabled) |
 | `Blank_Dashboard.png` | Usage → dashboard idle |
 | `Dashboard_with_history_and_now_playing.png` | Usage → dashboard now-playing |
 | `History_Page.png` | Usage → History |

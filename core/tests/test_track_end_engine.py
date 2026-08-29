@@ -61,9 +61,7 @@ class IdentifyShazamOffsetTest(unittest.TestCase):
 class HandleMatchClockTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._orig = (core_engine.fetch_itunes_metadata,
-                      core_engine.fetch_image_base64,
-                      core_engine._publish_phase,
-                      core_engine.publish_state)
+                      core_engine._publish_phase)
         self.duration = 213
 
         async def fake_itunes(artist, title):
@@ -76,9 +74,7 @@ class HandleMatchClockTest(unittest.IsolatedAsyncioTestCase):
             return None
 
         core_engine.fetch_itunes_metadata = fake_itunes
-        core_engine.fetch_image_base64 = fake_art
         core_engine._publish_phase = fake_phase
-        core_engine.publish_state = lambda *a, **k: None
 
         core_engine._clear_track_state(set_backoff=False)
         core_engine.state["capture_mono"] = 1000.0
@@ -86,8 +82,8 @@ class HandleMatchClockTest(unittest.IsolatedAsyncioTestCase):
         core_engine.runtime["track_end_grace"] = 20.0
 
     def tearDown(self):
-        (core_engine.fetch_itunes_metadata, core_engine.fetch_image_base64,
-         core_engine._publish_phase, core_engine.publish_state) = self._orig
+        (core_engine.fetch_itunes_metadata,
+         core_engine._publish_phase) = self._orig
         core_engine._clear_track_state(set_backoff=False)
 
     def track(self, title="T", offset=42.0):
