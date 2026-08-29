@@ -98,10 +98,11 @@ tailwind.config = {
 <!-- Desktop sidebar -->
 <nav class="hidden md:flex flex-col fixed left-0 top-0 h-full py-md px-sm bg-surface/30 backdrop-blur-[20px] border-r border-white/10 w-64 z-50">
   <div class="mb-xl">
-    <div class="flex items-center gap-xs">
+    <a href="/" aria-label="SpinSense home"
+       class="flex items-center gap-xs rounded-lg hover:opacity-80 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
       <img src="/static/favicon.svg?v={{ asset_v }}" alt="" width="32" height="32" class="flex-shrink-0">
       <h1 class="font-headline text-headline-md text-primary tracking-tight">SpinSense</h1>
-    </div>
+    </a>
     <p class="text-body-sm text-on-surface-variant mt-1">Hi-Fi Scrobbler</p>
   </div>
 
@@ -129,7 +130,8 @@ tailwind.config = {
 
 <!-- Mobile top bar -->
 <header class="md:hidden fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile h-16 bg-surface/40 backdrop-blur-[20px] border-b border-white/10">
-  <a href="/" class="flex items-center gap-xs font-headline text-headline-md text-primary tracking-tight">
+  <a href="/" aria-label="SpinSense home"
+     class="flex items-center gap-xs font-headline text-headline-md text-primary tracking-tight rounded-lg hover:opacity-80 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
     <img src="/static/favicon.svg?v={{ asset_v }}" alt="" width="28" height="28" class="flex-shrink-0">
     SpinSense
   </a>
