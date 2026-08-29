@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import urllib.parse
@@ -133,13 +134,53 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/art", StaticFiles(directory=ART_DIR), name="art")
 templates = Jinja2Templates(directory="templates")
 
-# Version-stamp static asset URLs so each release busts browser/proxy caches
+# Version-stamp static asset URLs so a rebuild busts browser/proxy caches
 # (kills the 'new HTML, stale CSS/JS' class of bug). VERSION lives at repo root.
-try:
-    with open(os.path.join(os.path.dirname(__file__), "..", "VERSION")) as _vf:
-        ASSET_VERSION = _vf.read().strip() or "dev"
-except Exception:
-    ASSET_VERSION = "dev"
+
+
+def _static_digest(static_dir: str) -> str:
+    """Short digest of everything under `static_dir`, by content.
+
+    VERSION on its own is not enough, and shipping a beta proved it: VERSION
+    only moves at a release, so every build of a rolling tag like :beta reused
+    one `?v=` while the JavaScript underneath changed five times. A browser or
+    an upstream proxy then serves yesterday's script against today's markup —
+    exactly the bug the stamp exists to prevent.
+
+    Hashing content rather than mtimes matters: a git checkout restamps mtimes
+    on every build, so an mtime-based digest would change on every rebuild and
+    needlessly discard caches that are still perfectly good.
+    """
+    digest = hashlib.sha256()
+    for root, dirs, files in os.walk(static_dir):
+        dirs.sort()  # stable walk order, or the digest is nondeterministic
+        for name in sorted(files):
+            path = os.path.join(root, name)
+            digest.update(os.path.relpath(path, static_dir).encode())
+            try:
+                with open(path, "rb") as handle:
+                    for chunk in iter(lambda: handle.read(65536), b""):
+                        digest.update(chunk)
+            except OSError:
+                continue  # unreadable file: skip it rather than lose the stamp
+    return digest.hexdigest()[:8]
+
+
+def _asset_version() -> str:
+    """`<version>.<digest>`, or a bare version if the assets can't be read."""
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "..", "VERSION")) as _vf:
+            version = _vf.read().strip() or "dev"
+    except OSError:
+        version = "dev"
+    try:
+        return f"{version}.{_static_digest('static')}"
+    except Exception as e:
+        print(f"⚠️ Could not digest static assets, using bare version: {e}")
+        return version
+
+
+ASSET_VERSION = _asset_version()
 templates.env.globals["asset_v"] = ASSET_VERSION
 
 
