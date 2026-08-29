@@ -27,6 +27,10 @@ class AudioConfig(BaseModel):
     # larger of it and 10% of the track length.
     Track_End_Detection: bool = True
     Track_End_Grace_Secs: float = 20.0
+    # Peak-normalise each sample before sending it to the recognizer. Quiet
+    # songs are the ones it misses; see normalize_pcm() in core/core_engine.py.
+    Normalize_Sample: bool = True
+    Normalize_Target_dBFS: float = -3.0
     Retrigger_On_Track_Change: bool = False
     Fallback_Provider: Literal["none", "audd", "acoustid"] = "none"
     AudD_API_Token: str = ""

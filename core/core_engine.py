@@ -37,6 +37,8 @@ DEFAULT_CONFIG = {
         "Rescan_Wait_Interval": 5.0,
         "Track_End_Detection": True,
         "Track_End_Grace_Secs": 20.0,
+        "Normalize_Sample": True,
+        "Normalize_Target_dBFS": -3.0,
         "Retrigger_On_Track_Change": False,
         "Fallback_Provider": "none",
         "AudD_API_Token": "",
@@ -96,6 +98,8 @@ runtime = {
     "rescan_wait": 5.0,
     "track_end_detection": True,
     "track_end_grace": 20.0,
+    "normalize_sample": True,
+    "normalize_target_dbfs": -3.0,
     "fallback_provider": "none",
     "audd_token": "",
     "mic_device": None,
@@ -115,6 +119,8 @@ def _populate_runtime(cfg):
     runtime["rescan_wait"]      = cfg.get('Audio', {}).get('Rescan_Wait_Interval', 5.0)
     runtime["track_end_detection"] = cfg.get('Audio', {}).get('Track_End_Detection', True)
     runtime["track_end_grace"]  = cfg.get('Audio', {}).get('Track_End_Grace_Secs', 20.0)
+    runtime["normalize_sample"] = cfg.get('Audio', {}).get('Normalize_Sample', True)
+    runtime["normalize_target_dbfs"] = cfg.get('Audio', {}).get('Normalize_Target_dBFS', -3.0)
     runtime["retrigger_on_track_change"] = cfg.get('Audio', {}).get('Retrigger_On_Track_Change', False)
     runtime["fallback_provider"] = cfg.get('Audio', {}).get('Fallback_Provider', 'none')
     runtime["audd_token"]       = cfg.get('Audio', {}).get('AudD_API_Token', '')
@@ -393,6 +399,12 @@ shazam = Shazam()
 RECOGNIZE_ATTEMPTS = 3  # 1 initial + 2 auto-retries
 _MAX_SAMPLE_SECONDS = 60.0  # ceiling for the escalating rescan ladder
 SAMPLE_RATE = 48000  # mic capture + recognition sample rate (Hz)
+
+# Ceiling on how much we will amplify a quiet sample. Beyond this the signal is
+# so far down that we would mostly be amplifying the noise floor, and handing
+# the recognizer louder hiss helps nobody.
+MAX_NORMALIZE_GAIN_DB = 30.0
+_INT16_PEAK = 32767
 state = {
     "in_song": False,
     "last_song": "",
@@ -414,7 +426,68 @@ state = {
     "clock": None,
     "capture_mono": 0.0,
     "capture_wall": 0,
+    # Input-stall watchdog.
+    "last_callback_mono": 0.0,
+    "zero_run_secs": 0.0,
+    "last_restart_mono": 0.0,
+    "input_stalled": False,
 }
+
+
+def normalize_pcm(samples, target_dbfs: float, max_gain_db: float = MAX_NORMALIZE_GAIN_DB):
+    """Peak-normalize int16 PCM toward `target_dbfs`, capped at `max_gain_db`.
+
+    Quiet pressings and quiet songs are the ones Shazam misses, even though the
+    same needle and preamp identify loud tracks fine. Amplification adds no
+    information — a quiet-but-clean line-level signal already holds everything
+    the fingerprint needs — but it does stop the recognizer working near the
+    bottom of its input range, which is where the misses cluster.
+
+    Pure, so the arithmetic is testable without a sound card. Returns the input
+    untouched when it is silent or already at target.
+    """
+    if samples is None or len(samples) == 0:
+        return samples
+    peak = float(np.max(np.abs(samples.astype(np.int32))))
+    if peak <= 0:
+        return samples  # digital silence: nothing to scale
+
+    target_peak = _INT16_PEAK * (10.0 ** (min(float(target_dbfs), 0.0) / 20.0))
+    gain = min(target_peak / peak, 10.0 ** (float(max_gain_db) / 20.0))
+    if gain <= 1.0:
+        return samples  # already at or above target; never attenuate
+
+    scaled = samples.astype(np.float32) * gain
+    # Clip before the cast: numpy wraps on int16 overflow, which would turn a
+    # loud transient into full-scale noise of the opposite sign.
+    return np.clip(scaled, -_INT16_PEAK, _INT16_PEAK).astype(np.int16)
+
+
+# --- Input-stall detection ---
+# The engine went deaf twice in a month: the meter sat at exactly 0 where it
+# normally jitters, and only a restart brought it back. Nothing noticed, because
+# audio_callback simply stopped being called and the last RMS persisted.
+CALLBACK_TIMEOUT_SECS = 5.0    # the callback fires ~22x/sec; 5s of nothing is dead
+ZERO_RMS_STALL_SECS = 30.0     # callback alive but handing us digital silence
+RESTART_COOLDOWN_SECS = 30.0   # don't thrash if reopening doesn't help
+
+
+def detect_input_stall(now_mono, last_callback_mono, rms, zero_run_secs,
+                       tick_secs: float = 1.0):
+    """Pure: one tick of input-liveness checking.
+
+    Returns (zero_run_secs, reason or None). Two independent signals, because
+    the failure showed up as both: the callback stopping entirely, and the
+    callback still running but returning exact zeros. A real analogue input
+    essentially never produces a bit-exact 0.0 RMS, so treating a sustained run
+    of them as a fault is safe.
+    """
+    zero_run_secs = zero_run_secs + tick_secs if rms == 0.0 else 0.0
+    if now_mono - last_callback_mono > CALLBACK_TIMEOUT_SECS:
+        return zero_run_secs, "no audio callbacks"
+    if zero_run_secs >= ZERO_RMS_STALL_SECS:
+        return zero_run_secs, "input silent at exactly zero"
+    return zero_run_secs, None
 
 
 def build_status_payload(phase: str, rms: float, st: dict) -> dict:
@@ -426,6 +499,9 @@ def build_status_payload(phase: str, rms: float, st: dict) -> dict:
         "payload": {
             "rms_level": rms,
             "engine_active": True,
+            # False whenever the audio device has gone quiet in a way that
+            # isn't music — the dashboard says so instead of looking idle.
+            "input_ok": not st.get("input_stalled", False),
             "phase": phase,
             "status_msg": "Playing" if st.get("in_song") else "Listening",
             "track": {
@@ -459,6 +535,21 @@ async def _write_uds(line: str) -> None:
         await writer.wait_closed()
     except Exception:
         pass
+
+
+async def emit_event(level: str, message: str) -> None:
+    """Send one diagnostic event to the backend's ring buffer.
+
+    The engine's print() output only reaches `docker logs`, which needs shell
+    access on the host — so the things worth noticing (a stalled input, a
+    recognition given up on, a track-end check firing) were invisible from the
+    web UI. Same socket as status frames; the backend files them by `type`.
+    """
+    print(f"[{level.upper()}] {message}")
+    await _write_uds(json.dumps({
+        "type": "event",
+        "payload": {"ts": int(time.time()), "level": level, "message": message},
+    }) + "\n")
 
 
 async def _publish_phase(phase: str) -> None:
@@ -567,6 +658,12 @@ async def _capture_sample(sample_len: float | None = None) -> bytes:
     recording = sd.rec(int(sample_len * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1,
                        dtype='int16', device=mic)
     await asyncio.to_thread(sd.wait)
+    if runtime["normalize_sample"]:
+        before = int(np.max(np.abs(recording.astype(np.int32)))) if len(recording) else 0
+        recording = normalize_pcm(recording, runtime["normalize_target_dbfs"])
+        after = int(np.max(np.abs(recording.astype(np.int32)))) if len(recording) else 0
+        if after != before:
+            print(f"[!] Normalized sample peak {before} -> {after}")
     wav_io = io.BytesIO()
     with wave.open(wav_io, 'wb') as wf:
         wf.setnchannels(1)
@@ -951,7 +1048,7 @@ async def recognize_audio(preserve_on_miss: bool = False, reason: str = "onset")
         track_clock.defer(state.get("clock"), time.monotonic())
         await _publish_phase("playing" if state["in_song"] else "listening")
     else:
-        print("❌ Could not identify track (gave up).")
+        await emit_event("warning", "Could not identify track — gave up after retries")
         # Order matters: clear the track (emptying the title) BEFORE publishing
         # no_match, so the empty-title frame resets ipc_manager's dedupe. Reorder
         # these and a same-title track after a failed ID could be dropped or
@@ -984,6 +1081,9 @@ def audio_callback(indata, _frames, _time, _status):
     the module-level `time` import besides)."""
     rms = float(np.sqrt(np.mean(indata ** 2)))
     state["current_rms"] = rms
+    # Liveness for the stall watchdog: this is the only place that proves the
+    # audio device is still handing us buffers.
+    state["last_callback_mono"] = time.monotonic()
     if calibration is not None and calibration["status"] == "running":
         calibration["samples"].append(rms)
 
@@ -1021,6 +1121,17 @@ def _scan_decision(vol, threshold, in_song, silence_counter, new_song_silence, b
     return "silence"
 
 
+def _reset_stall_watch() -> None:
+    """Re-arm the watchdog after we ourselves closed the stream.
+
+    Recognition stops the stream and zeroes current_rms on purpose. Without
+    this the watchdog would read its own handiwork as a dead input and restart
+    a device that is working perfectly.
+    """
+    state["last_callback_mono"] = time.monotonic()
+    state["zero_run_secs"] = 0.0
+
+
 async def audio_monitor_loop():
     global _mqtt_task, _config_task, _command_task
     # Hold strong references to these long-lived tasks: the event loop only
@@ -1032,6 +1143,7 @@ async def audio_monitor_loop():
     print("--- SpinSense engine active ---")
 
     stream = _open_input_stream(audio_callback)
+    state["last_callback_mono"] = time.monotonic()
 
     while True:
         # Honor a mic-device change before we evaluate this iteration's volume.
@@ -1048,8 +1160,38 @@ async def audio_monitor_loop():
                 print(f"⚠️ Failed to open new audio stream: {e}")
             mic_change_event.clear()
             state["current_rms"] = 0.0
+            _reset_stall_watch()
 
         vol = state["current_rms"]
+
+        # Watchdog: has the audio device stopped talking to us? Checked before
+        # anything else, because every decision below trusts `vol`, and a dead
+        # input reads exactly like a silent record.
+        now_mono = time.monotonic()
+        state["zero_run_secs"], stall_reason = detect_input_stall(
+            now_mono, state["last_callback_mono"], vol, state["zero_run_secs"],
+        )
+        if stall_reason and now_mono - state["last_restart_mono"] > RESTART_COOLDOWN_SECS:
+            state["last_restart_mono"] = now_mono
+            if not state["input_stalled"]:
+                state["input_stalled"] = True
+                await emit_event(
+                    "warning",
+                    f"Audio input stalled ({stall_reason}) — restarting capture")
+            try:
+                stream.stop()
+                stream.close()
+            except Exception as e:
+                print(f"⚠️ Failed to close stalled audio stream: {e}")
+            try:
+                stream = _open_input_stream(audio_callback)
+                state["last_callback_mono"] = time.monotonic()
+                state["zero_run_secs"] = 0.0
+            except Exception as e:
+                await emit_event("error", f"Could not reopen audio input: {e}")
+        elif not stall_reason and state["input_stalled"]:
+            state["input_stalled"] = False
+            await emit_event("info", "Audio input recovered")
 
         phase = "playing" if state["in_song"] else "listening"
         await _write_uds(json.dumps(build_status_payload(phase, vol, state)) + "\n")
@@ -1068,6 +1210,7 @@ async def audio_monitor_loop():
             await recognize_audio()
             stream = _open_input_stream(audio_callback)
             state["current_rms"] = 0.0
+            _reset_stall_watch()
             await asyncio.sleep(1)
             continue
 
@@ -1087,12 +1230,15 @@ async def audio_monitor_loop():
             backing_off=state.get("back_off", False),
             gap_qualified=state["silence_counter"] >= runtime["new_song_silence"],
         ):
-            print(f"\n[ END-CHECK ] {state['last_song']} should be over — re-identifying...")
+            await emit_event(
+                "info",
+                f"Track-end check: {state['last_song']} should be over — re-identifying")
             stream.stop()
             stream.close()
             await recognize_audio(preserve_on_miss=True, reason="track_end")
             stream = _open_input_stream(audio_callback)
             state["current_rms"] = 0.0
+            _reset_stall_watch()
             await asyncio.sleep(1)
             continue
 
@@ -1102,6 +1248,7 @@ async def audio_monitor_loop():
             await recognize_audio()
             stream = _open_input_stream(audio_callback)
             state["current_rms"] = 0.0
+            _reset_stall_watch()
         elif decision == "wait_gap":
             print("b", end="", flush=True)
         elif decision == "tick":

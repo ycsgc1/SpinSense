@@ -207,6 +207,56 @@
     }
   }
 
+  // ---------- Diagnostics ----------
+  //
+  // The engine's own output only reaches `docker logs`, which needs shell
+  // access on the host. These are the events it considered worth surfacing.
+
+  const EVENTS_LIST = document.getElementById("events-list");
+  const EVENTS_REFRESH = document.getElementById("events-refresh");
+
+  const EVENT_TONE = {
+    error:   "text-error",
+    warning: "text-warning",
+    info:    "text-on-surface-variant",
+  };
+
+  function fmtEventTime(ts) {
+    const d = new Date((ts || 0) * 1000);
+    return d.toLocaleTimeString(undefined, {
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    });
+  }
+
+  function renderEvents(list) {
+    if (!EVENTS_LIST) return;
+    if (!list || !list.length) {
+      EVENTS_LIST.innerHTML =
+        '<li class="text-body-sm text-on-surface-variant font-body">Nothing to report.</li>';
+      return;
+    }
+    EVENTS_LIST.innerHTML = list.map((e) => `
+      <li class="flex gap-2 leading-relaxed">
+        <span class="text-outline shrink-0 tabular-nums">${escapeHtml(fmtEventTime(e.ts))}</span>
+        <span class="${EVENT_TONE[e.level] || EVENT_TONE.info} break-words">${escapeHtml(e.message)}</span>
+      </li>`).join("");
+  }
+
+  async function refreshEvents() {
+    if (!EVENTS_LIST) return;
+    try {
+      const res = await fetch("/api/events?limit=100");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.json();
+      renderEvents(body.events || []);
+    } catch (e) {
+      EVENTS_LIST.innerHTML =
+        '<li class="text-body-sm text-on-surface-variant font-body">Couldn&rsquo;t load diagnostics.</li>';
+    }
+  }
+
+  if (EVENTS_REFRESH) EVENTS_REFRESH.addEventListener("click", refreshEvents);
+
   // ---------- Last.fm ----------
   //
   // Default path: "Connect" sends the browser to Last.fm, which signs the user
@@ -513,5 +563,6 @@
 
   loadConfig();
   refreshLastFm();
+  refreshEvents();
   reportRedirectOutcome();
 })();

@@ -226,7 +226,8 @@ class TestTrackEndConfig(unittest.TestCase):
 
         engine_audio = core_engine.DEFAULT_CONFIG["Audio"]
         schema_audio = SpinSenseConfig().dict()["Audio"]
-        for key in ("Track_End_Detection", "Track_End_Grace_Secs"):
+        for key in ("Track_End_Detection", "Track_End_Grace_Secs",
+                    "Normalize_Sample", "Normalize_Target_dBFS"):
             self.assertEqual(engine_audio[key], schema_audio[key], key)
 
     def test_mqtt_defaults_match_the_engine(self):

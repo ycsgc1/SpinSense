@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import io
 import json
 import logging
@@ -59,6 +60,33 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+# Recent engine diagnostics, newest last. The engine's print() output only
+# reaches `docker logs`, which needs shell access on the host — so the things
+# worth noticing (a stalled input, a recognition given up on) were invisible
+# from the web UI. In memory on purpose: this is for "what just happened",
+# not an audit trail, and it must never grow without bound or outlive a
+# restart in a way that misleads.
+EVENT_LIMIT = 200
+events: collections.deque = collections.deque(maxlen=EVENT_LIMIT)
+
+
+def record_event(payload: dict) -> None:
+    """File one engine event. Tolerates anything, since it crosses a socket."""
+    if not isinstance(payload, dict):
+        return
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        return
+    level = str(payload.get("level") or "info").lower()
+    if level not in ("info", "warning", "error"):
+        level = "info"
+    ts = payload.get("ts")
+    events.append({
+        "ts": int(ts) if isinstance(ts, (int, float)) else int(time.time()),
+        "level": level,
+        "message": message[:500],
+    })
 
 # Module-level dedupe state: the (artist, title) of the most recent play we
 # wrote to SQLite. Reset to None whenever the engine reports silence so the same
@@ -309,6 +337,10 @@ async def handle_uds_client(reader, writer):
             payload = json.loads(data.decode())
         except json.JSONDecodeError:
             continue
+
+        if payload.get("type") == "event":
+            record_event(payload.get("payload", {}))
+            continue   # not a status frame; nothing to broadcast or persist
 
         if payload.get("type") == "live_status":
             body = payload.get("payload", {})

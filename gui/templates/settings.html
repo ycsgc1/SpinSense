@@ -89,6 +89,17 @@
           <span class="relative shrink-0 w-11 h-6 rounded-full bg-surface-container-highest border border-outline-variant/40 peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-on-surface after:transition-transform peer-checked:after:translate-x-5"></span>
         </label>
 
+        <label class="flex items-center justify-between gap-md cursor-pointer">
+          <span class="text-body-sm text-on-surface">Boost quiet samples<span class="help-tip" tabindex="0" role="note" aria-label="Help: Boost quiet samples"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">Raises the level of each recording before sending it to the recognizer, so quiet pressings and quiet songs sit in the same range as loud ones. It never makes a loud sample louder and never amplifies by more than 30&nbsp;dB, so it can&rsquo;t turn silence into noise. Turn it off if identification gets worse rather than better.</span></span></span>
+          <input type="checkbox" name="Audio.Normalize_Sample" class="sr-only peer">
+          <span class="relative shrink-0 w-11 h-6 rounded-full bg-surface-container-highest border border-outline-variant/40 peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-on-surface after:transition-transform peer-checked:after:translate-x-5"></span>
+        </label>
+
+        <label class="block">
+          <span class="text-body-sm text-on-surface mb-1 block">Boost target (dBFS)<span class="help-tip" tabindex="0" role="note" aria-label="Help: Boost target"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">How loud to make the boosted sample. 0&nbsp;dBFS is the maximum a digital signal can hold; &minus;3 leaves a little headroom so nothing clips. Only used when &ldquo;Boost quiet samples&rdquo; is on.</span></span></span>
+          <input type="number" name="Audio.Normalize_Target_dBFS" min="-30" max="0" step="0.5" class="form-input">
+        </label>
+
         <label class="block">
           <span class="text-body-sm text-on-surface mb-1 block">Backup recognizer<span class="help-tip" tabindex="0" role="note" aria-label="Help: Backup recognizer"><span class="material-symbols-outlined help-icon">help</span><span class="help-bubble" role="tooltip">When Shazam can't identify a track on its first try, SpinSense retries the same sample against this backup before giving up. Shazam stays the primary. AudD needs an API token below; AcoustID is free and needs nothing.</span></span></span>
           <select name="Audio.Fallback_Provider" class="form-input">
@@ -103,6 +114,22 @@
           <input type="password" name="Audio.AudD_API_Token" autocomplete="off" class="form-input">
         </label>
       </div>
+    </section>
+
+    <section class="glass-panel rounded-xl p-md md:p-lg">
+      <div class="flex items-center justify-between mb-md gap-md">
+        <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest">Diagnostics</h3>
+        <button type="button" id="events-refresh"
+                class="bg-surface-container-high border border-outline-variant/40 text-on-surface font-medium px-md py-1.5 rounded-full hover:bg-surface-container-highest transition-colors text-label-sm">
+          Refresh
+        </button>
+      </div>
+      <p class="text-body-sm text-on-surface-variant mb-md">
+        Recent activity from the recognition engine &mdash; stalled audio, tracks it
+        couldn&rsquo;t identify, track-end checks. Newest first, kept in memory only, so
+        this clears when SpinSense restarts.
+      </p>
+      <ul id="events-list" class="flex flex-col gap-1 font-mono text-label-sm max-h-72 overflow-y-auto"></ul>
     </section>
 
     <section class="glass-panel rounded-xl p-md md:p-lg">

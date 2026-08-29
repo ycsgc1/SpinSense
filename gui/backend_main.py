@@ -19,7 +19,7 @@ import play_history
 import stats
 import reconcile
 from config_manager import SpinSenseConfig, load_config, save_config
-from ipc_manager import ART_DIR, manager, handle_uds_client, unify_art
+from ipc_manager import ART_DIR, events, manager, handle_uds_client, unify_art
 from discovery import advertiser
 
 # Paths that the setup-wizard redirect must let through. Everything outside
@@ -630,6 +630,15 @@ async def get_stats(period: str = "month", year: int | None = None,
         return await asyncio.to_thread(stats.compute_stats, period, year, month)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"detail": str(e)})
+
+
+@app.get("/api/events")
+def get_events(limit: int = 100):
+    """Recent engine diagnostics, newest first — what the Settings page shows
+    so a stalled input or a run of failed identifications is visible without
+    shell access to the host."""
+    limit = max(1, min(int(limit), 200))
+    return {"events": list(events)[-limit:][::-1]}
 
 
 @app.get("/api/status")

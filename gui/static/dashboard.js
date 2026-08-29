@@ -12,8 +12,6 @@
   const albumEl     = $("track-album");
   const meterBar    = $("input-meter");
   const meterText   = $("input-meter-text");
-  const levelBar    = $("input-level-bar");
-  const levelText   = $("input-level-text");
   const recentList  = $("recent-plays-list");
   const meterThreshold = $("input-meter-threshold");
   const vinylStage = $("vinyl-stage");
@@ -157,26 +155,24 @@
     }
 
     // Input meter in dB, with a tick at the configured threshold.
+    // The engine says so when the audio device has gone quiet in a way that
+    // isn't music — otherwise a dead input is indistinguishable from a silent
+    // record, which is exactly how the last stall went unnoticed for a while.
+    if (payload.input_ok === false) {
+      if (phaseCaption) phaseCaption.textContent = "No audio";
+      titleEl.textContent = "Audio input stalled — trying to recover…";
+      artistEl.innerHTML = "&nbsp;";
+      albumEl.innerHTML = "&nbsp;";
+      setVinylArt(null);
+      setVinylSpinning(false);
+    }
+
     const rms = typeof payload.rms_level === "number" ? payload.rms_level : 0;
     if (meterBar && meterText) {
       const db = dbUtil.rmsToDb(rms);
       const pct = Math.max(0, Math.min(100, ((db - DB_MIN) / (DB_MAX - DB_MIN)) * 100));
       meterBar.style.width = `${pct}%`;
       meterText.textContent = rms <= 0 ? "−∞ dB" : `${db.toFixed(1)} dB`;
-    }
-
-    // System Health: Input Level (dB) — narrower visual window (-60..0)
-    // because that's where useful signal lives on this widget.
-    if (levelBar && levelText) {
-      if (rms <= 0) {
-        levelBar.style.width = "0%";
-        levelText.innerHTML  = "&minus;&infin; dB";
-      } else {
-        const db = dbUtil.rmsToDb(rms);
-        const clamped = Math.max(-60, Math.min(0, db));
-        levelBar.style.width = `${((clamped + 60) / 60) * 100}%`;
-        levelText.textContent = `${Math.round(clamped)} dB`;
-      }
     }
 
     // Recent-plays refresh on title transition
