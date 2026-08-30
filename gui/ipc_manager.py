@@ -281,6 +281,60 @@ def _read_stored_art(play_id: int) -> bytes | None:
         return None
 
 
+# How long after a play was filed a manual rescan may still replace it.
+#
+# A rescan means "that is not what is playing", and early on the reason is
+# almost always a misfire: the needle drop triggered a scan of the lead-in
+# groove and the recognizer answered from the half second of music at the end
+# of it. Replacing that play is right. Later, a rescan means something else —
+# the engine sat through a transition it never heard — and the play being
+# corrected is a real one that really did play, so it must survive.
+#
+# The window is therefore shorter than any track that could plausibly have
+# finished inside it, interludes included.
+SUPERSEDE_WINDOW_SECS = 90
+
+
+async def _supersede_last_play() -> bool:
+    """Drop the open play instead of closing it. True if one was dropped.
+
+    Soft-deletes, so the row is recoverable for the same grace period as a
+    delete from the history page rather than being destroyed on a judgement
+    call. Never touches a play already scrobbled: Last.fm has no API to take
+    one back, so a submitted play is history whether or not it was right.
+    """
+    global _last_play_id
+    if _last_play_id is None:
+        return False
+    play_id = _last_play_id
+    try:
+        row = await asyncio.to_thread(play_history.get_play, play_id)
+    except Exception as e:
+        log.warning("could not read play %s to supersede it: %s", play_id, e)
+        return False
+    if not row or row.get("scrobbled_at") is not None:
+        return False
+    age = int(time.time()) - int(row.get("played_at") or 0)
+    if age > SUPERSEDE_WINDOW_SECS:
+        return False
+    try:
+        dropped = await asyncio.to_thread(play_history.delete_play, play_id)
+    except Exception as e:
+        log.warning("could not supersede play %s: %s", play_id, e)
+        return False
+    if not dropped:
+        return False
+    log.info("rescan superseded play %s (%s - %s) after %ss",
+             play_id, row.get("artist"), row.get("title"), age)
+    record_event({
+        "level": "info",
+        "message": (f"Rescan replaced {row.get('artist')} - {row.get('title')}, "
+                    f"filed {age}s earlier"),
+    })
+    _last_play_id = None
+    return True
+
+
 async def _stamp_last_play_ended() -> None:
     global _last_play_id
     if _last_play_id is None:
@@ -308,10 +362,14 @@ def _play_clock_fields(play_clock) -> tuple[int | None, int | None]:
     return started_at, join_offset
 
 
-async def _record_if_new(track: dict, play_clock: dict | None = None) -> None:
+async def _record_if_new(track: dict, play_clock: dict | None = None,
+                         supersede: bool = False) -> None:
     """Record a new identification if the title differs from the last one we
     saved. On silence (empty title) reset the dedupe state so the next play is
-    treated as new, and close the open play's ended_at."""
+    treated as new, and close the open play's ended_at.
+
+    `supersede` is the engine reporting that this track came from a manual
+    rescan and corrects the open play rather than following it."""
     global _last_recorded_key, _last_play_id
     title = (track or {}).get("title", "") or ""
 
@@ -345,8 +403,10 @@ async def _record_if_new(track: dict, play_clock: dict | None = None) -> None:
     album_exclusive = bool(track.get("album_exclusive"))
     started_at, join_offset_secs = _play_clock_fields(play_clock)
 
-    # A different track is starting: the previous one just ended.
-    await _stamp_last_play_ended()
+    # A different track is starting: the previous one just ended — unless a
+    # rescan says it never really started, in which case it is dropped instead.
+    if not (supersede and await _supersede_last_play()):
+        await _stamp_last_play_ended()
 
     try:
         play_id = await asyncio.to_thread(
@@ -395,6 +455,9 @@ async def handle_uds_client(reader, writer):
 
         if payload.get("type") == "live_status":
             body = payload.get("payload", {})
-            await _record_if_new(body.get("track", {}), body.get("play_clock"))
+            await _record_if_new(
+                body.get("track", {}), body.get("play_clock"),
+                supersede=bool(body.get("supersedes_previous")),
+            )
 
         await manager.broadcast(payload)

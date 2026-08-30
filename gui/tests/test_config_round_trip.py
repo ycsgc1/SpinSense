@@ -224,8 +224,11 @@ class TestTrackEndConfig(unittest.TestCase):
 
         engine_audio = core_engine.DEFAULT_CONFIG["Audio"]
         schema_audio = SpinSenseConfig().dict()["Audio"]
-        for key in ("Track_End_Detection", "Track_End_Grace_Secs",
-                    "Normalize_Sample", "Normalize_Target_dBFS"):
+        # Every key, not a hand-kept list: a list is a thing to forget, and the
+        # failure it lets through is silent — two processes reading the same
+        # file and disagreeing about what an absent setting means.
+        self.assertEqual(set(engine_audio), set(schema_audio))
+        for key in schema_audio:
             self.assertEqual(engine_audio[key], schema_audio[key], key)
 
     def test_roundtrip_preserves_overrides(self):

@@ -38,6 +38,7 @@ DEFAULT_CONFIG = {
         "Track_End_Grace_Secs": 20.0,
         "Normalize_Sample": True,
         "Normalize_Target_dBFS": -3.0,
+        "Needle_Drop_Guard": True,
         "Retrigger_On_Track_Change": False,
         "Fallback_Provider": "none",
         "AudD_API_Token": "",
@@ -78,6 +79,7 @@ runtime = {
     "track_end_grace": 20.0,
     "normalize_sample": True,
     "normalize_target_dbfs": -3.0,
+    "needle_drop_guard": True,
     "fallback_provider": "none",
     "audd_token": "",
     "mic_device": None,
@@ -95,6 +97,7 @@ def _populate_runtime(cfg):
     runtime["track_end_grace"]  = cfg.get('Audio', {}).get('Track_End_Grace_Secs', 20.0)
     runtime["normalize_sample"] = cfg.get('Audio', {}).get('Normalize_Sample', True)
     runtime["normalize_target_dbfs"] = cfg.get('Audio', {}).get('Normalize_Target_dBFS', -3.0)
+    runtime["needle_drop_guard"] = cfg.get('Audio', {}).get('Needle_Drop_Guard', True)
     runtime["retrigger_on_track_change"] = cfg.get('Audio', {}).get('Retrigger_On_Track_Change', False)
     runtime["fallback_provider"] = cfg.get('Audio', {}).get('Fallback_Provider', 'none')
     runtime["audd_token"]       = cfg.get('Audio', {}).get('AudD_API_Token', '')
@@ -209,6 +212,8 @@ async def _handle_command(payload: dict) -> dict:
         return {"ok": True}
 
     if cmd == "rescan":
+        # force_scan is set here and nowhere else, so the monitor loop can treat
+        # it as "the listener asked" and pass reason="manual".
         state["force_scan"] = True
         state["back_off"] = False
         return {"ok": True}
@@ -298,6 +303,15 @@ state = {
     "album_exclusive": False,
     "back_off": False,
     "force_scan": False,
+    # How much of the most recent capture was actually above the listening
+    # threshold, and whether the match it produced replaces the open play.
+    # Both are written immediately before they are read; 1.0 means "assume
+    # music", which is the direction that never suppresses a scan.
+    "sample_active_ratio": 1.0,
+    "supersede_previous": False,
+    # Consecutive captures rejected as needle drops. Bounded so a genuinely
+    # intermittent input can't keep the guard saying no forever.
+    "needle_drop_streak": 0,
     # Track-end prediction (core/track_clock.py). `clock` is the current play's
     # TrackClock or None; the capture stamps are two readings of the instant the
     # most recent sample started recording, which is what the clock anchors to.
@@ -339,6 +353,46 @@ def normalize_pcm(samples, target_dbfs: float, max_gain_db: float = MAX_NORMALIZ
     # Clip before the cast: numpy wraps on int16 overflow, which would turn a
     # loud transient into full-scale noise of the opposite sign.
     return np.clip(scaled, -_INT16_PEAK, _INT16_PEAK).astype(np.int16)
+
+
+# --- Needle-drop rejection ---
+# Lowering the needle produces a thump loud enough to clear the listening
+# threshold, but the lead-in groove behind it is silent. The scan that thump
+# triggers therefore samples mostly nothing — and the half second of music that
+# sometimes creeps in at the end is enough for the recognizer to answer
+# confidently and wrongly. That wrong answer then owns the whole first track,
+# because no gap follows it to trigger another scan.
+#
+# Music fills a sample and a needle drop does not, which separates the two
+# without spending a recognition call to find out.
+NEEDLE_DROP_FRAME_SECS = 0.05
+MIN_ACTIVE_SAMPLE_RATIO = 0.4
+# After this many rejections in a row the guard stands aside and lets the
+# recognizer have the sample. The measurement is a heuristic about a mechanical
+# event, and a heuristic that can refuse indefinitely is one that can go deaf.
+MAX_NEEDLE_DROP_ABORTS = 3
+
+
+def active_audio_ratio(samples, threshold: float, sample_rate: int = SAMPLE_RATE,
+                       frame_secs: float = NEEDLE_DROP_FRAME_SECS) -> float:
+    """Fraction of an int16 capture whose short frames clear `threshold`.
+
+    `threshold` is Volume_Threshold, which the monitor loop applies to float
+    RMS in -1..1 — so the capture is scaled to meet the config rather than the
+    config scaled to int16, and the two paths judge "loud enough" identically.
+
+    Pure, so the arithmetic is testable without a turntable. A capture too
+    short to hold one frame reads 0.0: nothing measurable is not music.
+    """
+    if samples is None or len(samples) == 0:
+        return 0.0
+    flat = np.asarray(samples).reshape(-1).astype(np.float32) / _INT16_PEAK
+    frame = max(1, int(sample_rate * frame_secs))
+    usable = len(flat) - (len(flat) % frame)
+    if usable < frame:
+        return 0.0
+    rms = np.sqrt(np.mean(flat[:usable].reshape(-1, frame) ** 2, axis=1))
+    return float(np.mean(rms > float(threshold)))
 
 
 # --- Input-stall detection ---
@@ -399,6 +453,10 @@ def build_status_payload(phase: str, rms: float, st: dict) -> dict:
             # consumers that don't know the key (older HACS integrations) skip
             # it. None whenever no track is playing. See core/track_clock.py.
             "play_clock": track_clock.play_clock_payload(st.get("clock")),
+            # Set on the single frame that carries a manual rescan's
+            # replacement track, so the backend can drop the play it corrects
+            # instead of filing a second one. See ipc_manager.
+            "supersedes_previous": bool(st.get("supersede_previous")),
         },
     }
 
@@ -588,6 +646,10 @@ async def _capture_sample(sample_len: float | None = None) -> bytes:
     recording = sd.rec(int(sample_len * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1,
                        dtype='int16', device=mic)
     await asyncio.to_thread(sd.wait)
+    # Measured on the raw recording: normalization is peak-based, so boosting a
+    # thump-and-silence capture would drag the silence up with it and make the
+    # needle drop look like music.
+    state["sample_active_ratio"] = active_audio_ratio(recording, runtime["threshold"])
     if runtime["normalize_sample"]:
         before = int(np.max(np.abs(recording.astype(np.int32)))) if len(recording) else 0
         recording = normalize_pcm(recording, runtime["normalize_target_dbfs"])
@@ -837,8 +899,10 @@ async def _handle_match(track: dict, reason: str = "onset") -> None:
     produced by a backend (_identify_shazam / _identify_audd).
 
     `reason` is what triggered the recognition — "onset" for the ordinary
-    threshold/gap path, "track_end" for a track-end check. It only affects the
-    play clock's rescan budget: see the `previous` argument below."""
+    threshold/gap path, "track_end" for a track-end check, "manual" for a
+    rescan the listener asked for. It affects the play clock's rescan budget
+    (see the `previous` argument below) and, for "manual", whether this match
+    replaces the open play or starts a new one."""
     title = track.get('title') or 'Unknown Title'
     artist = track.get('artist') or 'Unknown Artist'
 
@@ -868,6 +932,12 @@ async def _handle_match(track: dict, reason: str = "onset") -> None:
     # of the side. A same-track match from any other path means gap detection
     # is working, so the budget resets.
     same_track = result_str == state["last_song"]
+    # A rescan is the listener saying the current identification is wrong. When
+    # one lands on a *different* track, the play it corrects was very likely
+    # never really playing — so tell the backend to replace it rather than
+    # bookend it. The backend still refuses if that play is old enough to have
+    # been real; see ipc_manager._supersede_last_play().
+    superseding = reason == "manual" and not same_track
     state["clock"] = track_clock.start_clock(
         duration_secs=duration_secs,
         match_offset_secs=track.get("match_offset_secs"),
@@ -882,9 +952,12 @@ async def _handle_match(track: dict, reason: str = "onset") -> None:
         print(f"🎵 NEW TRACK: {result_str}")
         print(f"💿 Album:     {album}")
         print(f"🖼️  Art URL:   {art_url}")
-        if runtime.get("retrigger_on_track_change"):
+        if runtime.get("retrigger_on_track_change") and not superseding:
             # Drop to idle for a moment so Home Assistant automations that
-            # trigger on "started playing" re-fire for the new track.
+            # trigger on "started playing" re-fire for the new track. Skipped
+            # when superseding: the blip is an empty-track frame, which the
+            # backend reads as the end of the play we are about to replace —
+            # and a correction is not a new track starting anyway.
             await _publish_idle_blip()
             await asyncio.sleep(0.5)
         state["last_song"] = result_str
@@ -893,7 +966,13 @@ async def _handle_match(track: dict, reason: str = "onset") -> None:
 
     state["in_song"] = True
     state["back_off"] = False
-    await _publish_phase("playing")
+    # Raised for exactly one frame: a flag that outlived its publish would tell
+    # the backend to drop a play that had nothing to do with the rescan.
+    state["supersede_previous"] = superseding
+    try:
+        await _publish_phase("playing")
+    finally:
+        state["supersede_previous"] = False
 
 
 def _log_clock(clock) -> None:
@@ -929,6 +1008,7 @@ def _clear_track_state(set_backoff: bool) -> None:
     state["album_exclusive"] = False
     state["clock"] = None
     state["back_off"] = set_backoff
+    state["needle_drop_streak"] = 0
 
 
 async def _rescan_pause(seconds: float) -> None:
@@ -958,6 +1038,26 @@ async def recognize_audio(preserve_on_miss: bool = False, reason: str = "onset")
         await _publish_phase("scanning")
         sample_len = min(base * (attempt + 1), _MAX_SAMPLE_SECONDS)
         wav = await _capture_sample(sample_len)
+        ratio = state.get("sample_active_ratio", 1.0)
+        if (runtime["needle_drop_guard"] and reason == "onset"
+                and not state["in_song"] and ratio < MIN_ACTIVE_SAMPLE_RATIO
+                and state["needle_drop_streak"] < MAX_NEEDLE_DROP_ABORTS):
+            # A thump with nothing behind it. Give the sample up rather than
+            # spend a call guessing at it, and leave the ordinary gate exactly
+            # as it was: the lead-in groove reads as silence, so the monitor
+            # loop won't scan again until audio returns, which is the moment
+            # the music starts. Deliberately *not* arming the back-off — if the
+            # song had already begun during this capture the audio would never
+            # go quiet again, the back-off would never clear, and we would sit
+            # out the whole first track.
+            state["needle_drop_streak"] += 1
+            await emit_event(
+                "info",
+                f"Ignoring needle drop — only {ratio:.0%} of the sample had audio")
+            state["silence_counter"] = 0
+            await _publish_phase("listening")
+            return
+        state["needle_drop_streak"] = 0
         await _publish_phase("identifying" if attempt == 0 else "retrying")
         track = await _identify_shazam(wav)
         if track is None and attempt == 0:
@@ -1130,7 +1230,7 @@ async def audio_monitor_loop():
             state["force_scan"] = False
             stream.stop()
             stream.close()
-            await recognize_audio()
+            await recognize_audio(reason="manual")
             stream = _open_input_stream(audio_callback)
             state["current_rms"] = 0.0
             _reset_stall_watch()

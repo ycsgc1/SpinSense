@@ -70,7 +70,7 @@ They communicate over **two named UDS sockets** under `/tmp` (see §3). This spl
 | Socket | Direction | Used for | Owned by |
 | --- | --- | --- | --- |
 | `/tmp/spinsense.sock` | engine → backend | Live status frames (RMS, current track, engine status) | Backend listens (`gui/ipc_manager.py`); engine writes (`core_engine.py` audio loop) |
-| `/tmp/spinsense-cmd.sock` | backend → engine | Calibration command channel (`start_calibration`, `get_calibration`, `clear_calibration`) | Engine listens (`command_listener_loop()` in `core_engine.py`); backend writes (`_send_cmd` in `backend_main.py`) |
+| `/tmp/spinsense-cmd.sock` | backend → engine | Command channel: `start_calibration`, `get_calibration`, `clear_calibration`, `rescan` | Engine listens (`command_listener_loop()` in `core_engine.py`); backend writes (`_send_cmd` in `backend_main.py`) |
 
 Both use **JSON-per-line**, short-lived connections. The status socket has a long-lived listener with reconnects on either side; the command socket is one connection per command.
 
@@ -92,6 +92,13 @@ The status frame schema is the single source of truth for what the GUI and the H
   }
 }
 ```
+
+Fields are **additive** — a consumer that doesn't know a key skips it, which is
+how an older HACS integration keeps working against a newer engine. The sample
+above shows the core; the frame also carries `phase`, `input_ok`, the
+enrichment fields on `track` (`isrc`, `genre`, `release_year`, `duration_secs`,
+`album_exclusive`), the `play_clock` block (§6.1), and `supersedes_previous`
+(§6.2), which is true on exactly one frame per manual rescan.
 
 The backend caches the most recent payload (`ipc_manager.last_status`) and serves it on `GET /api/status` so the HA integration can poll between WebSocket frames.
 
@@ -244,6 +251,91 @@ The second measurement is the load-bearing one. A single reading near the top of
 a track cannot distinguish a real playhead from a constant zero; only a scan
 taken deliberately mid-song can. `_log_clock()` still prints position and source
 on every match, which is how this was measured and how a regression would show.
+
+---
+
+### 6.2 The needle drop, and the play it invents
+
+Lowering the needle makes a thump. It is loud — comfortably past
+`Volume_Threshold` — and it is the *only* thing that is: behind it sits the
+lead-in groove, which is silent, and the music does not start for another second
+or three. To the 1 Hz monitor loop, which sees one instantaneous RMS reading per
+tick, that thump is indistinguishable from a song starting.
+
+So a scan fires, and it samples the lead-in groove. Three things can come of it:
+
+| what the sample held | what happens |
+|---|---|
+| nothing but the thump | no match — harmless, back-off arms, the music triggers a real scan |
+| the thump and a fragment of the song | **a confident wrong answer** |
+| the song, properly | correct, by luck of timing |
+
+The middle row is the problem, and it is worse than a plain miss. Half a second
+of audio is enough for the recognizer to answer, and enough for it to answer
+with the wrong track. That wrong track then owns the entire first song of the
+side, because the thing that would normally correct it — a detected gap — does
+not come until the song is *over*.
+
+**The guard.** A needle drop and a song do not look alike, once you ask the
+right question. Music *fills* a sample; a needle drop is a spike in a field of
+silence. `active_audio_ratio()` splits the capture into 50 ms frames and reports
+what fraction of them clear the same `Volume_Threshold` the monitor loop uses.
+A needle drop reads a few percent; a song reads near 1.0, and still reads well
+above the 0.4 cutoff with two full seconds of near-silence in the middle of it.
+Below the cutoff, `recognize_audio()` returns before it ever calls out —
+so this costs no API budget to enforce, and saves the call it rejects.
+
+Three properties make it safe to have on by default:
+
+- **It only runs before a track is known** (`not in_song`). Mid-play, a quiet
+  sample is a quiet passage, and the track-end path handles that.
+- **A manual rescan is never guarded.** The listener asked; refusing to look
+  because the room is quiet would make the button appear broken.
+- **It changes no gate on the way out.** The lead-in groove reads as silence, so
+  the ordinary path already waits and then scans the moment audio returns —
+  which is when the music starts. Arming the back-off here looks tempting and is
+  a trap: if the song had *already* begun during the rejected capture, the audio
+  never goes quiet again, the back-off never clears, and the engine sits out the
+  entire first track. That is worse than the bug being fixed.
+- **It can only refuse `MAX_NEEDLE_DROP_ABORTS` times in a row.** This is a
+  heuristic about a mechanical event, and a heuristic that can refuse
+  indefinitely is one that can go deaf. An intermittent input — a click once per
+  revolution, a dusty groove — eventually gets handed to the recognizer anyway,
+  which either identifies it or gives up through the ordinary no-match path and
+  arms the back-off there. Any accepted capture clears the streak.
+
+Measurement happens on the **raw** capture, before normalisation. Peak
+normalisation would drag the silence up along with the thump and make a needle
+drop look like music.
+
+**The cleanup: a rescan replaces what it corrects.** The guard cannot catch
+every misfire, and when one gets through the listener sees a wrong title and
+presses Rescan. Filing the correction as a *second* play would be the opposite
+of what pressing the button meant — the wrong one would stay in History and in
+the scrobble queue.
+
+So a manual rescan that lands on a *different* track raises
+`supersedes_previous` on exactly one status frame, and the backend soft-deletes
+the open play instead of stamping its `ended_at`. Four things bound it:
+
+- **Only a manual rescan.** An automatic re-identification never replaces
+  anything, which is what protects the case where the engine simply sat through
+  a transition it never heard.
+- **Only inside `SUPERSEDE_WINDOW_SECS` (90 s).** Later, a rescan means that
+  missed transition, and the play being corrected is a real one that really did
+  play. The window is shorter than any track that could have finished inside it.
+- **Never a scrobbled play.** Last.fm has no API to take a scrobble back, so
+  deleting our copy would only make the two records disagree.
+- **Soft-delete, never a hard one.** This is an inference about intent, and
+  inferences about intent should be reversible; the row restores like any other
+  deleted play.
+
+The flag is raised immediately before its publish and cleared in a `finally`
+immediately after. A flag that outlived its frame would tell the backend to drop
+a play that had nothing to do with the rescan. For the same reason the
+`Retrigger_On_Track_Change` idle blip is skipped when superseding: that blip is
+an empty-track frame, which the backend reads as the end of the very play the
+rescan is about to replace.
 
 ---
 

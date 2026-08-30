@@ -31,6 +31,10 @@ class AudioConfig(BaseModel):
     # songs are the ones it misses; see normalize_pcm() in core/core_engine.py.
     Normalize_Sample: bool = True
     Normalize_Target_dBFS: float = -3.0
+    # Throw away a capture that was mostly silence instead of asking the
+    # recognizer about it — the needle-drop thump that starts a scan of the
+    # lead-in groove. See active_audio_ratio() in core/core_engine.py.
+    Needle_Drop_Guard: bool = True
     Retrigger_On_Track_Change: bool = False
     Fallback_Provider: Literal["none", "audd", "acoustid"] = "none"
     AudD_API_Token: str = ""
