@@ -202,3 +202,71 @@ class RunBackfillTest(_Db):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SwitchingPressingsTest(_Db):
+    """You own both editions, have only ever played the deluxe, and today you
+    put on the standard one. Memory must not out-argue what is actually
+    spinning."""
+
+    def setUp(self):
+        super().setUp()
+        ipc_manager._last_recorded_key = None
+        ipc_manager._last_play_id = None
+
+    def tearDown(self):
+        ipc_manager._last_recorded_key = None
+        ipc_manager._last_play_id = None
+        super().tearDown()
+
+    def feed(self, title, album, artist="Sabrina Carpenter"):
+        asyncio.run(ipc_manager._record_if_new(
+            {"title": title, "artist": artist, "album": album}))
+        ipc_manager._last_recorded_key = None   # next track is a new play
+
+    def test_a_resolved_base_beats_a_remembered_deluxe(self):
+        # Today's lookup wins: history is only consulted when nothing resolved.
+        self.seed("Taste", "Short n' Sweet (Deluxe)", 1000,
+                  artist="Sabrina Carpenter")
+        self.feed("Taste", "Short n' Sweet")
+        self.assertEqual(self.albums()[-1], "Short n' Sweet")
+
+    def test_a_side_of_the_standard_pressing_stays_standard(self):
+        for t in ("Taste", "Bed Chem", "Espresso"):
+            self.seed(t, "Short n' Sweet (Deluxe)", 1000,
+                      artist="Sabrina Carpenter")
+        for t in ("Taste", "Bed Chem", "Espresso"):
+            self.feed(t, "Short n' Sweet")
+        today = self.albums()[3:]
+        self.assertEqual(set(today), {"Short n' Sweet"})
+
+    def test_a_remembered_deluxe_is_corrected_by_the_rest_of_the_side(self):
+        # The one case where memory does get used: the lookup failed, so the
+        # deluxe is filled in from history. Reconciliation then sees a run whose
+        # other tracks resolved to the base and no track proving the deluxe —
+        # so the plainest title wins and the guess is corrected.
+        self.seed("Taste", "Short n' Sweet (Deluxe)", 1000,
+                  artist="Sabrina Carpenter")
+        self.feed("Taste", None)                     # lookup failed -> deluxe
+        self.assertEqual(self.albums()[-1], "Short n' Sweet (Deluxe)")
+
+        self.feed("Bed Chem", "Short n' Sweet")      # this one resolved
+        last = play_history.recent_plays(limit=1, db_path=self.db)[0]["id"]
+        reconcile.reconcile_album(last, db_path=self.db)
+        self.assertEqual(set(self.albums()[1:]), {"Short n' Sweet"})
+
+    def test_a_bonus_track_still_upgrades_the_whole_side(self):
+        # The downgrade must not break the upgrade: a track that can only be on
+        # the deluxe is proof, and proof outranks the default.
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "INSERT INTO plays (title, artist, album, played_at, album_exclusive)"
+            " VALUES ('Taste', 'Sabrina Carpenter', \"Short n' Sweet\", 1000, 0)")
+        cur = conn.execute(
+            "INSERT INTO plays (title, artist, album, played_at, album_exclusive)"
+            " VALUES ('Bonus Cut', 'Sabrina Carpenter', \"Short n' Sweet (Deluxe)\", 1200, 1)")
+        last = cur.lastrowid
+        conn.commit()
+        conn.close()
+        reconcile.reconcile_album(last, db_path=self.db)
+        self.assertEqual(set(self.albums()), {"Short n' Sweet (Deluxe)"})

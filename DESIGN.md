@@ -498,7 +498,11 @@ deluxe, the deluxe is the right answer for them. An album they set by hand
 (`album_locked`) outranks any later guess, because that is them telling us.
 
 **iTunes search**, last, because it is relevance-ranked rather than
-authoritative.
+authoritative — and because "relevance" for a hit song means the single.
+Asking about "Espresso" leads with "Espresso EP" and "Espresso - Single"
+before "Short n' Sweet", so `choose_edition()` anchors on an album whenever one
+is present. A lone single still resolves to itself; someone may genuinely be
+playing a 7-inch.
 
 ### Backfilling the first track of a side
 
@@ -519,6 +523,18 @@ one. Two constraints keep it honest:
 
 Together these mean a track only has to be identified correctly *once* — from
 then on the listener's own history answers for it.
+
+### Memory never out-argues the record
+
+Owning two pressings is the case this has to get right. History is consulted
+**only when the lookup resolved nothing**, so putting on the standard pressing
+files as standard even for a listener who has only ever played the deluxe.
+
+And the one path where memory does apply — the lookup failed, so the remembered
+deluxe is filled in — corrects itself. Reconciliation sees a run whose other
+tracks resolved to the base and no track proving the deluxe, so the plainest
+title wins. A qualifier is only ever kept when something proves it, which is
+also why the reverse still holds: a genuine bonus track upgrades the whole side.
 
 ---
 

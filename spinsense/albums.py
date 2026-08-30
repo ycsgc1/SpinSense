@@ -98,6 +98,21 @@ def is_base_form(album: str | None) -> bool:
     return base_title(album) == normalized(album)
 
 
+_SINGLE_OR_EP_RE = re.compile(r"\s+[-\u2013\u2014]\s+(single|ep)\s*$|\b(single|ep)\s*$",
+                              re.IGNORECASE)
+
+
+def is_single_or_ep(album: str | None) -> bool:
+    """Whether a release is a single or EP rather than an album.
+
+    iTunes ranks by relevance, so for a hit song the top result is usually the
+    single: asking about "Espresso" leads with "Espresso EP" and "Espresso -
+    Single" before "Short n' Sweet". Someone with a turntable is playing a
+    record, so when an album is available it is the better anchor.
+    """
+    return bool(_SINGLE_OR_EP_RE.search(album or ""))
+
+
 def choose_edition(album_names: list[str]) -> tuple[str | None, bool]:
     """Pick which edition a track belongs to, and say whether it proves one.
 
@@ -119,8 +134,13 @@ def choose_edition(album_names: list[str]) -> tuple[str | None, bool]:
     if not names:
         return None, False
 
-    base = base_title(names[0])
-    family = [n for n in names if base_title(n) == base]
+    # Anchor on an album where one exists, not on whichever single iTunes
+    # happened to rank first. A lone single still resolves to itself.
+    albums_only = [n for n in names if not is_single_or_ep(n)]
+    anchor = (albums_only or names)[0]
+
+    base = base_title(anchor)
+    family = [n for n in (albums_only or names) if base_title(n) == base]
     plain = [n for n in family if is_base_form(n)]
     if plain:
         return plain[0], False          # the base edition exists; prove nothing

@@ -80,6 +80,49 @@ class ChooseEditionTest(unittest.TestCase):
         self.assertEqual(albums.choose_edition(["", None]), (None, False))
 
 
+class SingleAndEpTest(unittest.TestCase):
+    """iTunes ranks by relevance, so a hit song's top result is the single, not
+    the record it is on: "Espresso" led with "Espresso EP" and "Please Please
+    Please" with "Please Please Please - Single". Someone with a turntable is
+    playing an album."""
+
+    def test_singles_and_eps_are_recognised(self):
+        for name in ("Espresso - Single", "Espresso EP", "Bang! - single",
+                     "Infinity - EP"):
+            with self.subTest(name=name):
+                self.assertTrue(albums.is_single_or_ep(name))
+
+    def test_albums_are_not(self):
+        for name in ("Short n' Sweet", "OK ORCHESTRA", "SOUR (Deluxe)",
+                     "Hurry Up, We're Dreaming"):
+            with self.subTest(name=name):
+                self.assertFalse(albums.is_single_or_ep(name))
+
+    def test_an_album_outranks_a_higher_ranked_single(self):
+        album, exclusive = albums.choose_edition(
+            ["Espresso EP", "Short n' Sweet", "Espresso - Single"])
+        self.assertEqual(album, "Short n' Sweet")
+        self.assertFalse(exclusive)
+
+    def test_a_lone_single_still_resolves_to_itself(self):
+        # 7-inches exist; this only reorders preference, it doesn't discard.
+        self.assertEqual(
+            albums.choose_edition(["Espresso - Single"]),
+            ("Espresso - Single", False))
+
+    def test_the_edition_rule_still_applies_among_albums(self):
+        album, exclusive = albums.choose_edition(
+            ["Espresso - Single", "Short n' Sweet (Deluxe)", "Short n' Sweet"])
+        self.assertEqual(album, "Short n' Sweet")
+        self.assertFalse(exclusive)
+
+    def test_a_deluxe_only_track_is_still_proof(self):
+        album, exclusive = albums.choose_edition(
+            ["Bonus - Single", "Short n' Sweet (Deluxe)"])
+        self.assertEqual(album, "Short n' Sweet (Deluxe)")
+        self.assertTrue(exclusive)
+
+
 class PickWinnerEvidenceTest(unittest.TestCase):
     def test_without_evidence_the_plainest_title_wins(self):
         self.assertEqual(
