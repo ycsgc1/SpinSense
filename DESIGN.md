@@ -483,6 +483,45 @@ check (§6.1) fired some fifty seconds late on it.
 
 ---
 
+## 11.1.2 Two cheaper oracles than search
+
+Resolving a track's album asks three sources, most specific first.
+
+**The record on the platter** (§11.1.1) — the current run's tracklist.
+
+**The listener's own history.** A vinyl collection is small and repetitive: most
+people own one or two pressings of any given record, and a track identified
+today almost certainly belongs to the album it belonged to last time.
+`play_history.album_for_track()` answers instantly, with no API call, and it
+reflects what the listener actually *owns* — if they have only ever played the
+deluxe, the deluxe is the right answer for them. An album they set by hand
+(`album_locked`) outranks any later guess, because that is them telling us.
+
+**iTunes search**, last, because it is relevance-ranked rather than
+authoritative.
+
+### Backfilling the first track of a side
+
+A side's first track has none of the above: no run established, and iTunes'
+search returns nothing at all for some titles — "OK Overture" among them. By
+the second track the record is known, but nothing was looking backwards, so the
+first play stayed "Unknown Album" for good.
+
+`reconcile_album()` now adopts the run's album for any play that never resolved
+one. Two constraints keep it honest:
+
+- It runs **after** edition unification, and judges agreement on `base_title`,
+  so a run holding both "OK ORCHESTRA" and "OK ORCHESTRA (Deluxe)" reads as one
+  record rather than two.
+- It acts **only when the run is unanimous**. A session that genuinely spans two
+  records leaves the unresolved play alone rather than letting one album bleed
+  into the other.
+
+Together these mean a track only has to be identified correctly *once* — from
+then on the listener's own history answers for it.
+
+---
+
 ## 11.2 Why there is a shared package
 
 `core/` and `gui/` are two processes and were two import roots, so anything

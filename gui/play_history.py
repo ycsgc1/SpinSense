@@ -309,6 +309,36 @@ def album_last_ended(artist: str, album: str | None, near_played_at: int,
         return int(row[0]) if row and row[0] is not None else None
 
 
+UNKNOWN_ALBUM = "Unknown Album"
+
+
+def album_for_track(artist: str, title: str,
+                    db_path: str | None = None) -> str | None:
+    """The album this exact track was last filed under, or None.
+
+    A vinyl collection is small and repetitive: most people own one or two
+    pressings of any given record, and the same song identified today almost
+    certainly belongs to the same album it belonged to last time. That makes
+    the listener's own history a better oracle than a relevance-ranked search —
+    it is a record of what they actually own. If they have only ever played the
+    deluxe, the deluxe is the right answer for them.
+
+    An album the listener set by hand wins over one we guessed, however recent
+    the guess: `album_locked` is them telling us, and that outranks inference.
+    """
+    if not artist or not title:
+        return None
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT album FROM plays "
+            "WHERE deleted_at IS NULL AND artist = ? AND title = ? "
+            "AND album IS NOT NULL AND album != ? "
+            "ORDER BY COALESCE(album_locked, 0) DESC, played_at DESC LIMIT 1",
+            (artist, title, UNKNOWN_ALBUM),
+        ).fetchone()
+        return row["album"] if row is not None else None
+
+
 def scrobble_candidates(
     since: int = 0,
     limit: int = 200,

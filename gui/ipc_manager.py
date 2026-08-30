@@ -326,6 +326,17 @@ async def _record_if_new(track: dict, play_clock: dict | None = None) -> None:
         return
 
     album = track.get("album") or None
+    if album in (None, play_history.UNKNOWN_ALBUM):
+        # The listener's own history is a better oracle than a relevance-ranked
+        # search: a vinyl collection is small and repetitive, so a track we have
+        # filed before almost certainly belongs to the same record again — and
+        # if they only own the deluxe, that is what their history says.
+        remembered = await asyncio.to_thread(
+            play_history.album_for_track, artist, title)
+        if remembered:
+            log.info("album for %s - %s recalled from history: %s",
+                     artist, title, remembered)
+            album = remembered
     art_url = track.get("art_url") or None
     isrc = track.get("isrc") or None
     genre = track.get("genre") or None

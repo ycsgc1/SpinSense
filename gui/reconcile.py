@@ -47,35 +47,84 @@ def find_run(play_id: int, db_path: str | None = None) -> list[dict]:
         return _run_rows(conn, play_id)
 
 
+UNKNOWN_ALBUM = "Unknown Album"
+
+
+def _is_unknown(album: str | None) -> bool:
+    return not album or album == UNKNOWN_ALBUM
+
+
+def _adopt_run_album(conn, run: list[dict]) -> int:
+    """Give the run's album to plays that never got one.
+
+    The first track of a side has nothing to go on: no album is established
+    yet, and iTunes' search fails outright for some titles — "OK Overture"
+    returns no results at all. By the second track the record is known, but
+    nothing was looking back at the first.
+
+    A run is one record, so once the rest of it agrees, the odd play without an
+    album belongs to it. Agreement is judged on `base_title`, not the raw
+    string, so a run holding both "OK ORCHESTRA" and "OK ORCHESTRA (Deluxe)"
+    still counts as one record — and the adopted name is whichever
+    `pick_winner` would settle on, so the run stays uniform.
+
+    Only acts when the run is unanimous, so a session spanning two records
+    never has one bleed into the other.
+    """
+    known = [r for r in run
+             if not r["album_locked"] and not _is_unknown(r["album"])]
+    if not known or len({base_title(r["album"]) for r in known}) != 1:
+        return 0
+    album = pick_winner([
+        (r["album"], r["played_at"], bool(r["album_exclusive"])) for r in known
+    ])
+    changed = 0
+    for r in run:
+        if r["album_locked"] or not _is_unknown(r["album"]):
+            continue
+        conn.execute(
+            "UPDATE plays SET album = ? WHERE id = ? "
+            "AND (album_locked IS NULL OR album_locked = 0)",
+            (album, r["id"]))
+        changed += 1
+    return changed
+
+
 def reconcile_album(play_id: int, db_path: str | None = None) -> int:
-    """Unify edition variants of play_id's album across its run. Locked rows
-    neither vote nor get rewritten. Returns the number of rows rewritten."""
+    """Unify edition variants of play_id's album across its run, and give the
+    run's album to any play that never resolved one. Locked rows neither vote
+    nor get rewritten. Returns the number of rows rewritten."""
     with _connect(db_path) as conn:
         run = _run_rows(conn, play_id)
         target = next((r for r in run if r["id"] == play_id), None)
         if target is None or target["album_locked"]:
             return 0
-        base = base_title(target["album"])
-        if not base:
-            return 0
-        group = [r for r in run
-                 if not r["album_locked"] and r["album"]
-                 and base_title(r["album"]) == base]
-        # The third element is the evidence: a play whose track could only have
-        # come from a qualified edition upgrades the whole run to it.
-        winner = pick_winner([
-            (r["album"], r["played_at"], bool(r["album_exclusive"]))
-            for r in group
-        ])
+
         changed = 0
-        for r in group:
-            if r["album"] != winner:
-                conn.execute(
-                    "UPDATE plays SET album = ? WHERE id = ? "
-                    "AND (album_locked IS NULL OR album_locked = 0)",
-                    (winner, r["id"]))
-                changed += 1
-        return changed
+        base = base_title(target["album"])
+        if base:
+            group = [r for r in run
+                     if not r["album_locked"] and r["album"]
+                     and base_title(r["album"]) == base]
+            # The third element is the evidence: a play whose track could only
+            # have come from a qualified edition upgrades the whole run to it.
+            winner = pick_winner([
+                (r["album"], r["played_at"], bool(r["album_exclusive"]))
+                for r in group
+            ])
+            for r in group:
+                if r["album"] != winner:
+                    conn.execute(
+                        "UPDATE plays SET album = ? WHERE id = ? "
+                        "AND (album_locked IS NULL OR album_locked = 0)",
+                        (winner, r["id"]))
+                    changed += 1
+            if changed:
+                run = _run_rows(conn, play_id)   # re-read: albums just changed
+
+        # After unification, so a run holding several editions of one record
+        # reads as unanimous rather than as two different albums.
+        return changed + _adopt_run_album(conn, run)
 
 
 def apply_album_to_run(play_id: int, album: str,
