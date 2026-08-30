@@ -55,6 +55,50 @@ per-recording — but remasters inconsistently reuse the original's ISRC, so it
 identifies a remaster sometimes and silently fails the rest of the time. Worth
 a spike against real records before designing anything on top of it.
 
+### Discogs — shelved 2026-08-30, with findings
+
+Investigated as a way to settle which *edition* is on the platter. **Shelved:**
+the version that would help most needs a Discogs collection the listener already
+maintains, and SpinSense should work for everyone out of the box. Recorded here
+so it doesn't have to be re-derived.
+
+**It does not fix the edition question.** After the deluxe-upgrade work, the only
+ambiguity left is a side whose every track exists on both the standard and the
+deluxe — and that is not an information problem. Nothing in the audio
+distinguishes those pressings, so no catalogue can. The case that *is*
+determinable (a bonus track plays) is already resolved from iTunes.
+
+**Two things it has that nothing else free does:**
+
+1. **The listener's own collection** — closed-set matching over a few hundred
+   owned releases instead of open search over millions, and the edition known
+   before a note plays. This is the part that needs a maintained collection.
+2. **Sides and positions** (`A1`…`D17`), with per-release vinyl tracklists.
+
+The second is the more interesting half and it needs **no** collection: once
+iTunes has named the album, one cached lookup by master id gives the vinyl
+tracklist. That would enable next-track prediction (check the *expected* next
+track before asking openly — aimed straight at the misidentification class),
+flip detection, and vinyl-accurate durations for the play clock. A field log
+shows `[ STOPPED ] 10.0s silence` immediately before "Busy Woman", which is a
+C→D flip being read as the record stopping.
+
+**Verified against the live API, 2026-08-30:**
+- Search works **unauthenticated**; measured limit `x-discogs-ratelimit: 25`/min
+  (60 with a token). Images need auth — irrelevant, artwork stays with iTunes.
+- Release JSON carries `position` and `duration` per track.
+- *Short n' Sweet*: 22 vinyl releases, collapsing to two tracklists — standard
+  1×LP / 12 tracks / sides A–B, deluxe 2×LP / 17 / A–D. So "which pressing" is a
+  two-way choice, not a 22-way one.
+- Data is user-contributed and uneven: that deluxe release is marked
+  `data_quality: "Needs Vote"`, and its tracklist does **not** credit Dolly
+  Parton on C14 — so the artist check that fixed the duet would fail against
+  Discogs. Position disambiguates it instead, but Discogs is not uniformly
+  richer than iTunes.
+
+Shazam stays the identifier either way; Discogs search is release-level and its
+track search is weak.
+
 ## Docs
 - **Home Assistant `media_player` screenshot** — the one missing "payoff" image; add it to the README's "In Home Assistant" subsection. Drop the file in `docs/images/` (e.g. `ha-entity.png`) and wire it in.
 
