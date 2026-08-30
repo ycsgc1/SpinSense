@@ -14,7 +14,7 @@ from shazamio import Shazam
 
 import track_clock
 from spinsense import itunes
-from spinsense.albums import choose_edition
+from spinsense.albums import base_title, choose_edition, is_base_form
 
 # --- 1. Paths + config bootstrap ---
 DATA_DIR = os.environ.get('SPINSENSE_DATA_DIR', os.path.join(os.path.dirname(__file__), '..'))
@@ -511,6 +511,7 @@ async def _publish_idle_blip() -> None:
 # frequently wrong about which release a song belongs to.
 album_context: dict | None = None
 _tracklist_cache: dict[int, list[dict]] = {}
+_artist_albums_cache: dict[int, list[dict]] = {}
 
 # How long a context survives without a confirming track. Matches the reconciler's
 # session gap: long enough to span flipping the record, short enough that
@@ -534,6 +535,62 @@ async def _tracklist(collection_id: int, album: str = "") -> list[dict]:
         else:
             print(f"[!] No tracklist available for {album or collection_id!r}")
     return _tracklist_cache[collection_id]
+
+
+async def _artist_releases(artist_id: int) -> list[dict]:
+    """An artist's releases, fetched at most once per artist per engine run.
+    An empty result is cached too, for the same reason `_tracklist` caches one."""
+    if artist_id not in _artist_albums_cache:
+        _artist_albums_cache[artist_id] = await itunes.artist_albums(artist_id)
+    return _artist_albums_cache[artist_id]
+
+
+async def _edition_carrying(title: str, artist: str) -> tuple[str, int, dict] | None:
+    """The edition of the record we think is playing that actually has this track.
+
+    The last resort, and the one that finally states the original rule outright:
+    a song that is not on the standard pressing means the pressing on the platter
+    is not the standard one.
+
+    It exists because iTunes' song search simply does not know about some bonus
+    tracks. Searching for "15 Minutes", "Busy Woman" or "Couldn't Make It Any
+    Harder" by Sabrina Carpenter returns nothing usable, and an album search for
+    "Short n' Sweet" doesn't list the deluxe either — so three tracks of a
+    seventeen-track record were unresolvable, and the session upgraded only when
+    it happened to reach "Bad Reviews", the one bonus track search does know.
+
+    Listed under the *artist*, the deluxe is right there. So: take the editions
+    of the record we believe is playing, and ask which of them has this track.
+    Returns `(album, collection_id, tracklist entry)`, or None.
+
+    Only reached once search has already failed, so it costs nothing in the
+    ordinary case and replaces an "Unknown Album" when it works.
+    """
+    if album_context is None:
+        return None
+    base = base_title(album_context["name"])
+    known = _tracklist_cache.get(album_context["id"]) or []
+    artist_id = next((t.get("artistId") for t in known if t.get("artistId")), None)
+    if not base or not artist_id:
+        return None
+
+    siblings = [
+        r for r in await _artist_releases(artist_id)
+        if r.get("collectionId") and r.get("collectionId") != album_context["id"]
+        and base_title(r.get("collectionName")) == base
+    ]
+    # Singles and EPs need no separate exclusion: "- Single" and "EP" are not
+    # edition qualifiers, so they survive base_title() and the comparison above
+    # already refuses them.
+    # Plainest first, matching choose_edition: never claim a super deluxe when an
+    # ordinary deluxe accounts for the track just as well.
+    siblings.sort(key=lambda r: len(r.get("collectionName") or ""))
+    for r in siblings:
+        tracks = await _tracklist(r["collectionId"], r["collectionName"])
+        entry = itunes.find_track(tracks, title, artist)
+        if entry is not None:
+            return r["collectionName"], int(r["collectionId"]), entry
+    return None
 
 
 def _context_is_live(now_mono: float) -> bool:
@@ -579,6 +636,19 @@ async def fetch_itunes_metadata(artist, title):
     results = itunes.results_for_track(
         await itunes.search_songs(artist, title), title, artist)
     if not results:
+        # Search doesn't know this track. Before giving up, ask whether another
+        # edition of the record we believe is playing has it — which is both an
+        # answer and proof of which pressing is on the platter.
+        found = await _edition_carrying(title, artist)
+        if found is not None:
+            name, cid, entry = found
+            art, duration = itunes.track_metadata(entry)
+            exclusive = not is_base_form(name)
+            if exclusive:
+                print(f"[!] {title!r} is not on {album_context['name']!r} but is on "
+                      f"{name!r} — run upgraded")
+            album_context = {"id": cid, "name": name, "at": now_mono}
+            return name, art, duration, exclusive
         # iTunes answers a fuzzy query with something rather than nothing, so
         # "no result that is actually this track" is a real and common outcome.
         print(f"[!] iTunes had no match for {title!r} — leaving album unknown")

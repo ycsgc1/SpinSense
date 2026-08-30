@@ -24,35 +24,58 @@ if CORE_DIR not in sys.path:
 import core_engine  # noqa: E402
 from spinsense import itunes  # noqa: E402
 
+ARTIST_ID = 390647681
+
 ART_BASE = "http://cover/base/100x100bb.jpg"
 ART_DELUXE = "http://cover/deluxe/100x100bb.jpg"
 
 BASE_ID, DELUXE_ID = 1752214909, 1795512297
+OTHER_ID = 1631578046      # a different record entirely
+SINGLE_ID = 1752767050
 
 # Twelve tracks, and one "Please Please Please" — the solo recording.
 BASE_TRACKS = [
     {"trackName": "Taste", "artistName": "Sabrina Carpenter",
-     "trackTimeMillis": 157000, "artworkUrl100": ART_BASE},
+     "artistId": ARTIST_ID, "trackTimeMillis": 157000, "artworkUrl100": ART_BASE},
     {"trackName": "Please Please Please", "artistName": "Sabrina Carpenter",
-     "trackTimeMillis": 186000, "artworkUrl100": ART_BASE},
+     "artistId": ARTIST_ID, "trackTimeMillis": 186000, "artworkUrl100": ART_BASE},
     {"trackName": "Espresso", "artistName": "Sabrina Carpenter",
-     "trackTimeMillis": 175000, "artworkUrl100": ART_BASE},
+     "artistId": ARTIST_ID, "trackTimeMillis": 175000, "artworkUrl100": ART_BASE},
 ]
 # Seventeen, and two "Please Please Please" — solo at 2, the duet at 14.
 DELUXE_TRACKS = BASE_TRACKS + [
     {"trackName": "15 Minutes", "artistName": "Sabrina Carpenter",
-     "trackTimeMillis": 148000, "artworkUrl100": ART_DELUXE},
+     "artistId": ARTIST_ID, "trackTimeMillis": 148000, "artworkUrl100": ART_DELUXE},
     {"trackName": "Please Please Please",
      "artistName": "Sabrina Carpenter & Dolly Parton",
-     "trackTimeMillis": 194000, "artworkUrl100": ART_DELUXE},
+     "artistId": ARTIST_ID, "trackTimeMillis": 194000, "artworkUrl100": ART_DELUXE},
+]
+
+# A different record that happens to carry a track of the same name. Artists
+# re-record and reuse titles, so "this artist has a song called that" is not
+# evidence about which pressing is on the platter.
+OTHER_ALBUM_TRACKS = [
+    {"trackName": "15 Minutes", "artistName": "Sabrina Carpenter",
+     "artistId": ARTIST_ID, "trackTimeMillis": 99000, "artworkUrl100": ART_BASE},
+]
+
+# What `lookup?id=<artist>&entity=album` returns: a career's worth of releases,
+# only one of which is another edition of the record on the platter.
+ARTIST_RELEASES = [
+    {"collectionId": BASE_ID, "collectionName": "Short n' Sweet"},
+    {"collectionId": DELUXE_ID, "collectionName": "Short n' Sweet (Deluxe)"},
+    {"collectionId": OTHER_ID, "collectionName": "emails i can't send"},
+    {"collectionId": 1746800651, "collectionName": "Espresso EP"},
+    {"collectionId": SINGLE_ID, "collectionName": "Please Please Please - Single"},
 ]
 
 
 class DeluxeBonusTrackTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self._orig = (itunes.search_songs, itunes.album_tracks)
+        self._orig = (itunes.search_songs, itunes.album_tracks, itunes.artist_albums)
         core_engine.album_context = None
         core_engine._tracklist_cache.clear()
+        core_engine._artist_albums_cache.clear()
         self.searches = []
 
         async def fake_search(artist, title, limit=10, timeout_secs=5.0):
@@ -60,16 +83,36 @@ class DeluxeBonusTrackTest(unittest.IsolatedAsyncioTestCase):
             return self.results
 
         async def fake_tracks(collection_id, timeout_secs=8.0):
-            return DELUXE_TRACKS if collection_id == DELUXE_ID else BASE_TRACKS
+            self.tracklist_lookups.append(collection_id)
+            return self.tracklists.get(collection_id, [])
+
+        async def fake_artist_albums(artist_id, timeout_secs=8.0):
+            self.artist_lookups.append(artist_id)
+            return self.releases
 
         itunes.search_songs = fake_search
         itunes.album_tracks = fake_tracks
+        itunes.artist_albums = fake_artist_albums
         self.results = []
+        self.releases = ARTIST_RELEASES
+        self.artist_lookups = []
+        self.tracklist_lookups = []
+        # Addressable per collection, so a test can put a same-named track on a
+        # record that is *not* an edition of the one playing and prove it is
+        # still refused. A shared fallback list would make that unprovable.
+        self.tracklists = {
+            BASE_ID: BASE_TRACKS,
+            DELUXE_ID: DELUXE_TRACKS,
+            OTHER_ID: OTHER_ALBUM_TRACKS,
+            SINGLE_ID: OTHER_ALBUM_TRACKS,
+        }
 
     def tearDown(self):
-        itunes.search_songs, itunes.album_tracks = self._orig
+        (itunes.search_songs, itunes.album_tracks,
+         itunes.artist_albums) = self._orig
         core_engine.album_context = None
         core_engine._tracklist_cache.clear()
+        core_engine._artist_albums_cache.clear()
 
     def solo_result(self):
         return [{"trackName": "Taste", "artistName": "Sabrina Carpenter",
@@ -166,6 +209,115 @@ class DeluxeBonusTrackTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(solo[2], 186)
         self.assertEqual(duet[2], 194)
         self.assertEqual(self.searches, [])
+
+
+class BonusTrackSearchCannotPlaceTest(DeluxeBonusTrackTest):
+    """The bonus tracks iTunes' song search does not know exist.
+
+    Searching for "15 Minutes", "Busy Woman" or "Couldn't Make It Any Harder"
+    returns nothing usable, and an album search for the record's own name does
+    not list the deluxe either — so three tracks of a seventeen-track record
+    were unresolvable, and the reported session upgraded only when it happened
+    to reach "Bad Reviews", the one bonus track search does know. Listed under
+    the *artist*, the deluxe is right there.
+
+    This is also the original rule stated outright: a song that is not on the
+    standard pressing means the pressing is not the standard one.
+    """
+
+    async def test_a_track_search_cannot_place_is_found_on_the_deluxe(self):
+        await self.establish_the_standard_album()
+        self.results = []
+        album, art, duration, _ = await core_engine.fetch_itunes_metadata(
+            "Sabrina Carpenter", "15 Minutes")
+        self.assertEqual(album, "Short n' Sweet (Deluxe)")
+        self.assertEqual(duration, 148)
+        self.assertIn(ART_DELUXE.replace("100x100bb", "1000x1000bb"), art)
+
+    async def test_it_proves_the_edition(self):
+        # The whole point: the first deluxe-only track upgrades the session,
+        # rather than the session waiting for one search happens to know.
+        await self.establish_the_standard_album()
+        self.results = []
+        *_, exclusive = await core_engine.fetch_itunes_metadata(
+            "Sabrina Carpenter", "15 Minutes")
+        self.assertTrue(exclusive)
+
+    async def test_the_record_becomes_the_deluxe_from_then_on(self):
+        await self.establish_the_standard_album()
+        self.results = []
+        await core_engine.fetch_itunes_metadata("Sabrina Carpenter", "15 Minutes")
+        self.assertEqual(core_engine.album_context["id"], DELUXE_ID)
+
+    async def test_the_artist_is_asked_only_after_search_fails(self):
+        # It returns a whole career, so it must never be on the ordinary path.
+        await self.establish_the_standard_album()
+        self.results = self.solo_result()
+        await core_engine.fetch_itunes_metadata("Sabrina Carpenter", "Espresso")
+        self.assertEqual(self.artist_lookups, [])
+
+    async def test_the_artist_is_asked_once_however_many_tracks_miss(self):
+        await self.establish_the_standard_album()
+        self.results = []
+        await core_engine.fetch_itunes_metadata("Sabrina Carpenter", "15 Minutes")
+        await core_engine.fetch_itunes_metadata("Sabrina Carpenter", "Nothing At All")
+        self.assertEqual(self.artist_lookups, [ARTIST_ID])
+
+    async def test_a_track_on_no_edition_stays_unknown(self):
+        # Honest ignorance beats attributing a stray play to this record.
+        await self.establish_the_standard_album()
+        self.results = []
+        album, _art, duration, exclusive = await core_engine.fetch_itunes_metadata(
+            "Sabrina Carpenter", "Some Other Song Entirely")
+        self.assertIsNone(album)
+        self.assertIsNone(duration)
+        self.assertFalse(exclusive)
+
+    async def test_other_records_by_the_artist_are_not_considered(self):
+        # A career of 77 releases; only editions of *this* record may answer.
+        await self.establish_the_standard_album()
+        self.results = []
+        self.releases = [
+            {"collectionId": OTHER_ID, "collectionName": "emails i can't send"},
+        ]
+        album, *_ = await core_engine.fetch_itunes_metadata(
+            "Sabrina Carpenter", "15 Minutes")
+        self.assertIsNone(album)
+
+    async def test_a_single_named_for_the_record_is_not_an_edition(self):
+        # A single carrying the album's own name, and a track of the right
+        # title on it. "- Single" is not an edition qualifier, so it is not a
+        # pressing of the album and cannot say which one is playing.
+        await self.establish_the_standard_album()
+        self.results = []
+        self.releases = [
+            {"collectionId": SINGLE_ID, "collectionName": "Short n' Sweet - Single"},
+        ]
+        album, *_ = await core_engine.fetch_itunes_metadata(
+            "Sabrina Carpenter", "15 Minutes")
+        self.assertIsNone(album)
+
+    async def test_the_plainest_edition_that_has_the_track_wins(self):
+        # Never claim a super deluxe when an ordinary deluxe accounts for it.
+        await self.establish_the_standard_album()
+        self.results = []
+        self.releases = [
+            {"collectionId": 4242, "collectionName": "Short n' Sweet (Super Deluxe)"},
+            {"collectionId": DELUXE_ID, "collectionName": "Short n' Sweet (Deluxe)"},
+        ]
+        self.tracklists[4242] = DELUXE_TRACKS
+        album, *_ = await core_engine.fetch_itunes_metadata(
+            "Sabrina Carpenter", "15 Minutes")
+        self.assertEqual(album, "Short n' Sweet (Deluxe)")
+
+    async def test_nothing_is_asked_when_no_record_is_playing(self):
+        # With no context there is no record whose editions could be checked.
+        core_engine.album_context = None
+        self.results = []
+        album, *_ = await core_engine.fetch_itunes_metadata(
+            "Sabrina Carpenter", "15 Minutes")
+        self.assertIsNone(album)
+        self.assertEqual(self.artist_lookups, [])
 
 
 if __name__ == "__main__":

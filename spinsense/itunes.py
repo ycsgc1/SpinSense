@@ -144,6 +144,40 @@ async def album_tracks(collection_id: int, timeout_secs: float = 8.0) -> list[di
     return [r for r in results if isinstance(r, dict) and r.get("wrapperType") == "track"]
 
 
+async def artist_albums(artist_id: int, timeout_secs: float = 8.0) -> list[dict]:
+    """Every release iTunes files under an artist.
+
+    The way to reach an edition that song-search will not admit exists. Search
+    returns nothing at all for three of *Short n' Sweet (Deluxe)*'s bonus tracks
+    — "15 Minutes", "Busy Woman", "Couldn't Make It Any Harder" — and an
+    album-entity search for the record's own name doesn't list the deluxe
+    either. Listed under the artist, it is right there.
+
+    Long: an artist with a career has dozens of releases and this asks for all
+    of them. That is fine, because it runs only when everything cheaper has
+    already failed, and once per artist per engine run.
+    """
+    import aiohttp
+
+    url = f"{LOOKUP_URL}?id={int(artist_id)}&entity=album&limit=200"
+    try:
+        client_timeout = aiohttp.ClientTimeout(total=timeout_secs)
+        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    return []
+                data = await response.json(content_type=None)
+    except Exception as e:
+        print(f"⚠️ iTunes artist lookup failed: {e}")
+        return []
+    results = (data or {}).get("results")
+    if not isinstance(results, list):
+        return []
+    # The response leads with the artist; only the releases are wanted.
+    return [r for r in results
+            if isinstance(r, dict) and r.get("wrapperType") == "collection"]
+
+
 def find_track(tracks: list[dict], title: str,
                artist: str | None = None) -> dict | None:
     """The entry for `title` in a tracklist, or None if the record hasn't got it.

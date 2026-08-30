@@ -181,6 +181,38 @@ class DeluxeRunTest(unittest.TestCase):
         self.assertEqual(self.albums(), {DELUXE})
         self.assertEqual(self.covers(), {b"IMAGE:" + ART_DELUXE.encode()})
 
+    def test_a_duet_in_the_middle_is_swept_up_by_a_later_proof(self):
+        # The reported listing exactly: every row read "(Deluxe)" except the
+        # duet, which sat at "Short n' Sweet" alone. The run was found by
+        # matching the artist string, so the one play credited to two people
+        # was not in it and the upgrade passed straight over it. Here the proof
+        # arrives later and from an ordinary credit, so the duet is a bystander
+        # rather than the trigger — which is the case that failed.
+        async def go():
+            await self.play_the_side()
+            await self.feed("Please Please Please", BASE, ART_BASE,
+                            artist="Sabrina Carpenter & Dolly Parton")
+            await self.feed("Bad Reviews", DELUXE, ART_DELUXE, exclusive=True)
+            await self.settle()
+        asyncio.run(go())
+        duet = next(r for r in self.rows()
+                    if r["artist"] == "Sabrina Carpenter & Dolly Parton")
+        self.assertEqual(duet["album"], DELUXE)
+        self.assertEqual(self.albums(), {DELUXE})
+        self.assertEqual(self.covers(), {b"IMAGE:" + ART_DELUXE.encode()})
+
+    def test_a_run_can_be_reconciled_from_the_duet_itself(self):
+        # The relation has to hold whichever play triggers it: reconciliation
+        # runs on whichever track was identified last.
+        async def go():
+            await self.feed("Please Please Please", DELUXE, ART_DELUXE,
+                            artist="Sabrina Carpenter & Dolly Parton",
+                            exclusive=True)
+            await self.feed("Taste", BASE, ART_BASE)
+            await self.settle()
+        asyncio.run(go())
+        self.assertEqual(self.albums(), {DELUXE})
+
     # --- and where it must not reach ---
 
     def test_an_ordinary_side_is_left_on_the_standard_album(self):

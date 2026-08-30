@@ -670,10 +670,39 @@ play happens inside that lock, including the plain single-play download: a
 fire-and-forget `create_task` there escapes the lock and reintroduces the same
 race, which is what a flaky test caught before this shipped.
 
-With all three, the reported session resolves as it should. The duet reaches
-search, proves the deluxe, upgrades the run; "15 Minutes" — which iTunes' search
-cannot place at all, and which was filed with no album — is swept up by
-`_adopt_run_album()`; and every cover follows.
+**4. Search does not know some bonus tracks at all.** Three tracks of the
+seventeen — "15 Minutes", "Busy Woman", "Couldn't Make It Any Harder" — return
+nothing usable from a song search, and an album-entity search for
+"Short n' Sweet" does not list the deluxe either. They were filed as
+*Unknown Album*, and the session upgraded only when it happened to reach
+"Bad Reviews", the one bonus track search does know — nine tracks and forty
+minutes later.
+
+Listed under the **artist**, the deluxe is right there. So `_edition_carrying()`
+is the last resort, and it states the original rule outright: *a song that is not
+on the standard pressing means the pressing on the platter is not the standard
+one*. Take the editions of the record we believe is playing, and ask which of
+them has this track. Reached only once search has already failed, so it costs
+nothing on the ordinary path and replaces an "Unknown Album" when it works;
+cached per artist per engine run, since it returns a whole career.
+
+Three constraints on which releases may answer:
+
+- **Same base title as the record playing.** An artist re-records and reuses
+  titles, so "this artist has a song by that name" is not evidence about the
+  pressing. Singles and EPs need no separate exclusion — "- Single" and "EP" are
+  not edition qualifiers, so they survive `base_title()` and this comparison
+  already refuses them.
+- **Plainest edition first**, matching `choose_edition()`: never claim a super
+  deluxe when an ordinary deluxe accounts for the track just as well.
+- **`exclusive` is `not is_base_form(name)`** — the track is on a qualified
+  edition and demonstrably not on the base, which is exactly the definition.
+
+With all four, the reported session resolves against the live API end to end.
+The first deluxe-only track upgrades the record rather than the ninth, so
+everything after it resolves from the seventeen-track list with the right
+durations and the right cover; the twelve plays before it are upgraded by the
+reconciler; and every cover follows.
 
 ---
 
