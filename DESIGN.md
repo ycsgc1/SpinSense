@@ -616,6 +616,67 @@ one. Two constraints keep it honest:
 Together these mean a track only has to be identified correctly *once* — from
 then on the listener's own history answers for it.
 
+### The bonus track that has to be heard
+
+The upgrade rule above is only as good as the evidence reaching it, and on a
+real side of *Short n' Sweet* none did. Three separate things stood in the way,
+each of which looked correct in isolation.
+
+**1. The tracklist shortcut answered about the wrong recording.** Once a record
+is playing, tracks resolve from its tracklist rather than from search
+(§11.1.2) — and that lookup matched on title alone. A deluxe edition routinely
+carries two recordings of one song: *Short n' Sweet (Deluxe)* has "Please Please
+Please" at track 2 by Sabrina Carpenter and again at track 14 by Sabrina
+Carpenter & Dolly Parton. The duet therefore resolved against the *standard*
+album's track 2 — wrong duration, wrong artwork, and, worst of all, the evidence
+destroyed. "This track is not on the record we thought was playing" is exactly
+what proves an edition, and the shortcut answered before anything could notice.
+
+`find_track()` now takes the artist, and a mismatch returns None rather than
+falling back to the title. None is not a wrong answer: it sends the caller to
+search, which is where it would have gone had the tracklist never been consulted.
+
+**2. The run stopped at the credit.** A session run is one artist's contiguous
+plays, matched on the artist string — but a record's own bonus tracks are
+frequently credited to more than one person. "Sabrina Carpenter & Dolly Parton"
+matched none of the twelve plays around it, so the one play carrying the proof
+sat in a run of its own, where there was nothing to upgrade.
+
+`shares_credit()` treats one credit as the same record's as another when it is
+that credit *plus a joined name* — a guest is appended, so the test is a prefix
+at a join boundary, not a shared first word. Reducing each credit to its leading
+name would also have worked here, and would have turned "Simon & Garfunkel" into
+"Simon", "Florence + the Machine" into "Florence" and "Earth, Wind & Fire" into
+"Earth". Prefix matching leaves all of those alone, and keeps a guest from
+capturing a session in the other direction: "Rowan Blanchard & Sabrina
+Carpenter" is Rowan Blanchard's record.
+
+**3. Artwork did not follow the album.** Reconciliation rewrites album *titles*;
+artwork is a separate file per play. A session that upgraded still read
+"Short n' Sweet (Deluxe)" underneath twelve copies of the standard cover — the
+album right and the record still visibly wrong.
+
+`_settle_run_art()` closes that, deciding from what happened to the play
+reconciliation just ran on: if its album survived and the run moved to meet it,
+that play's cover is the run's cover; if the play was itself rewritten, its cover
+is the one now wrong and it takes the run's. Only plays sharing the settled album
+are touched, since a run can span two records by one artist.
+
+It is also **serialized**, which is not optional. A side spawns a dozen of these
+a few minutes apart, they write to overlapping rows, and `_replace_art_file()`
+unlinks whatever it supersedes — interleaved, an older settle finishes last and
+restores the very cover the newest one just corrected. Every artwork write for a
+play happens inside that lock, including the plain single-play download: a
+fire-and-forget `create_task` there escapes the lock and reintroduces the same
+race, which is what a flaky test caught before this shipped.
+
+With all three, the reported session resolves as it should. The duet reaches
+search, proves the deluxe, upgrades the run; "15 Minutes" — which iTunes' search
+cannot place at all, and which was filed with no album — is swept up by
+`_adopt_run_album()`; and every cover follows.
+
+---
+
 ### Memory never out-argues the record
 
 Owning two pressings is the case this has to get right. History is consulted

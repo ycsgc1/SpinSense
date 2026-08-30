@@ -41,12 +41,12 @@ class SupersedeTest(unittest.TestCase):
 
         # Recording spawns background work that wants a network and a Last.fm
         # session; none of it is what these tests are about.
-        self._orig = (ipc_manager._spawn_now_playing, ipc_manager.spawn_art_download)
+        self._orig = (ipc_manager._spawn_now_playing, ipc_manager.spawn_run_art)
         ipc_manager._spawn_now_playing = lambda track: None
-        ipc_manager.spawn_art_download = lambda pid, url: None
+        ipc_manager.spawn_run_art = lambda pid, before, url, rec: None
 
     def tearDown(self):
-        (ipc_manager._spawn_now_playing, ipc_manager.spawn_art_download) = self._orig
+        (ipc_manager._spawn_now_playing, ipc_manager.spawn_run_art) = self._orig
         play_history.DB_PATH = self._orig_db
         ipc_manager._last_recorded_key = None
         ipc_manager._last_play_id = None

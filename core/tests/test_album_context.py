@@ -18,12 +18,15 @@ if CORE_DIR not in sys.path:
 import core_engine  # noqa: E402
 from spinsense import itunes  # noqa: E402
 
+# Shaped like a real `lookup?entity=song` response, artistName included — every
+# entry iTunes returns carries one, and a tracklist that resolves by title alone
+# cannot tell two recordings of the same song apart.
 OK_ORCHESTRA = [
-    {"trackName": "OK Overture", "trackTimeMillis": 271000,
+    {"trackName": "OK Overture", "artistName": "AJR", "trackTimeMillis": 271000,
      "artworkUrl100": "http://a/100x100bb.jpg"},
-    {"trackName": "World's Smallest Violin", "trackTimeMillis": 180000,
+    {"trackName": "World's Smallest Violin", "artistName": "AJR", "trackTimeMillis": 180000,
      "artworkUrl100": "http://a/100x100bb.jpg"},
-    {"trackName": "Christmas in June", "trackTimeMillis": 279000,
+    {"trackName": "Christmas in June", "artistName": "AJR", "trackTimeMillis": 279000,
      "artworkUrl100": "http://a/100x100bb.jpg"},
 ]
 

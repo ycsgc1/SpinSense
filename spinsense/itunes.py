@@ -144,14 +144,37 @@ async def album_tracks(collection_id: int, timeout_secs: float = 8.0) -> list[di
     return [r for r in results if isinstance(r, dict) and r.get("wrapperType") == "track"]
 
 
-def find_track(tracks: list[dict], title: str) -> dict | None:
-    """The entry for `title` in a tracklist, or None if the record hasn't got it."""
+def find_track(tracks: list[dict], title: str,
+               artist: str | None = None) -> dict | None:
+    """The entry for `title` in a tracklist, or None if the record hasn't got it.
+
+    `artist` matters far more than it looks, because a deluxe edition routinely
+    carries two recordings of the same song. *Short n' Sweet (Deluxe)* has
+    "Please Please Please" at track 2 by Sabrina Carpenter and again at track 14
+    by Sabrina Carpenter & Dolly Parton. On a title-only match the first one
+    wins, so asking about the duet answers about the solo — wrong duration,
+    wrong artwork, and wrong album.
+
+    The second consequence is the costly one. The duet is *not* on the standard
+    pressing, and "this track is not on the record we thought was playing" is
+    exactly the evidence that upgrades a whole listening session to the deluxe.
+    Resolving it against the base album by title alone destroyed that evidence
+    before anything could act on it.
+
+    So a mismatched artist returns None rather than falling back to the title.
+    None is not a wrong answer here — it sends the caller to search, which is
+    where it would have gone had the tracklist not been consulted at all.
+    """
     want = track_key(title)
     if not want:
         return None
+    want_artist = artist_key(artist) if artist else None
     for t in tracks or []:
-        if track_key((t or {}).get("trackName")) == want:
-            return t
+        if track_key((t or {}).get("trackName")) != want:
+            continue
+        if want_artist is not None and artist_key(t.get("artistName")) != want_artist:
+            continue
+        return t
     return None
 
 

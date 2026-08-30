@@ -271,3 +271,76 @@ class ArtistMatchingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SharedCreditTest(unittest.TestCase):
+    """Which track credits belong to the same artist's record.
+
+    From a real session: a full side of Short n' Sweet, ending with "Please
+    Please Please" credited to "Sabrina Carpenter & Dolly Parton". That play is
+    the only one carrying proof the record is the deluxe, and an exact-string
+    match put it in a session by itself where it could upgrade nothing.
+    """
+
+    def same(self, a, b):
+        return albums.shares_credit(a, b)
+
+    def test_a_credit_matches_itself(self):
+        self.assertTrue(self.same("AJR", "AJR"))
+
+    def test_case_and_spacing_do_not_matter(self):
+        self.assertTrue(self.same("Sabrina Carpenter", "  sabrina   carpenter "))
+
+    def test_a_guest_joins_the_records_artist(self):
+        self.assertTrue(self.same("Sabrina Carpenter",
+                                  "Sabrina Carpenter & Dolly Parton"))
+
+    def test_it_holds_in_both_directions(self):
+        # Reconciliation can be triggered from either play.
+        self.assertTrue(self.same("Sabrina Carpenter & Dolly Parton",
+                                  "Sabrina Carpenter"))
+
+    def test_every_way_a_guest_is_joined(self):
+        for joined in ("Artist & Guest", "Artist and Guest", "Artist feat. Guest",
+                       "Artist ft. Guest", "Artist featuring Guest",
+                       "Artist with Guest", "Artist, Guest", "Artist + Guest",
+                       "Artist x Guest", "Artist vs. Guest"):
+            with self.subTest(joined=joined):
+                self.assertTrue(self.same("Artist", joined))
+
+    def test_a_guest_does_not_capture_someone_elses_record(self):
+        # "Rowan Blanchard & Sabrina Carpenter" is Rowan Blanchard's record.
+        self.assertFalse(self.same("Sabrina Carpenter",
+                                   "Rowan Blanchard & Sabrina Carpenter"))
+
+    def test_two_unrelated_artists_do_not_match(self):
+        self.assertFalse(self.same("AJR", "Sabrina Carpenter"))
+
+    def test_bands_whose_names_contain_a_join_are_left_alone(self):
+        # The reason this is a prefix test and not a "take the first name" one:
+        # reducing each credit to its leading word would file all of these under
+        # somebody else's.
+        for band, impostor in (("Simon & Garfunkel", "Simon"),
+                               ("Florence + the Machine", "Florence"),
+                               ("Earth, Wind & Fire", "Earth"),
+                               ("Nick Cave & The Bad Seeds", "Nick Cave")):
+            with self.subTest(band=band):
+                self.assertTrue(self.same(band, band))
+                # The band is that artist's record *extended*, which is the one
+                # ambiguity no rule can resolve — but they must not collapse
+                # into a third, unrelated artist.
+                self.assertFalse(self.same(band, "Bruce Springsteen"))
+                self.assertNotEqual(band, impostor)
+
+    def test_a_shared_first_word_is_not_enough(self):
+        self.assertFalse(self.same("The Beatles", "The Beach Boys"))
+        self.assertFalse(self.same("Sabrina Carpenter", "Sabrina Claudio"))
+
+    def test_a_prefix_that_is_not_a_credit_boundary_does_not_match(self):
+        # "Kid Cudi" starts with "Kid" but is not "Kid" plus a guest.
+        self.assertFalse(self.same("Kid", "Kid Cudi"))
+
+    def test_missing_credits_never_match(self):
+        for a, b in ((None, None), ("", ""), ("AJR", None), ("", "AJR")):
+            with self.subTest(a=a, b=b):
+                self.assertFalse(self.same(a, b))

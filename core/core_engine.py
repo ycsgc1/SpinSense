@@ -561,7 +561,7 @@ async def fetch_itunes_metadata(artist, title):
 
     if _context_is_live(now_mono):
         tracks = await _tracklist(album_context["id"], album_context["name"])
-        entry = itunes.find_track(tracks, title)
+        entry = itunes.find_track(tracks, title, artist)
         if entry is not None:
             album_context["at"] = now_mono
             art, duration = itunes.track_metadata(entry)
@@ -569,6 +569,12 @@ async def fetch_itunes_metadata(artist, title):
             # whichever edition search settled on, so there is nothing new to
             # prove and nothing to upgrade the run to.
             return album_context["name"], art, duration, False
+        if tracks:
+            # Not on the record we thought was playing. Sometimes that means the
+            # record changed; sometimes it means this is a *larger edition* of
+            # the same one, and search is about to say so. Either way the answer
+            # is to ask, which is the one thing the shortcut must not prevent.
+            print(f"[!] {title!r} is not on {album_context['name']!r} — asking iTunes")
 
     results = itunes.results_for_track(
         await itunes.search_songs(artist, title), title, artist)

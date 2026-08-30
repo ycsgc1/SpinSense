@@ -214,13 +214,6 @@ async def _download_and_store_art(play_id: int, art_url: str) -> None:
         log.warning("art store failed for play %s: %s", play_id, e)
 
 
-def spawn_art_download(play_id: int, art_url: str) -> None:
-    """create_task + strong ref until done. Used by the UDS record path, where
-    a play is being written and nothing is waiting on the artwork."""
-    _art_tasks.add(task := asyncio.create_task(_download_and_store_art(play_id, art_url)))
-    task.add_done_callback(_art_tasks.discard)
-
-
 async def unify_art(play_ids: list[int], source_play_id: int,
                     art_url: str | None = None) -> list[int]:
     """Give every play in `play_ids` the same artwork. Returns the ids changed.
@@ -335,6 +328,112 @@ async def _supersede_last_play() -> bool:
     return True
 
 
+# Artwork settling runs one at a time. Two of them overlap constantly — a side
+# is a dozen plays a few minutes apart, each spawning one — and they write to
+# overlapping sets of rows, with `_replace_art_file` unlinking whatever it
+# supersedes. Interleaved, the loser of the race leaves the run showing a cover
+# that was already replaced, or deletes a file the winner had just written.
+# Serialized, each settle re-reads current state and the newest play's decision
+# lands last, which is the one that should stand.
+#
+# Keyed by event loop: the backend has exactly one for its lifetime, but tests
+# drive several, and an asyncio.Lock bound to a finished loop raises instead of
+# serializing.
+_art_locks: dict = {}
+
+
+def _art_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _art_locks.get(loop)
+    if lock is None:
+        _art_locks.clear()          # a new loop means the old ones are gone
+        lock = _art_locks[loop] = asyncio.Lock()
+    return lock
+
+
+async def _settle_run_art(play_id: int, album_before: str | None,
+                          art_url: str | None, reconciled: bool) -> None:
+    """Make every play in a run show the artwork of the album it settled on.
+
+    Reconciliation rewrites album *titles*; artwork is a separate file per play,
+    so without this a session that upgrades to the deluxe on the strength of one
+    bonus track reads "Short n' Sweet (Deluxe)" underneath twelve copies of the
+    standard cover — the album is right and the record still looks wrong.
+
+    Which artwork is correct is decided by what happened to *this* play's album,
+    because this is the play reconciliation just ran on:
+
+    - **unchanged, and the run moved to meet it** — this play's album won, so
+      its artwork is the run's artwork. Push it to everyone.
+    - **changed** — this play was brought into line with the run, so its own
+      artwork is the one that is now wrong. Take the run's instead, which also
+      spares us downloading a cover we already know doesn't belong.
+    - **neither** — the ordinary case; just fetch this play's own artwork.
+
+    Only plays sharing the settled album are touched. A run is one artist's
+    contiguous plays, which can span two of their records, and unifying across
+    that boundary would be the very bleed reconciliation refuses to do.
+
+    Every read happens under the lock and after it, never before, so a settle
+    that waited its turn acts on what the run became rather than on what it was
+    when the play was recorded.
+    """
+    async with _art_lock():
+        await _settle_run_art_locked(play_id, album_before, art_url, reconciled)
+
+
+async def _settle_run_art_locked(play_id: int, album_before: str | None,
+                                 art_url: str | None, reconciled: bool) -> None:
+    try:
+        row = await asyncio.to_thread(play_history.get_play, play_id)
+    except Exception as e:
+        log.warning("could not re-read play %s for artwork: %s", play_id, e)
+        row = None
+    album_after = (row or {}).get("album")
+
+    changed = bool(album_after and album_before and album_after != album_before)
+    if not changed and not reconciled:
+        if art_url:
+            await _download_and_store_art(play_id, art_url)
+        return
+
+    try:
+        run = await asyncio.to_thread(reconcile.find_run, play_id)
+    except Exception as e:
+        log.warning("could not read the run for play %s: %s", play_id, e)
+        run = []
+    group = [r for r in run if r["album"] == album_after] if album_after else []
+
+    if changed:
+        # Newest first: the most recent play on this album has the artwork the
+        # run currently shows.
+        source = next((r["id"] for r in reversed(group)
+                       if r["id"] != play_id and r.get("art_path")), None)
+        if source is not None:
+            await unify_art([play_id], source)
+            return
+        if art_url:
+            await _download_and_store_art(play_id, art_url)
+        return
+
+    ids = [r["id"] for r in group]
+    if art_url and len(ids) > 1:
+        log.info("unifying artwork across %d plays of %r", len(ids), album_after)
+        await unify_art(ids, play_id, art_url)
+    elif art_url:
+        await _download_and_store_art(play_id, art_url)
+
+
+def spawn_run_art(play_id: int, album_before: str | None,
+                  art_url: str | None, reconciled: bool) -> None:
+    """create_task + strong ref until done. Artwork is never worth making the
+    UDS reader wait: it fetches over the network, and the frame stream behind it
+    carries the live meter."""
+    _art_tasks.add(task := asyncio.create_task(
+        _settle_run_art(play_id, album_before, art_url, reconciled)))
+    task.add_done_callback(_art_tasks.discard)
+
+
 async def _stamp_last_play_ended() -> None:
     global _last_play_id
     if _last_play_id is None:
@@ -422,17 +521,20 @@ async def _record_if_new(track: dict, play_clock: dict | None = None,
     _last_recorded_key = key
     _last_play_id = play_id
 
-    if art_url:
-        spawn_art_download(play_id, art_url)
-
     _spawn_now_playing(track)
 
     # Unify edition variants across this play's session run. Best-effort:
     # a reconcile failure must never block or crash recording.
+    reconciled = 0
     try:
-        await asyncio.to_thread(reconcile.reconcile_album, play_id)
+        reconciled = await asyncio.to_thread(reconcile.reconcile_album, play_id)
     except Exception as e:
         log.warning("album reconcile failed for play %s: %s", play_id, e)
+
+    # Artwork last, because which cover is right depends on what reconciliation
+    # just decided this run is.
+    if art_url or reconciled:
+        spawn_run_art(play_id, album, art_url, bool(reconciled))
 
 
 # --- The Real Unix Domain Socket Listener ---

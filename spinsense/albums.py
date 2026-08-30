@@ -113,6 +113,51 @@ def is_single_or_ep(album: str | None) -> bool:
     return bool(_SINGLE_OR_EP_RE.search(album or ""))
 
 
+# A credit that *extends* another one: "&", "feat.", "with" and friends, in the
+# position where a guest is appended to the artist whose record it is.
+_GUEST_JOIN_RE = re.compile(
+    r"\s*(?:&|\+|/|,|x|and|with|feat\.?|ft\.?|featuring|vs\.?)\s+",
+    re.IGNORECASE,
+)
+
+
+def _credit(artist: str | None) -> str:
+    return " ".join((artist or "").split()).casefold()
+
+
+def shares_credit(a: str | None, b: str | None) -> bool:
+    """Whether two track credits belong to the same artist's record.
+
+    A listening session is one record, and its plays are found by matching
+    artists — but a record's own bonus tracks are frequently credited to more
+    than one person. *Short n' Sweet (Deluxe)* closes with "Please Please Please"
+    by "Sabrina Carpenter & Dolly Parton", which matches none of the twelve plays
+    around it by exact string, so the one play carrying proof of which edition is
+    on the platter sat in a session of its own and could not upgrade anything.
+
+    A guest is *appended* to the credit, so the test is whether one credit is the
+    other plus a joined name — not whether they share a leading word. Reducing
+    each credit to its first name would have worked here and turned
+    "Simon & Garfunkel" into "Simon", "Florence + the Machine" into "Florence",
+    and "Earth, Wind & Fire" into "Earth", collapsing bands into whoever else
+    happens to share that word. Prefix matching leaves every one of those alone,
+    since nothing precedes them.
+
+    It also keeps a guest from capturing a session in the other direction:
+    "Rowan Blanchard & Sabrina Carpenter" is Rowan Blanchard's record, and
+    neither credit is a prefix of the other.
+    """
+    left, right = _credit(a), _credit(b)
+    if left == right:
+        return bool(left)
+    if not left or not right:
+        return False
+    longer, shorter = (left, right) if len(left) > len(right) else (right, left)
+    if not longer.startswith(shorter):
+        return False
+    return bool(_GUEST_JOIN_RE.match(longer[len(shorter):]))
+
+
 def choose_edition(album_names: list[str]) -> tuple[str | None, bool]:
     """Pick which edition a track belongs to, and say whether it proves one.
 

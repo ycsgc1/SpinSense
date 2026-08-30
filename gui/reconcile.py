@@ -9,7 +9,7 @@ Synchronous SQLite (callers wrap in asyncio.to_thread), mirroring
 play_history.py's contract.
 """
 from play_history import _connect
-from spinsense.albums import base_title, pick_winner  # noqa: F401  (re-exported)
+from spinsense.albums import base_title, pick_winner, shares_credit  # noqa: F401
 
 # A run = contiguous plays by the same artist with gaps under this.
 SESSION_GAP_SECS = 1800
@@ -24,12 +24,20 @@ def _run_rows(conn, play_id: int) -> list[dict]:
         "WHERE id = ? AND deleted_at IS NULL", (play_id,)).fetchone()
     if anchor is None:
         return []
-    rows = conn.execute(
-        "SELECT id, artist, album, played_at, album_locked, album_exclusive FROM plays "
-        "WHERE deleted_at IS NULL AND artist = ? AND played_at BETWEEN ? AND ? "
+    window = conn.execute(
+        # art_path rides along because artwork has to follow whatever album the
+        # run settles on; see ipc_manager._settle_run_art().
+        "SELECT id, artist, album, played_at, album_locked, album_exclusive, art_path "
+        "FROM plays "
+        "WHERE deleted_at IS NULL AND played_at BETWEEN ? AND ? "
         "ORDER BY played_at, id",
-        (anchor["artist"], anchor["played_at"] - _RUN_WINDOW_SECS,
+        (anchor["played_at"] - _RUN_WINDOW_SECS,
          anchor["played_at"] + _RUN_WINDOW_SECS)).fetchall()
+    # Not an exact string match: a record's own bonus track is often a duet, and
+    # exact matching leaves that one play — the one carrying the evidence about
+    # which edition is on the platter — in a session by itself. Filtered here
+    # rather than in SQL because the comparison is a parsing question.
+    rows = [r for r in window if shares_credit(r["artist"], anchor["artist"])]
     idx = next(i for i, r in enumerate(rows) if r["id"] == anchor["id"])
     lo = idx
     while lo > 0 and rows[lo]["played_at"] - rows[lo - 1]["played_at"] < SESSION_GAP_SECS:
