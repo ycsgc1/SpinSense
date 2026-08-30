@@ -9,6 +9,13 @@
 
   let period = "month";
 
+  // The API returns up to stats.TOP_N rows per list; this is how many are shown
+  // before the reader asks for the rest. Ten is a list you can read at a glance
+  // and still deep enough to be about *your* listening rather than a headline —
+  // five was neither.
+  const COLLAPSED_ROWS = 10;
+  const RANK_LISTS = ["stats-top-artists", "stats-top-albums", "stats-top-tracks"];
+
   function escapeHtml(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;",
@@ -33,13 +40,13 @@
     });
   }
 
-  function rankRow(rank, art, primary, secondary, plays, maxPlays) {
+  function rankRow(rank, art, primary, secondary, plays, maxPlays, overflow) {
     const pct = maxPlays > 0 ? Math.max(4, (plays / maxPlays) * 100) : 0;
     const thumb = art
       ? `<img src="/${escapeHtml(art)}" alt="" class="w-10 h-10 rounded object-cover shrink-0 bg-surface-container-high" onerror="this.src='/static/placeholder.jpg'">`
       : `<span class="w-10 h-10 rounded shrink-0 bg-surface-container-high flex items-center justify-center"><span class="material-symbols-outlined text-outline" style="font-size:20px;">album</span></span>`;
     return `
-      <li class="flex items-center gap-3">
+      <li class="flex items-center gap-3 stats-rank-row${overflow ? " hidden" : ""}">
         <span class="text-label-md text-outline tabular-nums w-4 text-right shrink-0">${rank}</span>
         ${thumb}
         <div class="flex-1 min-w-0">
@@ -53,25 +60,59 @@
       </li>`;
   }
 
+  // Rows past COLLAPSED_ROWS are rendered but hidden, so expanding is a class
+  // toggle rather than a re-render — the list can't reflow or lose its place,
+  // and no second request is needed.
+  function fillRankList(id, rows, toParts, emptyMsg) {
+    const list = $(id);
+    const btn = $(id + "-more");
+    if (!rows.length) {
+      list.innerHTML = `<li class="text-body-sm text-on-surface-variant">${emptyMsg}</li>`;
+      btn.classList.add("hidden");
+      return;
+    }
+    const max = rows[0].plays;
+    list.innerHTML = rows.map((r, i) => {
+      const [primary, secondary] = toParts(r);
+      return rankRow(i + 1, r.art_path, primary, secondary, r.plays, max,
+                     i >= COLLAPSED_ROWS);
+    }).join("");
+    setExpander(btn, rows.length, false);
+  }
+
+  function setExpander(btn, total, expanded) {
+    btn.classList.toggle("hidden", total <= COLLAPSED_ROWS);
+    btn.dataset.total = String(total);
+    btn.dataset.expanded = expanded ? "true" : "false";
+    btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+    btn.textContent = expanded ? "Show fewer" : `Show all ${total}`;
+  }
+
+  function bindExpanders() {
+    RANK_LISTS.forEach((id) => {
+      $(id + "-more").addEventListener("click", () => {
+        const btn = $(id + "-more");
+        const expanded = btn.dataset.expanded !== "true";
+        $(id).querySelectorAll(".stats-rank-row").forEach((li, i) => {
+          li.classList.toggle("hidden", !expanded && i >= COLLAPSED_ROWS);
+        });
+        setExpander(btn, Number(btn.dataset.total) || 0, expanded);
+      });
+    });
+  }
+
   function renderTopLists(data) {
-    const artists = data.top_artists || [];
-    const tracks = data.top_tracks || [];
-    const maxA = artists.length ? artists[0].plays : 0;
-    const maxT = tracks.length ? tracks[0].plays : 0;
-    $("stats-top-artists").innerHTML = artists.length
-      ? artists.map((a, i) => rankRow(i + 1, a.art_path, escapeHtml(a.artist), "", a.plays, maxA)).join("")
-      : '<li class="text-body-sm text-on-surface-variant">No plays yet.</li>';
+    fillRankList("stats-top-artists", data.top_artists || [],
+                 (a) => [escapeHtml(a.artist), ""], "No plays yet.");
+    fillRankList("stats-top-albums", (data.top_albums && data.top_albums.top) || [],
+                 (a) => [escapeHtml(a.album), escapeHtml(a.artist)],
+                 "No album data yet.");
+    fillRankList("stats-top-tracks", data.top_tracks || [],
+                 (t) => [escapeHtml(t.title), escapeHtml(t.artist)], "No plays yet.");
     const albums = (data.top_albums && data.top_albums.top) || [];
-    const maxAl = albums.length ? albums[0].plays : 0;
-    $("stats-top-albums").innerHTML = albums.length
-      ? albums.map((a, i) => rankRow(i + 1, a.art_path, escapeHtml(a.album), escapeHtml(a.artist), a.plays, maxAl)).join("")
-      : '<li class="text-body-sm text-on-surface-variant">No album data yet.</li>';
     const ta = data.top_albums || { covered: 0, total: 0 };
     $("stats-top-albums-note").textContent = (albums.length && ta.covered < ta.total)
       ? `${ta.covered} of ${ta.total} plays have album data.` : "";
-    $("stats-top-tracks").innerHTML = tracks.length
-      ? tracks.map((t, i) => rankRow(i + 1, t.art_path, escapeHtml(t.title), escapeHtml(t.artist), t.plays, maxT)).join("")
-      : '<li class="text-body-sm text-on-surface-variant">No plays yet.</li>';
   }
 
   function renderChart(data) {
@@ -139,6 +180,8 @@
       BODY.classList.add("hidden");
     }
   }
+
+  bindExpanders();
 
   PERIOD_WRAP.addEventListener("click", (e) => {
     const btn = e.target.closest(".stats-period-btn");

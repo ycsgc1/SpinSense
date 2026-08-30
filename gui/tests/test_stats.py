@@ -132,12 +132,31 @@ class TopListsTest(StatsTestBase):
         self.assertEqual(out["top_tracks"][0]["plays"], 2)
         self.assertEqual(len(out["top_tracks"]), 2)
 
-    def test_top_lists_capped_at_five(self):
+    def test_top_lists_go_deeper_than_a_headline(self):
+        # Five was a summary, not a chart: a month of regular listening passes
+        # five artists in a week, so the list said nothing about the month.
         t = ts(2026, 7, 1)
-        for i in range(7):
-            self.seed(f"T{i}", f"Artist{i}", t)
+        for i in range(12):
+            self.seed(f"T{i}", f"Artist{i:02d}", t)
         out = stats.compute_stats("month", 2026, 7, db_path=self.db, now=NOW)
-        self.assertEqual(len(out["top_artists"]), 5)
+        self.assertEqual(len(out["top_artists"]), 12)
+        self.assertEqual(len(out["top_tracks"]), 12)
+
+    def test_top_lists_are_still_capped(self):
+        # Unbounded, "all time" would return every artist ever played, each
+        # with its own correlated artwork subquery, to build a list nobody
+        # scrolls to the end of.
+        t = ts(2026, 7, 1)
+        for i in range(stats.TOP_N + 5):
+            self.seed(f"T{i}", f"Artist{i:03d}", t)
+        out = stats.compute_stats("month", 2026, 7, db_path=self.db, now=NOW)
+        self.assertEqual(len(out["top_artists"]), stats.TOP_N)
+        self.assertEqual(len(out["top_tracks"]), stats.TOP_N)
+
+    def test_the_cap_is_deep_enough_to_be_worth_expanding(self):
+        # Pinned in absolute terms, not against the constant, so lowering it
+        # back to a headline is a test failure rather than a silent change.
+        self.assertGreaterEqual(stats.TOP_N, 20)
 
 
 class BucketsTest(StatsTestBase):
@@ -194,6 +213,78 @@ class GenresDecadesTest(StatsTestBase):
         out = stats.compute_stats("month", 2026, 7, db_path=self.db, now=NOW)
         self.assertEqual(out["decades"]["buckets"][0], {"decade": 1970, "plays": 2})
         self.assertEqual(out["decades"]["buckets"][1], {"decade": 1980, "plays": 1})
+
+
+class ListDepthTest(StatsTestBase):
+    def seed_album(self, title, artist, album, played_at):
+        import sqlite3
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "INSERT INTO plays (title, artist, album, played_at) VALUES (?, ?, ?, ?)",
+            (title, artist, album, played_at))
+        conn.commit()
+        conn.close()
+
+    def test_albums_go_as_deep_as_artists_and_tracks(self):
+        t = ts(2026, 7, 1)
+        for i in range(12):
+            self.seed_album(f"T{i}", "A", f"Album{i:02d}", t)
+        out = stats.compute_stats("month", 2026, 7, db_path=self.db, now=NOW)
+        self.assertEqual(len(out["top_albums"]["top"]), 12)
+
+    def test_genres_stay_short_on_purpose(self):
+        # A coarse vocabulary rendered as a bar chart: depth there is noise,
+        # not detail, so it keeps its own limit rather than following TOP_N.
+        t = ts(2026, 7, 1)
+        for i in range(12):
+            self.seed(f"T{i}", "A", t, genre=f"Genre{i:02d}")
+        out = stats.compute_stats("month", 2026, 7, db_path=self.db, now=NOW)
+        self.assertEqual(len(out["genres"]["top"]), stats.TOP_GENRES)
+        self.assertLess(stats.TOP_GENRES, stats.TOP_N)
+
+
+class ArtworkLookupIsIndexedTest(StatsTestBase):
+    """The ranked lists find each row's artwork with a correlated subquery, so
+    its cost is paid once per row shown. Going from five rows to twenty-five
+    made that the page's dominant cost until the index was added."""
+
+    INDEX = "idx_plays_artist_played_at"
+
+    def indexes(self):
+        import sqlite3
+        conn = sqlite3.connect(self.db)
+        names = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'")}
+        conn.close()
+        return names
+
+    def test_a_fresh_database_has_the_index(self):
+        self.assertIn(self.INDEX, self.indexes())
+
+    def test_an_existing_database_gains_it_on_upgrade(self):
+        # Additive migration, like the columns: an install that predates this
+        # must not need a rebuild to get the faster page.
+        import sqlite3
+        conn = sqlite3.connect(self.db)
+        conn.execute(f"DROP INDEX {self.INDEX}")
+        conn.commit()
+        conn.close()
+        self.assertNotIn(self.INDEX, self.indexes())
+        play_history.init_db(db_path=self.db)
+        self.assertIn(self.INDEX, self.indexes())
+
+    def test_the_artwork_subquery_searches_rather_than_scans(self):
+        # Asserted on the query plan, not on a stopwatch: a timing test would
+        # be flaky, and "does it use the index" is the actual claim.
+        import sqlite3
+        conn = sqlite3.connect(self.db)
+        sql = ("SELECT " + stats._latest_art_subquery("p2.artist = p.artist")
+               + " FROM plays p WHERE " + stats._WHERE)
+        plan = " ".join(str(r[3]) for r in conn.execute(
+            "EXPLAIN QUERY PLAN " + sql, (0, 0, 0, 0)).fetchall())
+        conn.close()
+        self.assertIn(self.INDEX, plan)
+        self.assertNotIn("SCAN p2", plan)
 
 
 class PeriodEchoTest(StatsTestBase):

@@ -48,18 +48,27 @@
 
     <!-- Top artists / top tracks / top albums -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-gutter">
-      <section class="glass-panel rounded-xl p-md">
+      <section class="glass-panel rounded-xl p-md flex flex-col">
         <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Top artists</h3>
         <ol id="stats-top-artists" class="flex flex-col gap-2"></ol>
+        <button type="button" id="stats-top-artists-more"
+                class="hidden mt-sm text-label-sm text-primary hover:underline focus-visible:ring-2 focus-visible:ring-primary rounded self-start"
+                aria-expanded="false" aria-controls="stats-top-artists"></button>
       </section>
-      <section class="glass-panel rounded-xl p-md">
+      <section class="glass-panel rounded-xl p-md flex flex-col">
         <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Top albums</h3>
         <ol id="stats-top-albums" class="flex flex-col gap-2"></ol>
+        <button type="button" id="stats-top-albums-more"
+                class="hidden mt-sm text-label-sm text-primary hover:underline focus-visible:ring-2 focus-visible:ring-primary rounded self-start"
+                aria-expanded="false" aria-controls="stats-top-albums"></button>
         <p id="stats-top-albums-note" class="text-label-sm text-on-surface-variant mt-sm"></p>
       </section>
-      <section class="glass-panel rounded-xl p-md">
+      <section class="glass-panel rounded-xl p-md flex flex-col">
         <h3 class="text-label-md text-on-surface-variant uppercase tracking-widest mb-md">Top tracks</h3>
         <ol id="stats-top-tracks" class="flex flex-col gap-2"></ol>
+        <button type="button" id="stats-top-tracks-more"
+                class="hidden mt-sm text-label-sm text-primary hover:underline focus-visible:ring-2 focus-visible:ring-primary rounded self-start"
+                aria-expanded="false" aria-controls="stats-top-tracks"></button>
       </section>
     </div>
 

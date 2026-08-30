@@ -8,7 +8,19 @@ import datetime
 from play_history import _connect
 
 LISTEN_CAP_SECS = 2400  # 40 min: guards clock skew / missed stop frames
-TOP_N = 5
+
+# How deep the ranked lists go. Five reads as a summary and is too shallow for
+# anyone who actually plays records — a month of regular listening passes five
+# artists in a week. The page still shows ten and expands to the rest on
+# request, so the default stays scannable.
+#
+# Capped rather than unbounded because "all time" would otherwise return every
+# artist ever played, each with its own correlated artwork subquery, to render
+# a list nobody scrolls to the end of.
+TOP_N = 25
+# Genres are a small, coarse vocabulary and render as a bar chart rather than a
+# ranked list, so depth there is noise instead of detail.
+TOP_GENRES = 5
 
 _WHERE = "deleted_at IS NULL AND played_at >= ? AND played_at < ?"
 
@@ -150,7 +162,7 @@ def _genres(conn, start, end, total) -> dict:
         f"SELECT genre, COUNT(*) AS plays FROM plays WHERE {_WHERE}"
         " AND genre IS NOT NULL GROUP BY genre"
         " ORDER BY plays DESC, genre ASC LIMIT ?",
-        (start, end, TOP_N)).fetchall()
+        (start, end, TOP_GENRES)).fetchall()
     (covered,) = conn.execute(
         f"SELECT COUNT(*) FROM plays WHERE {_WHERE} AND genre IS NOT NULL",
         (start, end)).fetchone()

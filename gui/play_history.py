@@ -63,6 +63,15 @@ def init_db(db_path: str | None = None) -> None:
               played_at   INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_plays_played_at ON plays (played_at DESC);
+            -- The Stats page finds each ranked row's artwork with a correlated
+            -- subquery: newest art_path for this artist, inside the period. One
+            -- per returned row, so it got 5x more expensive when the top lists
+            -- went from 5 rows to 25 -- 221 ms against 12k plays, where the
+            -- index makes it 51 ms. Artist-then-date matches both the filter
+            -- and the ordering, and covers the album and track variants too,
+            -- since those narrow the same artist prefix.
+            CREATE INDEX IF NOT EXISTS idx_plays_artist_played_at
+                ON plays (artist, played_at DESC);
             """
         )
         existing = {row[1] for row in conn.execute("PRAGMA table_info(plays)")}
