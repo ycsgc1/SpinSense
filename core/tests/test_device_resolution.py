@@ -13,7 +13,6 @@ number, and card numbers are assigned in registration order, so a working
 device stops matching its own name when the onboard audio happens to register
 first. Both are handled here.
 """
-import asyncio
 import os
 import sys
 import unittest
