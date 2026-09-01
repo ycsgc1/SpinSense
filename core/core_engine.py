@@ -369,6 +369,8 @@ state = {
     # True while the capture device cannot be opened at all, so the retry is
     # announced once rather than every tick.
     "device_missing": False,
+    # Consecutive tracks adopted from the tracklist rather than recognised.
+    "predicted_streak": 0,
     # What we actually opened, which may be an index rather than the configured
     # name when ALSA renumbered the card.
     "device_arg": None,
@@ -564,6 +566,22 @@ album_context: dict | None = None
 _tracklist_cache: dict[int, list[dict]] = {}
 _artist_albums_cache: dict[int, list[dict]] = {}
 
+# What has been identified on this side, newest last: {title, artist, albums, at}
+# where `albums` maps every release iTunes offered for that track to its id.
+#
+# A side is normally one record, so this list is normally uninteresting. It
+# earns its place when the side is a *live album or compilation*, where every
+# track's catalogue home is a different record from the one on the platter —
+# AJR's "Live from the Hollywood Bowl" resolved to OK ORCHESTRA, then
+# Neotheater, then The Click, then nothing at all. The tracks heard together
+# are the evidence for which release is actually playing.
+side_tracks: list[dict] = []
+
+# Releases to check before giving up on a compilation lookup. A career can run
+# to dozens of releases and each check is a request; the ordering below puts
+# the likely answer first, so this is a ceiling and not a typical cost.
+MAX_RELEASE_PROBES = 25
+
 # How long a context survives without a confirming track. Matches the reconciler's
 # session gap: long enough to span flipping the record, short enough that
 # tomorrow's listening starts clean.
@@ -644,6 +662,116 @@ async def _edition_carrying(title: str, artist: str) -> tuple[str, int, dict] | 
     return None
 
 
+def _remember_side_track(title: str, artist: str, albums: dict, now_mono: float) -> None:
+    """File one identification against the current side, replacing any earlier
+    play of the same track so a repeated song doesn't count twice."""
+    if not title:
+        return
+    cutoff = now_mono - ALBUM_CONTEXT_TTL_SECS
+    kept = [t for t in side_tracks
+            if t["at"] >= cutoff and itunes.track_key(t["title"]) != itunes.track_key(title)]
+    kept.append({"title": title, "artist": artist or "",
+                 "albums": dict(albums or {}), "at": now_mono})
+    side_tracks[:] = kept
+
+
+def _recent_side_tracks(artist: str, now_mono: float) -> list[dict]:
+    """This side's identifications by `artist`, still inside the context window."""
+    cutoff = now_mono - ALBUM_CONTEXT_TTL_SECS
+    want = itunes.artist_key(artist)
+    return [t for t in side_tracks
+            if t["at"] >= cutoff and itunes.artist_key(t["artist"]) == want]
+
+
+async def _holds_all(collection_id: int, name: str, tracks_wanted, artist: str) -> bool:
+    """Whether one release carries every track we have heard on this side."""
+    tracks = await _tracklist(collection_id, name)
+    if not tracks:
+        return False
+    return all(itunes.find_track(tracks, t, artist) is not None for t in tracks_wanted)
+
+
+async def _release_holding_side(artist: str, now_mono: float):
+    """The single release carrying everything heard on this side, or None.
+
+    The question the ordinary lookup cannot answer. It asks "which album is this
+    track from?", which on a live album or a compilation is the wrong question —
+    every track's answer is a different record, and none of them is the one on
+    the platter. Asking instead "which release holds *all* of these?" gets
+    Live from the Hollywood Bowl, which held 4 of 4 where every studio album
+    held 1.
+
+    Two stages, cheap first:
+
+    1. The albums iTunes already offered for each track, intersected. Those
+       result lists are fetched anyway and thrown away, so this costs nothing —
+       and for the live album, Karma and The Good Part alone intersect to
+       exactly one release.
+    2. Failing that, the artist's releases, narrowed by track count: a release
+       cannot hold four tracks if it only has one. That prunes without a single
+       request, and it is why this works for 7" singles as well as LPs — the
+       bound is however many tracks have been heard, so a two-track single stays
+       a candidate right up until a third track rules it out.
+
+    Requires a *unique* answer. Two tracks that happen to share a greatest-hits
+    compilation are not evidence; one release holding all of them and nothing
+    else doing so is.
+    """
+    recent = _recent_side_tracks(artist, now_mono)
+    titles = [t["title"] for t in recent]
+    if len(titles) < 2:
+        return None
+
+    # Stage 1: free — every release both tracks already pointed at.
+    offered = [t["albums"] for t in recent if t["albums"]]
+    if len(offered) >= 2:
+        shared = set.intersection(*(set(a) for a in offered))
+        for name in sorted(shared, key=len):
+            cid = next((a[name] for a in offered if name in a), None)
+            if cid and await _holds_all(cid, name, titles, artist):
+                return name, int(cid)
+
+    # Stage 2: the artist's releases, ordered by how many of this side's lookups
+    # already mentioned them — the answer is usually one we have seen and passed
+    # over, so the likely candidate gets checked first.
+    artist_id = _known_artist_id()
+    if artist_id is None:
+        return None
+    mentions: dict[str, int] = {}
+    for a in offered:
+        for name in a:
+            mentions[name] = mentions.get(name, 0) + 1
+    candidates = [
+        r for r in await _artist_releases(artist_id)
+        if r.get("collectionId") and (r.get("trackCount") or 0) >= len(set(titles))
+    ]
+    candidates.sort(key=lambda r: -mentions.get(r.get("collectionName"), 0))
+
+    winners = []
+    for r in candidates[:MAX_RELEASE_PROBES]:
+        if await _holds_all(int(r["collectionId"]), r.get("collectionName") or "",
+                            titles, artist):
+            winners.append((r.get("collectionName") or "", int(r["collectionId"])))
+    if not winners:
+        return None
+    # Two editions of one record are not an ambiguity — "The Click" and "The
+    # Click (Deluxe Edition)" hold the same songs and are the same answer, so
+    # they collapse and the plainer title wins. Genuine ambiguity is two
+    # *different* records, and that is worth refusing.
+    if len({base_title(name) for name, _cid in winners}) != 1:
+        return None
+    return min(winners, key=lambda w: len(w[0]))
+
+
+def _known_artist_id() -> int | None:
+    """An artistId from any tracklist we have already fetched."""
+    for tracks in _tracklist_cache.values():
+        for t in tracks or []:
+            if t.get("artistId"):
+                return int(t["artistId"])
+    return None
+
+
 def _context_is_live(now_mono: float) -> bool:
     return (album_context is not None
             and now_mono - album_context["at"] < ALBUM_CONTEXT_TTL_SECS)
@@ -672,6 +800,7 @@ async def fetch_itunes_metadata(artist, title):
         entry = itunes.find_track(tracks, title, artist)
         if entry is not None:
             album_context["at"] = now_mono
+            _remember_side_track(title, artist, {}, now_mono)
             art, duration = itunes.track_metadata(entry)
             # No edition evidence from this path: the context album is already
             # whichever edition search settled on, so there is nothing new to
@@ -690,6 +819,17 @@ async def fetch_itunes_metadata(artist, title):
         # Search doesn't know this track. Before giving up, ask whether another
         # edition of the record we believe is playing has it — which is both an
         # answer and proof of which pressing is on the platter.
+        _remember_side_track(title, artist, {}, now_mono)
+        held = await _release_holding_side(artist, now_mono)
+        if held is not None:
+            name, cid = held
+            entry = itunes.find_track(await _tracklist(cid, name), title, artist)
+            if entry is not None:
+                art, duration = itunes.track_metadata(entry)
+                print(f"[!] Everything heard on this side is on {name!r} — "
+                      "that is the record")
+                album_context = {"id": cid, "name": name, "at": now_mono}
+                return name, art, duration, False
         found = await _edition_carrying(title, artist)
         if found is not None:
             name, cid, entry = found
@@ -710,7 +850,27 @@ async def fetch_itunes_metadata(artist, title):
     if exclusive:
         print(f"[!] {album!r} is the only edition carrying this track — run upgraded")
 
+    offered = {r["collectionName"]: r["collectionId"] for r in results
+               if r.get("collectionName") and r.get("collectionId")}
+    _remember_side_track(title, artist, offered, now_mono)
+
     collection_id = itunes.collection_id_of(results, album)
+    # This track belongs to a different record than the one we thought was
+    # playing. On a studio album that means the record changed; on a live album
+    # or a compilation it means the premise was wrong and every track will do
+    # this, so ask which single release holds them all before accepting it.
+    if (collection_id is not None and album_context is not None
+            and _context_is_live(now_mono) and album_context["id"] != collection_id):
+        held = await _release_holding_side(artist, now_mono)
+        if held is not None and held[1] != collection_id:
+            name, cid = held
+            entry = itunes.find_track(await _tracklist(cid, name), title, artist)
+            if entry is not None:
+                art, duration = itunes.track_metadata(entry)
+                print(f"[!] Everything heard on this side is on {name!r} — "
+                      f"that is the record, not {album!r}")
+                album_context = {"id": cid, "name": name, "at": now_mono}
+                return name, art, duration, False
     if collection_id is not None:
         if not album_context or album_context["id"] != collection_id:
             print(f"[!] Now assuming the record is {album!r}")
@@ -1093,6 +1253,7 @@ async def _handle_match(track: dict, reason: str = "onset") -> None:
 
     state["in_song"] = True
     state["back_off"] = False
+    state["predicted_streak"] = 0
     # Raised for exactly one frame: a flag that outlived its publish would tell
     # the backend to drop a play that had nothing to do with the rescan.
     state["supersede_previous"] = superseding
@@ -1136,6 +1297,77 @@ def _clear_track_state(set_backoff: bool) -> None:
     state["clock"] = None
     state["back_off"] = set_backoff
     state["needle_drop_streak"] = 0
+    state["predicted_streak"] = 0
+
+
+# Consecutive tracks adopted from the tracklist without a recognition. Each one
+# re-anchors on its own duration, but the gap between tracks — applause, crowd
+# work, a locked groove — is not in the tracklist, so the estimate drifts. A few
+# is a reasonable run; beyond that the position is a guess about a guess.
+MAX_PREDICTED_TRACKS = 3
+
+
+async def _advance_to_next_track() -> bool:
+    """Adopt the next track on the record when the end-check couldn't hear one.
+
+    A live album has no silence between songs — applause and crowd work run
+    straight into the next number — so gap detection never fires and the play
+    clock is the *only* transition signal there is. When recognition also fails,
+    the old behaviour was to keep showing the previous track and eventually
+    disarm the clock, which on a side with no silence meant showing one song for
+    the rest of the record.
+
+    Knowing the record gives a better answer than "no idea": the next thing on
+    the platter is the next thing on the tracklist. It is an inference, so it is
+    bounded, announced, and abandoned the moment a real match disagrees.
+    """
+    if state.get("predicted_streak", 0) >= MAX_PREDICTED_TRACKS:
+        return False
+    if not _context_is_live(time.monotonic()):
+        return False
+    tracks = await _tracklist(album_context["id"], album_context["name"])
+    if not tracks:
+        return False
+    here = next((i for i, t in enumerate(tracks)
+                 if itunes.track_key(t.get("trackName")) == itunes.track_key(state["title"])),
+                None)
+    if here is None or here + 1 >= len(tracks):
+        return False
+
+    entry = tracks[here + 1]
+    title = entry.get("trackName") or ""
+    artist = entry.get("artistName") or state["artist"]
+    art, duration = itunes.track_metadata(entry)
+    state["predicted_streak"] = state.get("predicted_streak", 0) + 1
+    await emit_event(
+        "info",
+        f"Nothing recognised, but {state['title']!r} is over — "
+        f"{album_context['name']!r} plays {title!r} next")
+
+    state["artist"] = artist
+    state["title"] = title
+    state["album"] = album_context["name"]
+    state["art_url"] = art or ""
+    state["isrc"] = None
+    state["genre"] = None
+    state["release_year"] = None
+    state["duration_secs"] = duration
+    state["album_exclusive"] = False
+    state["last_song"] = f"{artist} - {title}"
+    # Anchored at the top of the track with no offset to trust: we are inferring
+    # that it just started, which is the only claim being made.
+    state["clock"] = track_clock.start_clock(
+        duration_secs=duration,
+        match_offset_secs=None,
+        anchor_mono=time.monotonic(),
+        anchor_wall=int(time.time()),
+        grace_floor_secs=runtime["track_end_grace"],
+    )
+    _log_clock(state["clock"])
+    print(f"🔮 PREDICTED: {state['last_song']}")
+    state["in_song"] = True
+    await _publish_phase("playing")
+    return True
 
 
 async def _safe_recognize(**kwargs) -> None:
@@ -1151,6 +1383,20 @@ async def _safe_recognize(**kwargs) -> None:
     except Exception as e:
         await emit_event("error", f"Recognition failed: {e}")
         state["silence_counter"] = 0
+
+
+def _end_of_side() -> None:
+    """The record stopped: forget the track, and the evidence about the record.
+
+    The tracks heard together are what identify a live album or compilation, so
+    they must not outlive the side. Two albums by one artist played back to back
+    would otherwise pool their tracks, and a live album holding one song from
+    each would be "found" holding both. Changing a record always costs enough
+    silence to reach here; a live side, where applause runs straight into the
+    next song, never produces any.
+    """
+    _clear_track_state(set_backoff=False)
+    side_tracks.clear()
 
 
 async def _rescan_pause(seconds: float) -> None:
@@ -1210,9 +1456,12 @@ async def recognize_audio(preserve_on_miss: bool = False, reason: str = "onset")
     if track:
         await _handle_match(track, reason=reason)
     elif preserve_on_miss:
-        print("❓ End-check couldn't identify — keeping the current track.")
-        track_clock.defer(state.get("clock"), time.monotonic())
-        await _publish_phase("playing" if state["in_song"] else "listening")
+        # Nothing was recognised, but the track we were showing is over. If the
+        # record is known, what follows it is known too.
+        if not await _advance_to_next_track():
+            print("❓ End-check couldn't identify — keeping the current track.")
+            track_clock.defer(state.get("clock"), time.monotonic())
+            await _publish_phase("playing" if state["in_song"] else "listening")
     else:
         await emit_event("warning", "Could not identify track — gave up after retries")
         # Order matters: clear the track (emptying the title) BEFORE publishing
@@ -1485,7 +1734,7 @@ async def audio_monitor_loop():
             state["back_off"] = new_bo
             if stop:
                 print(f"\n[ STOPPED ] {runtime['stopped_silence']}s silence limit reached.")
-                _clear_track_state(set_backoff=False)
+                _end_of_side()
                 state["silence_counter"] = 0
 
         await asyncio.sleep(1)

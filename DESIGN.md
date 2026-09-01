@@ -706,6 +706,76 @@ reconciler; and every cover follows.
 
 ---
 
+### 11.1.3 When a side is not one album
+
+Everything above rests on "a side is one record, so once any track resolves the
+rest are answerable from its tracklist." A **live album or compilation** breaks
+the premise underneath that: the side genuinely is one record, but every track's
+*catalogue home* is a different one.
+
+AJR's *Live from the Hollywood Bowl* resolved to OK ORCHESTRA, then Neotheater,
+then The Click, then nothing at all — four albums for one side, studio durations
+driving the play clock, and one song never identified at all.
+
+**The ordinary question has no answer here.** "Which album is this track from?"
+returns a different record for every track and none of them is the one playing.
+The useful question is the other way round: **which single release holds all the
+tracks I have heard?** Against the artist's catalogue, the live album held 4 of 4
+where every studio album held 1 — not a close call.
+
+`_release_holding_side()` asks it in two stages, cheap first:
+
+1. **Free.** The albums iTunes already offered for each track, intersected.
+   Those result lists are fetched anyway and thrown away; for this record
+   *Karma* and *The Good Part* alone intersect to exactly one release.
+2. **Cheap.** Failing that, the artist's releases narrowed by **track count** —
+   a release cannot hold four tracks if it has one. That prunes 42 releases to
+   14 without a single request, and candidates are then checked in order of how
+   many of this side's lookups already mentioned them, so the answer is usually
+   first or second.
+
+**The track-count bound is what makes 7" singles work**, and it is why the rule
+is *not* "skip the singles". The bound is however many tracks have been heard,
+so a two-track single stays a candidate right up until a third track rules it
+out — where a "singles aren't albums" filter would have excluded exactly the
+case it needed to keep.
+
+Two guards:
+
+- **The answer must be unique.** Two tracks that happen to share a greatest-hits
+  compilation are not evidence. Editions of one record collapse first, since
+  "The Click" and "The Click (Deluxe Edition)" are the same answer, not an
+  ambiguity.
+- **A stop ends the side** (`_end_of_side()`). Two albums by one artist played
+  back to back would otherwise pool their tracks, and a live album holding one
+  song from each would be "found" holding both. Changing a record always costs
+  enough silence to reach there; a live side never produces any.
+
+### Predicting the track nobody could hear
+
+That last point is also why the play clock carries more weight on this record
+than anywhere else. **A live album has no silence between songs** — applause and
+crowd work run straight into the next number — so `_scan_decision` never returns
+`scan` and the clock is the *only* transition signal there is.
+
+Which exposed a real trap: when an end-check identified nothing, the old
+behaviour kept showing the previous track and, after `MAX_END_RESCANS`
+deferrals, disarmed the clock entirely — and only silence re-arms it. On a side
+with no silence, that meant showing one song for the rest of the record.
+
+`_advance_to_next_track()` closes it. Knowing the record means knowing what
+follows: when the end-check hears nothing and the current track is over, the
+next thing on the platter is the next thing on the tracklist. It claims only
+that the track *just started* — no offset is trusted — and it is bounded to
+`MAX_PREDICTED_TRACKS` in a row, because the gap between live tracks is not in
+any tracklist and the estimate drifts. Any real identification re-syncs and
+clears the budget.
+
+It is an inference, and it is announced as one. But it is a better answer than
+continuing to display a song that has demonstrably ended.
+
+---
+
 ### Memory never out-argues the record
 
 Owning two pressings is the case this has to get right. History is consulted
