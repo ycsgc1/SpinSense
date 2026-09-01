@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import subprocess
 import time
 import tempfile
@@ -56,6 +57,50 @@ def _load_config():
         return json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy
     with open(CONFIG_PATH, 'r') as f:
         return json.load(f)
+
+
+# PortAudio names ALSA devices "USB Audio CODEC: - (hw:0,0)" — the card number
+# is part of the string we store. Card numbers are assigned in registration
+# order and are not stable across boots: if the onboard audio registers before
+# a USB interface, they swap, and a device that is present and working stops
+# matching the configured name.
+_HW_SUFFIX_RE = re.compile(r"\s*\((?:hw|plughw):\d+(?:,\d+)*\)\s*$")
+
+
+def device_base_name(name) -> str:
+    """A device name with its ALSA card coordinates removed, for comparison."""
+    return _HW_SUFFIX_RE.sub("", str(name or "")).strip().casefold()
+
+
+def resolve_device(configured, devices):
+    """(device to open, note explaining any substitution).
+
+    Pure, so the matching is testable without a sound card. `devices` is what
+    `sd.query_devices()` returns: dicts with `name` and `max_input_channels`.
+
+    Exact name first. Failing that, the same device under a different card
+    number — the interface is there, ALSA just numbered it differently, and
+    refusing to open a working device over that would be absurd.
+
+    Raises LookupError when it genuinely isn't there. Deliberately *not*
+    falling back to the default input: SpinSense exists to listen to one
+    specific thing, and quietly recording the onboard microphone instead would
+    produce confident nonsense rather than an obvious failure.
+    """
+    if configured in (None, "", "default"):
+        return None, None
+    names = [str(d.get("name", "")) for d in devices or []]
+    if configured in names:
+        return configured, None
+    want = device_base_name(configured)
+    if want:
+        for index, d in enumerate(devices or []):
+            if int(d.get("max_input_channels") or 0) <= 0:
+                continue
+            if device_base_name(d.get("name")) == want:
+                return index, (f"{configured!r} is not listed; using "
+                               f"{d.get('name')!r} — the ALSA card number changed")
+    raise LookupError(f"No input device matching {configured!r}")
 
 
 def _normalize_mic(cfg):
@@ -321,6 +366,12 @@ state = {
     # Input-stall watchdog.
     "last_callback_mono": 0.0,
     "zero_run_secs": 0.0,
+    # True while the capture device cannot be opened at all, so the retry is
+    # announced once rather than every tick.
+    "device_missing": False,
+    # What we actually opened, which may be an index rather than the configured
+    # name when ALSA renumbered the card.
+    "device_arg": None,
     "last_restart_mono": 0.0,
     "input_stalled": False,
 }
@@ -712,7 +763,7 @@ async def _capture_sample(sample_len: float | None = None) -> bytes:
     Falls back to the configured base length when called with no argument."""
     if sample_len is None:
         sample_len = runtime["sample_len"]
-    mic = runtime["mic_device"]
+    mic = state.get("device_arg")
     # Two readings of the same instant, kept for whichever attempt ends up
     # matching: the play clock anchors to the start of the winning capture, so
     # recognition + network latency never leak into the position estimate.
@@ -1087,6 +1138,21 @@ def _clear_track_state(set_backoff: bool) -> None:
     state["needle_drop_streak"] = 0
 
 
+async def _safe_recognize(**kwargs) -> None:
+    """recognize_audio(), with device failures demoted to an event.
+
+    `sd.rec()` raises if the interface disappears between opening the stream and
+    capturing, which used to propagate all the way out of the monitor loop and
+    end the process. The stream is reopened on the next tick either way, so
+    there is nothing here worth dying over.
+    """
+    try:
+        await recognize_audio(**kwargs)
+    except Exception as e:
+        await emit_event("error", f"Recognition failed: {e}")
+        state["silence_counter"] = 0
+
+
 async def _rescan_pause(seconds: float) -> None:
     """Wait between escalating rescan attempts. Isolated for testability."""
     if seconds > 0:
@@ -1162,11 +1228,54 @@ async def recognize_audio(preserve_on_miss: bool = False, reason: str = "onset")
 def _open_input_stream(callback):
     """Open and start a sounddevice InputStream against the current mic. Pulled
     out of audio_monitor_loop() so the same code handles fresh startup, the
-    post-recognition relock, and the mic-changed rebuild."""
+    post-recognition relock, and the mic-changed rebuild.
+
+    Returns (stream, note): `note` is set when the configured device was found
+    under a different ALSA card number, so the substitution can be reported.
+    """
+    device, note = resolve_device(runtime["mic_device"], sd.query_devices())
     stream = sd.InputStream(
-        samplerate=SAMPLE_RATE, channels=1, callback=callback, device=runtime["mic_device"],
+        samplerate=SAMPLE_RATE, channels=1, callback=callback, device=device,
     )
     stream.start()
+    # Recording must hit the device the meter is reading, so the capture reuses
+    # what was actually opened rather than re-resolving the configured name.
+    state["device_arg"] = device
+    return stream, note
+
+
+# How long to wait between attempts when the capture device cannot be opened.
+DEVICE_RETRY_SECS = 5.0
+
+
+async def _try_open_input_stream(callback, was_open: bool):
+    """Open the capture stream, or return None having said why.
+
+    The engine used to open the stream inline, so a device that wasn't there
+    killed the process outright — and since the entrypoint runs the engine in
+    the background, the container stayed up serving a web UI attached to
+    nothing. That is exactly how it failed in the field: on a container restart
+    the USB codec had not finished enumerating, the device lookup raised
+    `ValueError: No input device matching '...'`, and the engine was gone for
+    38 hours while everything looked healthy.
+
+    A missing device is a normal, recoverable condition — the listener unplugs
+    the interface, the host re-enumerates USB, the container starts first. So it
+    is reported and retried, never fatal.
+    """
+    try:
+        stream, note = _open_input_stream(callback)
+    except Exception as e:
+        if was_open or not state["device_missing"]:
+            await emit_event("error", f"Cannot open audio input: {e}")
+        state["device_missing"] = True
+        return None
+    if note:
+        await emit_event("warning", note)
+    if state["device_missing"]:
+        await emit_event("info", "Audio input opened — listening again")
+    state["device_missing"] = False
+    _reset_stall_watch()
     return stream
 
 
@@ -1237,14 +1346,29 @@ async def audio_monitor_loop():
     # Hold strong references to these long-lived tasks: the event loop only
     # keeps a weak ref, so an unreferenced create_task() can be garbage-collected
     # mid-run, silently killing config hot-reload / the command socket.
-    _config_task = asyncio.create_task(config_watch_loop())
-    _command_task = asyncio.create_task(command_listener_loop())
+    if _config_task is None or _config_task.done():
+        _config_task = asyncio.create_task(config_watch_loop())
+    if _command_task is None or _command_task.done():
+        _command_task = asyncio.create_task(command_listener_loop())
     print("--- SpinSense engine active ---")
 
-    stream = _open_input_stream(audio_callback)
+    stream = await _try_open_input_stream(audio_callback, was_open=True)
     state["last_callback_mono"] = time.monotonic()
 
     while True:
+        # No capture device. Keep the loop alive and keep asking for it: this is
+        # what turns "unplugged" or "started before USB settled" into a pause
+        # instead of a dead engine. The status frame still goes out, so the
+        # dashboard can say so rather than showing a frozen meter.
+        if stream is None:
+            await _write_uds(json.dumps(
+                build_status_payload("listening", 0.0, state)) + "\n")
+            await asyncio.sleep(DEVICE_RETRY_SECS)
+            if mic_change_event.is_set():
+                mic_change_event.clear()
+            stream = await _try_open_input_stream(audio_callback, was_open=False)
+            continue
+
         # Honor a mic-device change before we evaluate this iteration's volume.
         if mic_change_event.is_set():
             try:
@@ -1252,14 +1376,14 @@ async def audio_monitor_loop():
                 stream.close()
             except Exception as e:
                 print(f"⚠️ Failed to close audio stream: {e}")
-            try:
-                stream = _open_input_stream(audio_callback)
+            stream = await _try_open_input_stream(audio_callback, was_open=True)
+            if stream is not None:
                 print(f"🎤 Mic device now {runtime['mic_device']!r}, stream restarted")
-            except Exception as e:
-                print(f"⚠️ Failed to open new audio stream: {e}")
             mic_change_event.clear()
             state["current_rms"] = 0.0
             _reset_stall_watch()
+            if stream is None:
+                continue
 
         vol = state["current_rms"]
 
@@ -1282,12 +1406,9 @@ async def audio_monitor_loop():
                 stream.close()
             except Exception as e:
                 print(f"⚠️ Failed to close stalled audio stream: {e}")
-            try:
-                stream = _open_input_stream(audio_callback)
-                state["last_callback_mono"] = time.monotonic()
-                state["zero_run_secs"] = 0.0
-            except Exception as e:
-                await emit_event("error", f"Could not reopen audio input: {e}")
+            stream = await _try_open_input_stream(audio_callback, was_open=True)
+            if stream is None:
+                continue
         elif not stall_reason and state["input_stalled"]:
             state["input_stalled"] = False
             await emit_event("info", "Audio input recovered")
@@ -1306,8 +1427,8 @@ async def audio_monitor_loop():
             state["force_scan"] = False
             stream.stop()
             stream.close()
-            await recognize_audio(reason="manual")
-            stream = _open_input_stream(audio_callback)
+            await _safe_recognize(reason="manual")
+            stream = await _try_open_input_stream(audio_callback, was_open=True)
             state["current_rms"] = 0.0
             _reset_stall_watch()
             await asyncio.sleep(1)
@@ -1334,8 +1455,8 @@ async def audio_monitor_loop():
                 f"Track-end check: {state['last_song']} should be over — re-identifying")
             stream.stop()
             stream.close()
-            await recognize_audio(preserve_on_miss=True, reason="track_end")
-            stream = _open_input_stream(audio_callback)
+            await _safe_recognize(preserve_on_miss=True, reason="track_end")
+            stream = await _try_open_input_stream(audio_callback, was_open=True)
             state["current_rms"] = 0.0
             _reset_stall_watch()
             await asyncio.sleep(1)
@@ -1344,8 +1465,8 @@ async def audio_monitor_loop():
         if decision == "scan":
             stream.stop()
             stream.close()
-            await recognize_audio()
-            stream = _open_input_stream(audio_callback)
+            await _safe_recognize()
+            stream = await _try_open_input_stream(audio_callback, was_open=True)
             state["current_rms"] = 0.0
             _reset_stall_watch()
         elif decision == "wait_gap":
@@ -1410,8 +1531,38 @@ def _apply_config_diff(new_cfg):
         mic_change_event.set()
 
 
+# How long to wait before restarting the monitor loop after an unexpected
+# error, so a failure that repeats immediately can't become a busy loop.
+LOOP_RESTART_SECS = 5.0
+
+
+async def supervise() -> None:
+    """Run the monitor loop, and put it back if it ever falls over.
+
+    Everything foreseeable is handled closer to where it happens; this is for
+    what isn't. It exists because the alternative was demonstrated in the field:
+    one unhandled exception ended the engine, the entrypoint had started it as a
+    background job so the container stayed up, and SpinSense served a
+    healthy-looking web UI attached to nothing for 38 hours.
+    """
+    import traceback
+
+    while True:
+        try:
+            await audio_monitor_loop()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            traceback.print_exc()
+            await emit_event("error", f"Engine loop crashed, restarting: {e}")
+        else:
+            # The loop never returns on purpose; a clean exit is also a fault.
+            await emit_event("warning", "Engine loop exited, restarting")
+        await asyncio.sleep(LOOP_RESTART_SECS)
+
+
 if __name__ == "__main__":
     try:
-        asyncio.run(audio_monitor_loop())
+        asyncio.run(supervise())
     except KeyboardInterrupt:
         print("\nShutting down...")

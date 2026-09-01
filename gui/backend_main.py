@@ -587,8 +587,9 @@ def get_events(limit: int = 100):
 @app.get("/api/status")
 def get_status():
     """Last-known engine status, in the shape the Home Assistant integration
-    polls. Defaults to a 'stopped' payload when the engine hasn't reported."""
-    return manager.last_status
+    polls. Falls back to a 'stopped' payload when the engine hasn't reported,
+    or has stopped reporting — see ConnectionManager.current_status()."""
+    return manager.current_status()
 
 
 # --- WebSocket ---

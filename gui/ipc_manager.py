@@ -41,10 +41,33 @@ DEFAULT_STATUS = {
 }
 
 
+# How long a status frame stays believable. The engine writes one per second,
+# so anything older than this means it is not running — and saying "playing"
+# on behalf of a process that died half an hour ago is worse than saying
+# nothing. Generous enough to survive a recognition pass, which stops the
+# stream and can take ~25 s at the top of the retry ladder.
+STATUS_STALE_SECS = 45
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list["WebSocket"] = []
         self.last_status: dict = dict(DEFAULT_STATUS)
+        self.last_status_at: float = 0.0
+
+    def current_status(self) -> dict:
+        """The last frame, or the idle default once it has gone stale.
+
+        Without this the last frame stood forever: when the engine died
+        mid-session, `/api/status` and Home Assistant kept reporting whatever
+        was playing at the moment it stopped, with `engine_active` true. The
+        dashboard looked fine and the meter simply never moved again.
+        """
+        if not self.last_status_at:
+            return self.last_status
+        if time.time() - self.last_status_at <= STATUS_STALE_SECS:
+            return self.last_status
+        return dict(DEFAULT_STATUS)
 
     async def connect(self, websocket: "WebSocket"):
         await websocket.accept()
@@ -57,6 +80,7 @@ class ConnectionManager:
     async def broadcast(self, message: dict):
         if message.get("type") == "live_status" and isinstance(message.get("payload"), dict):
             self.last_status = message["payload"]
+            self.last_status_at = time.time()
         dead = []
         for connection in self.active_connections:
             try:
