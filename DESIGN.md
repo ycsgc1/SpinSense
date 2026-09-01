@@ -774,6 +774,47 @@ clears the budget.
 It is an inference, and it is announced as one. But it is a better answer than
 continuing to display a song that has demonstrably ended.
 
+### The back-off gate needs a way out that isn't silence
+
+Prediction only runs from a track-end check, and those require `in_song`. A
+*failed* identification clears it — so on the same record, the second trap sat
+one step away from the first.
+
+After giving up on a track, `_clear_track_state(set_backoff=True)` arms the
+back-off gate, which normally reopens on a qualifying gap. That is the right
+rule on a studio LP, where a gap is precisely what separates two tracks. On a
+live album there are no gaps, so the gate never reopened and the engine stopped
+scanning for the rest of the side. It showed up in a field log as several
+hundred consecutive `b` ticks with music playing throughout, manual rescans the
+only thing producing anything at all.
+
+So continuous audio can now out-wait the gate: `release_backoff_if_expired()`
+opens it after `backoff_window(attempts)`, starting at three minutes and
+doubling to a fifteen-minute ceiling. The escalation matters because the usual
+reason nothing identified is that nothing *can* be — an interlude, crowd noise,
+a locked groove — and a record we cannot read should cost a handful of calls an
+hour rather than one a minute. A real gap remains the preferred release and
+resets the escalation, since the fallback exists for records that never provide
+one.
+
+Both halves of this were invisible to the test suite while they lived inline in
+`audio_monitor_loop`, which nothing drives. Mutating them changed no test.
+`release_backoff_if_expired()` and `apply_backoff()` exist as named functions
+for that reason as much as for clarity — the same lesson as `_end_of_side()`.
+
+### An unresolved track is a standing question
+
+One more from the same log. A track resolved to nothing, and the track after it
+resolved cleanly to the record we already believed in — so there was no
+*disagreement* to notice, and the release hunt never ran even though the answer
+was by then findable.
+
+Mismatch is therefore not the only trigger. A side carrying any track that never
+resolved keeps the question open, and each later identification re-asks it. The
+cost is nothing once the answer is cached, and it self-heals: the play filed as
+"Unknown Album" at the time is backfilled by the run reconciler as soon as the
+run agrees on a record.
+
 ---
 
 ### Memory never out-argues the record

@@ -347,6 +347,10 @@ state = {
     "duration_secs": None,
     "album_exclusive": False,
     "back_off": False,
+    # When the back-off gate was armed, and how many times audio alone has
+    # re-opened it. Both reset by a real gap or a successful identification.
+    "back_off_since": 0.0,
+    "back_off_attempts": 0,
     "force_scan": False,
     # How much of the most recent capture was actually above the listening
     # threshold, and whether the match it produced replaces the open play.
@@ -565,6 +569,10 @@ async def _publish_idle_blip() -> None:
 album_context: dict | None = None
 _tracklist_cache: dict[int, list[dict]] = {}
 _artist_albums_cache: dict[int, list[dict]] = {}
+# artistId by artist name, learned from whatever iTunes has already told us.
+# Needed because the release hunt is keyed on the artist, and the side that
+# needs it most may open with a track that resolves to nothing at all.
+_artist_ids: dict[str, int] = {}
 
 # What has been identified on this side, newest last: {title, artist, albums, at}
 # where `albums` maps every release iTunes offered for that track to its id.
@@ -662,15 +670,21 @@ async def _edition_carrying(title: str, artist: str) -> tuple[str, int, dict] | 
     return None
 
 
-def _remember_side_track(title: str, artist: str, albums: dict, now_mono: float) -> None:
+def _remember_side_track(title: str, artist: str, albums: dict, now_mono: float,
+                         resolved: bool = True) -> None:
     """File one identification against the current side, replacing any earlier
-    play of the same track so a repeated song doesn't count twice."""
+    play of the same track so a repeated song doesn't count twice.
+
+    `resolved` records whether we ended up knowing which album it came from. An
+    unresolved track is a standing reason to look again later: the release that
+    explains it may only become findable once more of the side has been heard.
+    """
     if not title:
         return
     cutoff = now_mono - ALBUM_CONTEXT_TTL_SECS
     kept = [t for t in side_tracks
             if t["at"] >= cutoff and itunes.track_key(t["title"]) != itunes.track_key(title)]
-    kept.append({"title": title, "artist": artist or "",
+    kept.append({"title": title, "artist": artist or "", "resolved": bool(resolved),
                  "albums": dict(albums or {}), "at": now_mono})
     side_tracks[:] = kept
 
@@ -734,7 +748,7 @@ async def _release_holding_side(artist: str, now_mono: float):
     # Stage 2: the artist's releases, ordered by how many of this side's lookups
     # already mentioned them — the answer is usually one we have seen and passed
     # over, so the likely candidate gets checked first.
-    artist_id = _known_artist_id()
+    artist_id = _known_artist_id(artist)
     if artist_id is None:
         return None
     mentions: dict[str, int] = {}
@@ -763,11 +777,30 @@ async def _release_holding_side(artist: str, now_mono: float):
     return min(winners, key=lambda w: len(w[0]))
 
 
-def _known_artist_id() -> int | None:
-    """An artistId from any tracklist we have already fetched."""
+def _remember_artist_id(artist: str, rows) -> None:
+    """Learn an artistId from search results or a tracklist, if one is there."""
+    key = itunes.artist_key(artist)
+    if not key or key in _artist_ids:
+        return
+    for r in rows or []:
+        if r.get("artistId") and itunes.artist_key(r.get("artistName")) == key:
+            _artist_ids[key] = int(r["artistId"])
+            return
+
+
+def _known_artist_id(artist: str) -> int | None:
+    """This artist's iTunes id, from anything iTunes has already returned.
+
+    Search results carry it, and so do tracklists. Both are checked because the
+    side that most needs the release hunt can open with a track that resolves to
+    nothing, leaving no tracklist to read it from.
+    """
+    key = itunes.artist_key(artist)
+    if key in _artist_ids:
+        return _artist_ids[key]
     for tracks in _tracklist_cache.values():
         for t in tracks or []:
-            if t.get("artistId"):
+            if t.get("artistId") and itunes.artist_key(t.get("artistName")) == key:
                 return int(t["artistId"])
     return None
 
@@ -797,6 +830,7 @@ async def fetch_itunes_metadata(artist, title):
 
     if _context_is_live(now_mono):
         tracks = await _tracklist(album_context["id"], album_context["name"])
+        _remember_artist_id(artist, tracks)
         entry = itunes.find_track(tracks, title, artist)
         if entry is not None:
             album_context["at"] = now_mono
@@ -813,13 +847,14 @@ async def fetch_itunes_metadata(artist, title):
             # is to ask, which is the one thing the shortcut must not prevent.
             print(f"[!] {title!r} is not on {album_context['name']!r} — asking iTunes")
 
-    results = itunes.results_for_track(
-        await itunes.search_songs(artist, title), title, artist)
+    raw = await itunes.search_songs(artist, title)
+    _remember_artist_id(artist, raw)
+    results = itunes.results_for_track(raw, title, artist)
     if not results:
         # Search doesn't know this track. Before giving up, ask whether another
         # edition of the record we believe is playing has it — which is both an
         # answer and proof of which pressing is on the platter.
-        _remember_side_track(title, artist, {}, now_mono)
+        _remember_side_track(title, artist, {}, now_mono, resolved=False)
         held = await _release_holding_side(artist, now_mono)
         if held is not None:
             name, cid = held
@@ -828,6 +863,7 @@ async def fetch_itunes_metadata(artist, title):
                 art, duration = itunes.track_metadata(entry)
                 print(f"[!] Everything heard on this side is on {name!r} — "
                       "that is the record")
+                _remember_side_track(title, artist, {name: cid}, now_mono)
                 album_context = {"id": cid, "name": name, "at": now_mono}
                 return name, art, duration, False
         found = await _edition_carrying(title, artist)
@@ -859,8 +895,15 @@ async def fetch_itunes_metadata(artist, title):
     # playing. On a studio album that means the record changed; on a live album
     # or a compilation it means the premise was wrong and every track will do
     # this, so ask which single release holds them all before accepting it.
-    if (collection_id is not None and album_context is not None
-            and _context_is_live(now_mono) and album_context["id"] != collection_id):
+    switched = (collection_id is not None and album_context is not None
+                and _context_is_live(now_mono) and album_context["id"] != collection_id)
+    # An earlier track on this side never resolved at all. That is a standing
+    # question, not a settled one: the release that explains it only becomes
+    # findable once enough of the side has been heard, and asking again now
+    # costs nothing when the answer is already cached.
+    unexplained = any(not t.get("resolved", True)
+                      for t in _recent_side_tracks(artist, now_mono))
+    if switched or unexplained:
         held = await _release_holding_side(artist, now_mono)
         if held is not None and held[1] != collection_id:
             name, cid = held
@@ -1253,6 +1296,7 @@ async def _handle_match(track: dict, reason: str = "onset") -> None:
 
     state["in_song"] = True
     state["back_off"] = False
+    state["back_off_attempts"] = 0
     state["predicted_streak"] = 0
     # Raised for exactly one frame: a flag that outlived its publish would tell
     # the backend to drop a play that had nothing to do with the rescan.
@@ -1279,6 +1323,41 @@ def _log_clock(clock) -> None:
     )
 
 
+def _arm_backoff() -> None:
+    """Start the back-off gate's clock. Separate from setting the flag so the
+    'how long has this been going on' reading has exactly one owner."""
+    state["back_off"] = True
+    state["back_off_since"] = time.monotonic()
+
+
+def release_backoff_if_expired(now_mono: float) -> bool:
+    """Open the back-off gate if continuous audio has out-waited it.
+
+    Returns whether it was opened, so the caller can say so. Each release costs
+    an escalation step: a record that cannot be identified should be asked
+    about less and less often, not on a fixed timer forever.
+    """
+    if not backoff_expired(state["back_off_since"], now_mono,
+                           state["back_off_attempts"]):
+        return False
+    state["back_off"] = False
+    state["back_off_attempts"] += 1
+    return True
+
+
+def apply_backoff(new_back_off: bool) -> None:
+    """Store the gate's new position after a silence tick.
+
+    A real gap releasing the gate resets the escalation, because the gap is the
+    signal the gate was built around — the time-based escape is only a fallback
+    for records that never provide one, and shouldn't accumulate against records
+    that do.
+    """
+    if state["back_off"] and not new_back_off:
+        state["back_off_attempts"] = 0
+    state["back_off"] = new_back_off
+
+
 def _clear_track_state(set_backoff: bool) -> None:
     """Reset all track + enrichment fields to the 'no song' state. `set_backoff`
     arms the re-scan back-off gate — True after a no_match (don't re-hammer the
@@ -1295,9 +1374,13 @@ def _clear_track_state(set_backoff: bool) -> None:
     state["duration_secs"] = None
     state["album_exclusive"] = False
     state["clock"] = None
-    state["back_off"] = set_backoff
     state["needle_drop_streak"] = 0
     state["predicted_streak"] = 0
+    if set_backoff:
+        _arm_backoff()
+    else:
+        state["back_off"] = False
+        state["back_off_attempts"] = 0
 
 
 # Consecutive tracks adopted from the tracklist without a recognition. Each one
@@ -1560,6 +1643,36 @@ def _silence_step(silence_counter, in_song, back_off, new_song_silence, stopped_
     return silence_counter, back_off, stop
 
 
+# How long to sit out after a failed identification when the audio never goes
+# quiet. The back-off gate is normally released by a qualifying gap, which is
+# the right signal on a studio LP — but a live album has no gaps at all, so the
+# gate would never open and the engine would stop scanning for the rest of the
+# side. Observed in the field as several hundred consecutive back-off ticks.
+#
+# Doubling, because the usual reason nothing identified is that nothing *can*
+# be identified — a spoken interlude, crowd noise, a locked groove — and a
+# record we cannot read should cost a handful of calls an hour, not one a minute.
+BACKOFF_RETRY_SECS = 180.0
+BACKOFF_RETRY_CAP_SECS = 900.0
+
+
+def backoff_window(attempts: int) -> float:
+    """How long this back-off should last before audio alone re-opens the gate."""
+    return min(BACKOFF_RETRY_SECS * (2.0 ** max(0, int(attempts))),
+               BACKOFF_RETRY_CAP_SECS)
+
+
+def backoff_expired(since_mono: float, now_mono: float, attempts: int) -> bool:
+    """Whether continuous audio has out-waited the back-off gate.
+
+    Pure. `since_mono` is when the gate was armed; a zero or future stamp reads
+    as not expired, so a missing reading can never open it by accident.
+    """
+    if not since_mono or now_mono < since_mono:
+        return False
+    return (now_mono - since_mono) >= backoff_window(attempts)
+
+
 def _scan_decision(vol, threshold, in_song, silence_counter, new_song_silence, back_off):
     """Pure: decide what the monitor loop should do this tick.
     Returns 'scan' | 'tick' | 'wait_gap' | 'silence'.
@@ -1719,7 +1832,15 @@ async def audio_monitor_loop():
             state["current_rms"] = 0.0
             _reset_stall_watch()
         elif decision == "wait_gap":
-            print("b", end="", flush=True)
+            # Normally released by a qualifying gap. Where there are no gaps,
+            # time releases it instead — otherwise a failed identification on a
+            # live side silences the engine until the record does.
+            if release_backoff_if_expired(now_mono):
+                await emit_event(
+                    "info",
+                    "No gap to wait for — trying to identify what's playing again")
+            else:
+                print("b", end="", flush=True)
         elif decision == "tick":
             state["silence_counter"] = 0  # song resumed before the gap qualified
             print(".", end="", flush=True)
@@ -1731,7 +1852,7 @@ async def audio_monitor_loop():
             if state["in_song"]:
                 print("s", end="", flush=True)
             state["silence_counter"] = new_sc
-            state["back_off"] = new_bo
+            apply_backoff(new_bo)
             if stop:
                 print(f"\n[ STOPPED ] {runtime['stopped_silence']}s silence limit reached.")
                 _end_of_side()

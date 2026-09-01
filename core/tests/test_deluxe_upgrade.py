@@ -76,6 +76,7 @@ class DeluxeBonusTrackTest(unittest.IsolatedAsyncioTestCase):
         core_engine.album_context = None
         core_engine._tracklist_cache.clear()
         core_engine._artist_albums_cache.clear()
+        core_engine._artist_ids.clear()
         self.searches = []
 
         async def fake_search(artist, title, limit=10, timeout_secs=5.0):
@@ -113,6 +114,7 @@ class DeluxeBonusTrackTest(unittest.IsolatedAsyncioTestCase):
         core_engine.album_context = None
         core_engine._tracklist_cache.clear()
         core_engine._artist_albums_cache.clear()
+        core_engine._artist_ids.clear()
 
     def solo_result(self):
         return [{"trackName": "Taste", "artistName": "Sabrina Carpenter",

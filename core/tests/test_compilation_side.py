@@ -53,7 +53,7 @@ RELEASES = [
     {"collectionId": NEO_ID, "collectionName": "Neotheater", "trackCount": 2},
     {"collectionId": CLICK_ID, "collectionName": "The Click", "trackCount": 2},
     {"collectionId": LIVE_ID, "collectionName": "Live from the Hollywood Bowl",
-     "trackCount": 5},
+     "trackCount": 6},
     {"collectionId": SINGLE_ID, "collectionName": "Way Less Sad (Cash Cash Remix) - Single",
      "trackCount": 2},
 ]
@@ -76,13 +76,16 @@ class CompilationSideTest(unittest.IsolatedAsyncioTestCase):
         core_engine.album_context = None
         core_engine._tracklist_cache.clear()
         core_engine._artist_albums_cache.clear()
+        core_engine._artist_ids.clear()
         core_engine.side_tracks.clear()
         self.probed = []
 
         async def fake_search(artist, title, limit=10, timeout_secs=5.0):
+            # artistId included because real search results always carry one,
+            # and the release hunt needs it to reach the artist's catalogue.
             return [{"trackName": title, "artistName": "AJR", "collectionName": c,
-                     "collectionId": cid, "trackTimeMillis": secs * 1000,
-                     "artworkUrl100": ART}
+                     "collectionId": cid, "artistId": ARTIST_ID,
+                     "trackTimeMillis": secs * 1000, "artworkUrl100": ART}
                     for c, cid, secs in SEARCH.get(title, [])]
 
         async def fake_tracks(collection_id, timeout_secs=8.0):
@@ -102,6 +105,7 @@ class CompilationSideTest(unittest.IsolatedAsyncioTestCase):
         core_engine.album_context = None
         core_engine._tracklist_cache.clear()
         core_engine._artist_albums_cache.clear()
+        core_engine._artist_ids.clear()
         core_engine.side_tracks.clear()
 
     async def play(self, *titles):
@@ -142,6 +146,22 @@ class CompilationSideTest(unittest.IsolatedAsyncioTestCase):
         results = await self.play("Way Less Sad", "Karma", "The Good Part",
                                   "The Big Goodbye")
         self.assertEqual({r[0] for r in results[1:]}, {"Live from the Hollywood Bowl"})
+
+    async def test_a_track_that_never_resolved_keeps_the_question_open(self):
+        # From the field: "A Bunch of Songs We Haven't Played In a Long Time"
+        # resolved to nothing, then the next track resolved cleanly to the album
+        # we already believed in — so there was no *disagreement* to notice, and
+        # the record went unfound. An unresolved track is a standing question.
+        results = await self.play("The Big Goodbye", "Karma")
+        self.assertEqual(results[1][0], "Live from the Hollywood Bowl")
+
+    async def test_the_unresolved_track_is_not_left_behind(self):
+        # It was filed as unknown at the time; once the record is found, the
+        # album it belongs to is knowable and the run reconciler backfills it.
+        await self.play("The Big Goodbye", "Karma")
+        again = await self.play("The Big Goodbye")
+        self.assertEqual(again[0][0], "Live from the Hollywood Bowl")
+        self.assertEqual(again[0][2], 342)
 
     # --- and where it must not reach ---
 
