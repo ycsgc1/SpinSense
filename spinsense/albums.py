@@ -1,5 +1,10 @@
 """Album titles: what a trailing qualifier means, and which title to show.
 
+**To fix a record that comes out wrong because of something in its title, edit
+`EDITION_MARKERS` or `RENDITION_MARKERS` below.** They are plain lists for that
+reason; see the comment above them for which is which, and
+`tests/test_vocabulary.py` for the guards that keep an addition honest.
+
 Pure — no I/O, no database, no framework. Lives here rather than in `gui/`
 because the engine needs the same vocabulary the moment it asks iTunes which
 album a track belongs to, and a second copy of these regexes is precisely how
@@ -8,43 +13,137 @@ album a track belongs to, and a second copy of these regexes is precisely how
 import re
 
 
-# Two vocabularies, because a trailing qualifier answers two different
-# questions and conflating them is what mislabelled SOUR as "SOUR (Video
-# Version)". Matched as whole words.
+# ---------------------------------------------------------------------------
+# The qualifier vocabulary.
 #
-# EDITION: the same album, in a different edition or master. Strippable — the
-# plays belong together, and the plain title is what we show.
-_EDITION_MARKER_RE = re.compile(
-    r"\b(super deluxe|deluxe|expanded|remastered|remaster|anniversary|"
-    r"bonus tracks?|special edition|collector'?s edition|legacy edition|"
-    r"definitive edition|reissue|re-issue|archive collection|"
-    r"(19|20)\d{2} (remaster|mix))\b",
-    re.IGNORECASE,
-)
-# RENDITION: a different recording of the same songs. Never strippable, never
-# merged — a live album is not a pressing of the studio album.
+# THIS IS THE LIST TO EDIT when a record comes out wrong because of something in
+# its title. Add the phrase in lowercase to whichever tuple below matches what
+# it means; terms are escaped and word-bounded automatically, so no regex is
+# involved and one term cannot break another. A phrase with a word that can
+# vary ("bonus track" / "bonus tracks") needs both spellings listed.
 #
-# "version" used to sit in the edition list, which is backwards: across 6,215
-# iTunes albums it appears overwhelmingly in rendition contexts (karaoke,
-# instrumental, piano, acoustic, video, Taylor's) and as an edition only inside
-# the fixed phrases "deluxe version" and "bonus track version" — both already
-# caught above by "deluxe" and "bonus track".
-_RENDITION_MARKER_RE = re.compile(
-    r"\b(live|acoustic|unplugged|instrumental|karaoke|demos?|remix(es)?|"
-    r"video|radio edit|single version|piano|orchestral|cover|tribute|"
-    r"sped up|slowed|extended|dj mix|session|originally performed by|"
-    r"in the style of)\b",
-    re.IGNORECASE,
+# Which list a term goes in decides what SpinSense does with it, and the two
+# answers are opposites — getting it wrong is how "SOUR (Video Version)" was
+# once treated as an edition of *SOUR*:
+#
+#   EDITION   the same recordings, in a different edition or master. Strippable:
+#             the plays belong together and the plain title is what we show, so
+#             "Abbey Road (Deluxe)" is filed as "Abbey Road".
+#
+#   RENDITION a different recording of the same songs. Never strippable, never
+#             merged — a live album is not a pressing of the studio album, and
+#             "Blank Space (Taylor's Version)" is not the track on *1989*.
+#
+# When unsure, RENDITION is the safer choice: it keeps records apart, where a
+# wrong EDITION entry silently merges two of them.
+# ---------------------------------------------------------------------------
+
+EDITION_MARKERS = (
+    "super deluxe",
+    "deluxe",
+    "expanded",
+    "remastered",
+    "remaster",
+    "anniversary",
+    "bonus track",
+    "bonus tracks",
+    "special edition",
+    "collectors edition",
+    "collector's edition",
+    "legacy edition",
+    "definitive edition",
+    "reissue",
+    "re-issue",
+    "archive collection",
 )
-# Possessive re-recordings ("Taylor's Version") are a real, separately-pressed
-# record, not an edition. Its own deluxe strips normally, so
-# "1989 (Taylor's Version) [Deluxe]" reduces to "1989 (Taylor's Version)" and
-# never to "1989".
-_POSSESSIVE_VERSION_RE = re.compile(r"\w+['’]s\s+version", re.IGNORECASE)
+
+RENDITION_MARKERS = (
+    "live",
+    "acoustic",
+    "unplugged",
+    "instrumental",
+    "karaoke",
+    "demo",
+    "demos",
+    "remix",
+    "remixes",
+    "video",
+    "radio edit",
+    "single version",
+    "piano",
+    "orchestral",
+    "cover",
+    "tribute",
+    "sped up",
+    "slowed",
+    "extended",
+    "dj mix",
+    "session",
+    "originally performed by",
+    "in the style of",
+)
+
+# Shapes rather than fixed phrases, for qualifiers that vary by artist or year.
+# Raw regex, so these are the entries to be careful with — prefer a plain term
+# above unless the thing genuinely varies.
+EDITION_PATTERNS = (
+    # "2011 Remaster", "1987 Mix" — a year plus what was done to it.
+    r"(?:19|20)\d{2}\s+(?:remaster|mix)",
+)
+RENDITION_PATTERNS = (
+    # "Taylor's Version", and any other possessive re-recording. These are
+    # separately pressed records, not editions: "1989 (Taylor's Version)
+    # [Deluxe]" reduces to "1989 (Taylor's Version)" and never to "1989".
+    r"\w+['\u2019]s\s+version",
+)
+
+# "version" is deliberately absent from both lists. Across 6,215 iTunes albums
+# it appears overwhelmingly in rendition contexts (karaoke, instrumental,
+# piano, acoustic, video, Taylor's) and as an edition only inside the fixed
+# phrases "deluxe version" and "bonus track version" — both already covered.
+
+
+_CURLY_APOSTROPHE = "\u2019"
+
+
+def _fold(text: str) -> str:
+    """Lowercase, collapse whitespace, and straighten curly apostrophes.
+
+    The two catalogues disagree about apostrophes constantly, so "Collector's
+    Edition" and "Collector\u2019s Edition" have to read the same or a term only
+    matches half the time it should.
+    """
+    return " ".join(str(text or "").replace(_CURLY_APOSTROPHE, "'").lower().split())
+
+
+def _compile_markers(terms, patterns=()) -> re.Pattern:
+    """One word-bounded alternation from plain terms plus raw patterns.
+
+    Longest first, so "super deluxe" is preferred over the "deluxe" inside it.
+    Word boundaries already separate the pairs listed today, so this is really
+    for terms added later — a "deluxe edition" alongside "deluxe" would
+    otherwise report the wrong half of the phrase. Plain terms are escaped, so
+    a phrase may contain regex characters without anyone needing to know that.
+    """
+    alts = [re.escape(t) for t in sorted(terms, key=len, reverse=True)]
+    alts.extend(patterns)
+    return re.compile(r"\b(" + "|".join(alts) + r")\b", re.IGNORECASE)
+
+
+_EDITION_MARKER_RE = _compile_markers(EDITION_MARKERS, EDITION_PATTERNS)
+_RENDITION_MARKER_RE = _compile_markers(RENDITION_MARKERS)
+_POSSESSIVE_VERSION_RE = _compile_markers((), RENDITION_PATTERNS)
+# Every way a title can announce it is a different recording, for reading the
+# markers off a track title (see `rendition_markers`).
+_RENDITION_RES = (_RENDITION_MARKER_RE, _POSSESSIVE_VERSION_RE)
+
 _YEAR_RE = re.compile(r"(19|20)\d{2}")
 
 _TRAILING_BRACKET_RE = re.compile(r"\s*[(\[]([^()\[\]]*)[)\]]\s*$")
-_TRAILING_DASH_RE = re.compile(r"\s+[-–—]\s+([^-–—]+?)\s*$")
+# A dash inside a word is part of the qualifier ("re-issue"); a *spaced* dash
+# starts a new one, so only the last segment is ever taken.
+_TRAILING_DASH_RE = re.compile(
+    r"\s+[-–—]\s+((?:[^-–—]|(?<=\S)[-–—](?=\S))+?)\s*$")
 
 
 def _is_edition_qualifier(text: str) -> bool:
@@ -54,7 +153,7 @@ def _is_edition_qualifier(text: str) -> bool:
     "Video Version" and "Live (Deluxe Edition)" are judged on the part that
     makes them a different record.
     """
-    t = " ".join(text.strip().lower().split())
+    t = _fold(text)
     if not t:
         return False
     if _POSSESSIVE_VERSION_RE.search(t):
@@ -125,11 +224,10 @@ def rendition_markers(title: str | None) -> frozenset[str]:
     """
     found: set[str] = set()
     for qualifier in trailing_qualifiers(title):
-        text = " ".join(qualifier.lower().split())
-        for m in _RENDITION_MARKER_RE.finditer(text):
-            found.add(_MARKER_TOKEN_RE.sub("", m.group(1)))
-        for m in _POSSESSIVE_VERSION_RE.finditer(text):
-            found.add(_MARKER_TOKEN_RE.sub("", m.group(0)))
+        text = _fold(qualifier)
+        for pattern in _RENDITION_RES:
+            for m in pattern.finditer(text):
+                found.add(_MARKER_TOKEN_RE.sub("", m.group(1)))
     return frozenset(t for t in found if t)
 
 
@@ -148,7 +246,7 @@ def same_recording(wanted: str | None, candidate: str | None) -> bool:
 
 def _is_any_qualifier(text: str) -> bool:
     """Whether a trailing qualifier is one we recognise at all."""
-    t = " ".join(text.strip().lower().split())
+    t = _fold(text)
     if not t:
         return False
     return bool(_POSSESSIVE_VERSION_RE.search(t)

@@ -817,6 +817,40 @@ run agrees on a record.
 
 ---
 
+### The qualifier vocabulary is a list, on purpose
+
+Everything below turns on a handful of words. Which ones live in
+`EDITION_MARKERS` versus `RENDITION_MARKERS` in `spinsense/albums.py` decides
+whether two titles are one record or two, and the answers are opposites — an
+edition is stripped and its plays merged, a rendition is kept apart forever.
+
+They are plain lowercase tuples rather than hand-written regexes because **this
+is the file to edit when a record comes out wrong**, and doing so should not
+require reading a regex. Terms are escaped and word-bounded automatically, one
+term cannot break another, and longest-first ordering means a phrase added
+alongside a word nested inside it still reports the whole phrase.
+
+Two raw-pattern tuples sit beside them for qualifiers whose *shape* varies
+rather than their wording — `(?:19|20)\d{2}\s+(?:remaster|mix)` for
+"2011 Remaster", and a possessive for "Taylor's Version" and its kin. Prefer a
+plain term unless the thing genuinely varies.
+
+**When unsure, RENDITION is the safer entry.** It keeps two records apart; a
+wrong EDITION entry silently merges them, which is the failure that is hard to
+notice and hard to undo.
+
+`spinsense/tests/test_vocabulary.py` guards the lists rather than any particular
+term: every entry must actually do what its list promises in brackets, in square
+brackets and after a dash; nothing may appear in both lists (a rendition marker
+wins, so the edition entry would look present while doing nothing); and no
+entry may be empty, duplicated, or capitalised. Adding a term that does not work
+fails the suite rather than quietly mislabelling records.
+
+Writing those guards immediately found a real gap: `re-issue` was listed but
+never matched after a dash, because the dash pattern excluded every hyphen from
+the qualifier it captured. A dash inside a word is now part of the qualifier;
+only a *spaced* dash starts a new one.
+
 ### A re-recording is not the record it re-records
 
 `track_key()` strips one trailing qualifier so the two catalogues can agree
