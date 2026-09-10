@@ -9,7 +9,24 @@ Synchronous SQLite (callers wrap in asyncio.to_thread), mirroring
 play_history.py's contract.
 """
 from play_history import _connect
-from spinsense.albums import base_title, pick_winner, shares_credit  # noqa: F401
+from spinsense.albums import (  # noqa: F401
+    base_title,
+    normalized,
+    pick_winner,
+    recording_base,
+    shares_credit,
+)
+
+# How many plays at the *start* of a run may be corrected onto a re-recording.
+#
+# A side opens before anything is known about the record, and a recogniser will
+# often report the plain title for a re-recorded track — "Welcome To New York"
+# rather than "Welcome To New York (Taylor's Version)" — which resolves to the
+# original album because that is genuinely where a track by that name lives.
+# One or two such plays at the top of a side are the record being established;
+# thirteen of them are a different record that was played first, and merging
+# those would be exactly the mistake `base_title` refuses to make.
+LEADING_MISLABEL_LIMIT = 3
 
 # A run = contiguous plays by the same artist with gaps under this.
 SESSION_GAP_SECS = 1800
@@ -98,6 +115,47 @@ def _adopt_run_album(conn, run: list[dict]) -> int:
     return changed
 
 
+def _absorb_leading_mislabels(conn, run: list[dict], winner: str) -> int:
+    """Pull the opening of a side onto the re-recording the rest of it is.
+
+    Only ever runs toward a rendition — "1989 (Taylor's Version)" — and only
+    over plays whose album is the *plain* form of that same record. Two
+    different renditions are never merged, because a live album is not a
+    pressing of the studio one and never becomes it.
+
+    Deliberately narrow. `base_title` keeps a re-recording separate from what it
+    re-records, and that is right: they are two records, and a run holding both
+    usually means both were played. What this handles is the one case where it
+    is not two records — a side of the re-recording whose first play or two
+    resolved to the original because nothing yet said otherwise.
+    """
+    if not winner:
+        return 0
+    # No separate "must be a rendition" check is needed: `root` is the winner
+    # with its qualifiers stripped, so a winner that is already the plain form
+    # makes `root` the winner itself — and the first row matching it is then the
+    # run's own opening, which the `not first` test below refuses.
+    root = recording_base(winner)
+    first = next((i for i, r in enumerate(run)
+                  if r["album"] and normalized(r["album"]) == normalized(winner)), None)
+    if not first:                      # None, or the run already opens with it
+        return 0
+    leading = run[:first]
+    if len(leading) > LEADING_MISLABEL_LIMIT or len(leading) >= len(run) - first:
+        # Too many to be the opening of a side, or not outnumbered by the
+        # rendition — either way this looks like two records, not one.
+        return 0
+    if any(r["album_locked"] or not r["album"]
+           or normalized(r["album"]) != root for r in leading):
+        return 0                       # something else is up there; don't guess
+    for r in leading:
+        conn.execute(
+            "UPDATE plays SET album = ? WHERE id = ? "
+            "AND (album_locked IS NULL OR album_locked = 0)",
+            (winner, r["id"]))
+    return len(leading)
+
+
 def reconcile_album(play_id: int, db_path: str | None = None) -> int:
     """Unify edition variants of play_id's album across its run, and give the
     run's album to any play that never resolved one. Locked rows neither vote
@@ -127,6 +185,7 @@ def reconcile_album(play_id: int, db_path: str | None = None) -> int:
                         "AND (album_locked IS NULL OR album_locked = 0)",
                         (winner, r["id"]))
                     changed += 1
+            changed += _absorb_leading_mislabels(conn, run, winner)
             if changed:
                 run = _run_rows(conn, play_id)   # re-read: albums just changed
 

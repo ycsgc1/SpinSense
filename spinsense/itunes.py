@@ -12,6 +12,8 @@ testable without touching the network.
 import re
 import urllib.parse
 
+from .albums import same_recording
+
 SEARCH_URL = "https://itunes.apple.com/search"
 
 # Enough results to see whether a track appears on the base album as well as a
@@ -104,6 +106,13 @@ def results_for_track(results: list[dict], title: str,
         if track_key(r.get("trackName")) != want_title:
             continue
         if want_artist and artist_key(r.get("artistName")) != want_artist:
+            continue
+        # A rendition qualifier names a different performance, and `track_key`
+        # strips it so that "(feat. X)" and "- 2019 Remaster" stay tolerant.
+        # That tolerance must not extend to re-recordings: asking about
+        # "Blank Space (Taylor's Version)" and being answered with the album
+        # *1989* is how a whole side came out filed under the wrong record.
+        if not same_recording(title, r.get("trackName")):
             continue
         hits.append(r)
     return hits
@@ -198,6 +207,11 @@ def find_track(tracks: list[dict], title: str,
     So a mismatched artist returns None rather than falling back to the title.
     None is not a wrong answer here — it sends the caller to search, which is
     where it would have gone had the tracklist not been consulted at all.
+
+    A rendition qualifier is held to the same standard, and for the same reason.
+    "Blank Space (Taylor's Version)" is not the recording on *1989*, so the
+    original's tracklist must not answer for it — that shortcut filed a whole
+    side of the re-recording under the record it re-records.
     """
     want = track_key(title)
     if not want:
@@ -207,6 +221,8 @@ def find_track(tracks: list[dict], title: str,
         if track_key((t or {}).get("trackName")) != want:
             continue
         if want_artist is not None and artist_key(t.get("artistName")) != want_artist:
+            continue
+        if not same_recording(title, t.get("trackName")):
             continue
         return t
     return None

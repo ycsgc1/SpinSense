@@ -817,6 +817,58 @@ run agrees on a record.
 
 ---
 
+### A re-recording is not the record it re-records
+
+`track_key()` strips one trailing qualifier so the two catalogues can agree
+through "(feat. X)" and "- 2019 Remaster". That tolerance is correct for those
+and wrong for "(Taylor's Version)", which does not decorate a title — it names a
+different performance.
+
+A full side of *1989 (Taylor's Version)* came out with its first thirteen plays
+filed under *1989*: the opening track was reported without a qualifier, resolved
+to the original, and from then on the album context answered every subsequent
+track from the **original's** tracklist, because "Blank Space (Taylor's
+Version)" and "Blank Space" reduce to the same key. Two albums, two covers, and
+that is what reached Last.fm.
+
+`same_recording()` closes it, and is deliberately **one-directional**: a
+qualifier the *wanted* title carries is positive evidence and the candidate must
+carry it too, while a qualifier only the candidate carries is fine. Recognisers
+frequently report the plain title for a re-recorded track — refusing there would
+put the right album out of reach for the rest of the side, which is exactly what
+lets "All You Had To Do Was Stay" land on the re-recording once the record is
+known. Markers are read from trailing qualifiers only, so a song actually called
+"Live and Let Die" is not mistaken for a live recording.
+
+### The opening of a side, before the record is known
+
+That leaves the first play. Nothing preceded it, its title carried no qualifier,
+and a track by that name genuinely lives on the original — so *1989* is a
+defensible answer at that moment, and nothing later could correct it.
+`base_title()` keeps a re-recording separate from what it re-records, on purpose,
+so the two never meet in the same reconciliation group.
+
+That separation is right: two records are two records. What it misses is the one
+case where it is *not* two records, and `_absorb_leading_mislabels()` handles
+only that case, under four conditions:
+
+- It moves **toward a rendition**, never between two of them. A live album is
+  not a pressing of the studio one and never becomes it.
+- The plays it moves are the run's **opening**, contiguous from the start.
+- There are at most `LEADING_MISLABEL_LIMIT` of them, and they are outnumbered
+  by the rendition. Thirteen plays of *1989* followed by twenty-one of
+  *1989 (Taylor's Version)* is two records played in a row, and stays that way.
+- Every one of them is exactly the **plain form** of the rendition's record.
+  Anything else in the opening — another album, another rendition, a hand-set
+  album — and it declines rather than guesses.
+
+`recording_base()` is the looser reading that makes this expressible: it strips
+edition *and* rendition qualifiers, so "1989 (Taylor's Version)" reduces to
+"1989". It exists only to ask whether two titles name the same underlying
+record. `base_title()` remains the strict one, and still refuses to merge them.
+
+---
+
 ### Memory never out-argues the record
 
 Owning two pressings is the case this has to get right. History is consulted

@@ -83,6 +83,108 @@ def base_title(album: str | None) -> str:
     return " ".join(s.casefold().split())
 
 
+def trailing_qualifiers(title: str | None) -> list[str]:
+    """Every trailing bracketed or dashed qualifier, outermost first.
+
+    "Is It Over Now? (Taylor's Version) [From The Vault]" yields
+    ["From The Vault", "Taylor's Version"]. Only trailing segments count, so a
+    song actually called "Live and Let Die" carries no qualifier at all.
+    """
+    s = " ".join((title or "").split())
+    out: list[str] = []
+    while True:
+        m = _TRAILING_BRACKET_RE.search(s)
+        if m:
+            out.append(m.group(1))
+            s = s[: m.start()].rstrip()
+            continue
+        m = _TRAILING_DASH_RE.search(s)
+        if m:
+            out.append(m.group(1))
+            s = s[: m.start()].rstrip()
+            continue
+        break
+    return out
+
+
+_MARKER_TOKEN_RE = re.compile(r"[^0-9a-z]+")
+
+
+def rendition_markers(title: str | None) -> frozenset[str]:
+    """Which *different recording* this title claims to be, if any.
+
+    A rendition qualifier is not decoration — it names a separate performance.
+    "Blank Space (Taylor's Version)" is not the recording on *1989*, it is the
+    recording on *1989 (Taylor's Version)*, and treating the two as the same
+    song is how a whole side of the re-recording came out filed under the
+    original: the album context matched every track against the original's
+    tracklist and never looked further.
+
+    Read from trailing qualifiers only, so a song named "Live and Let Die"
+    is not mistaken for a live recording.
+    """
+    found: set[str] = set()
+    for qualifier in trailing_qualifiers(title):
+        text = " ".join(qualifier.lower().split())
+        for m in _RENDITION_MARKER_RE.finditer(text):
+            found.add(_MARKER_TOKEN_RE.sub("", m.group(1)))
+        for m in _POSSESSIVE_VERSION_RE.finditer(text):
+            found.add(_MARKER_TOKEN_RE.sub("", m.group(0)))
+    return frozenset(t for t in found if t)
+
+
+def same_recording(wanted: str | None, candidate: str | None) -> bool:
+    """Whether `candidate` can be the recording `wanted` names.
+
+    Deliberately one-directional. A qualifier the wanted title carries is
+    positive evidence and the candidate must carry it too — "Blank Space
+    (Taylor's Version)" cannot be answered by "Blank Space". A qualifier only
+    the *candidate* carries is fine: recognisers frequently report the plain
+    title for a re-recording, and refusing there would leave the right album
+    unreachable.
+    """
+    return rendition_markers(wanted) <= rendition_markers(candidate)
+
+
+def _is_any_qualifier(text: str) -> bool:
+    """Whether a trailing qualifier is one we recognise at all."""
+    t = " ".join(text.strip().lower().split())
+    if not t:
+        return False
+    return bool(_POSSESSIVE_VERSION_RE.search(t)
+                or _RENDITION_MARKER_RE.search(t)
+                or _EDITION_MARKER_RE.search(t)
+                or _YEAR_RE.fullmatch(t))
+
+
+def recording_base(album: str | None) -> str:
+    """Album title with edition *and* rendition qualifiers stripped.
+
+    `base_title` deliberately keeps a re-recording distinct, because "1989" and
+    "1989 (Taylor's Version)" are two records and merging them would be wrong.
+    This is the looser reading, used only to ask whether two titles name the
+    same underlying record — which is the question when one of them is a
+    mislabelled play of the other.
+    """
+    s = " ".join((album or "").split())
+    while True:
+        m = _TRAILING_BRACKET_RE.search(s)
+        if m and _is_any_qualifier(m.group(1)):
+            s = s[: m.start()].rstrip()
+            continue
+        m = _TRAILING_DASH_RE.search(s)
+        if m and _is_any_qualifier(m.group(1)):
+            s = s[: m.start()].rstrip()
+            continue
+        break
+    return " ".join(s.casefold().split())
+
+
+def is_recording_base_form(album: str | None) -> bool:
+    """Whether a title names the plain record rather than a rendition of it."""
+    return recording_base(album) == normalized(album)
+
+
 def normalized(album: str | None) -> str:
     """An album title reduced for comparison, with nothing stripped."""
     return " ".join((album or "").casefold().split())
