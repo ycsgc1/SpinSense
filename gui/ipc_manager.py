@@ -1,3 +1,23 @@
+"""Everything that happens when a frame arrives from the engine.
+
+The engine writes one JSON line a second to `/tmp/spinsense.sock`.
+`handle_uds_client()` reads them, and each frame does up to three things here:
+
+- **It is relayed** to every open browser tab and to Home Assistant over the
+  WebSocket, and kept as the answer to `GET /api/status` (`ConnectionManager`).
+- **It may file a play.** A track the previous frame did not carry is a new
+  identification: it is written to the history, the play before it is closed,
+  and its album is reconciled against the rest of the listening session
+  (`_record_if_new`).
+- **It may settle artwork** for that play and the run it belongs to, in the
+  background (`_settle_run_art`).
+
+Diagnostic events take the same socket and go to an in-memory ring buffer for
+the Settings page (`record_event`).
+
+The engine knows none of this exists. It reports what it hears; what that means
+for the database is decided here.
+"""
 import asyncio
 import collections
 import hashlib
@@ -50,6 +70,8 @@ STATUS_STALE_SECS = 45
 
 
 class ConnectionManager:
+    """The open WebSockets, and the last status frame any of them was sent."""
+
     def __init__(self):
         self.active_connections: list["WebSocket"] = []
         self.last_status: dict = dict(DEFAULT_STATUS)
@@ -78,6 +100,12 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
+        """Send one frame to every client, remembering it for /api/status.
+
+        A client that cannot be sent to is dropped rather than raised about:
+        tabs close and phones sleep, and one of them going away must not cost
+        the others their frame.
+        """
         if message.get("type") == "live_status" and isinstance(message.get("payload"), dict):
             self.last_status = message["payload"]
             self.last_status_at = time.time()
@@ -134,6 +162,15 @@ _last_recorded_key: tuple[str, str] | None = None
 # listening-time stats — never estimated).
 _last_play_id: int | None = None
 
+# Frames are recorded one at a time, in the order they arrived. Each one comes
+# in on its own connection and so runs in its own task, and recording is a
+# check of the two values above followed by several awaited database calls
+# before either is updated. Left to overlap, a second frame for the same track
+# passes the check while the first is still writing — two rows for one play,
+# and later two scrobbles, which Last.fm offers no way to take back. Per event
+# loop for the same reason as `_art_locks` below.
+_record_locks: dict = {}
+
 # Strong refs to in-flight art-download tasks so the event loop's weak task
 # tracking can't GC them mid-download; each removes itself on completion.
 _art_tasks: set = set()
@@ -152,19 +189,19 @@ def _spawn_now_playing(track: dict) -> None:
 
 def _thumbnail(data: bytes) -> bytes:
     """Full-size artwork bytes -> the 64x64 JPEG we actually store."""
-    import io as _io
-
     from PIL import Image
 
     with Image.open(io.BytesIO(data)) as img:
-        img = img.convert("RGB")
-        img.thumbnail((64, 64))
-        out = _io.BytesIO()
-        img.save(out, "JPEG", quality=75)
+        thumb = img.convert("RGB")
+        thumb.thumbnail((64, 64))
+        out = io.BytesIO()
+        thumb.save(out, "JPEG", quality=75)
         return out.getvalue()
 
 
 async def _fetch_art(art_url: str) -> bytes | None:
+    """Download artwork, or None on any failure — a play without a cover is
+    still a play, and the page has a placeholder for it."""
     import aiohttp
 
     try:
@@ -366,13 +403,18 @@ async def _supersede_last_play() -> bool:
 _art_locks: dict = {}
 
 
-def _art_lock() -> asyncio.Lock:
+def _loop_lock(locks: dict) -> asyncio.Lock:
+    """The lock in `locks` belonging to the running event loop, made on first use."""
     loop = asyncio.get_running_loop()
-    lock = _art_locks.get(loop)
+    lock = locks.get(loop)
     if lock is None:
-        _art_locks.clear()          # a new loop means the old ones are gone
-        lock = _art_locks[loop] = asyncio.Lock()
+        locks.clear()               # a new loop means the old ones are gone
+        lock = locks[loop] = asyncio.Lock()
     return lock
+
+
+def _art_lock() -> asyncio.Lock:
+    return _loop_lock(_art_locks)
 
 
 async def _settle_run_art(play_id: int, album_before: str | None,
@@ -408,6 +450,7 @@ async def _settle_run_art(play_id: int, album_before: str | None,
 
 async def _settle_run_art_locked(play_id: int, album_before: str | None,
                                  art_url: str | None, reconciled: bool) -> None:
+    """The body of `_settle_run_art`, run with the artwork lock held."""
     try:
         row = await asyncio.to_thread(play_history.get_play, play_id)
     except Exception as e:
@@ -459,6 +502,12 @@ def spawn_run_art(play_id: int, album_before: str | None,
 
 
 async def _stamp_last_play_ended() -> None:
+    """Close the open play, if there is one, at this moment.
+
+    The id is forgotten even when the write fails, so the play is left open —
+    and out of the listening-time totals — rather than closed at some later,
+    unrelated moment.
+    """
     global _last_play_id
     if _last_play_id is None:
         return
@@ -492,7 +541,16 @@ async def _record_if_new(track: dict, play_clock: dict | None = None,
     treated as new, and close the open play's ended_at.
 
     `supersede` is the engine reporting that this track came from a manual
-    rescan and corrects the open play rather than following it."""
+    rescan and corrects the open play rather than following it.
+
+    One frame at a time: see `_record_locks`."""
+    async with _loop_lock(_record_locks):
+        await _record_if_new_locked(track, play_clock, supersede)
+
+
+async def _record_if_new_locked(track: dict, play_clock: dict | None,
+                                supersede: bool) -> None:
+    """The body of `_record_if_new`, run with the recording lock held."""
     global _last_recorded_key, _last_play_id
     title = (track or {}).get("title", "") or ""
 
@@ -561,11 +619,15 @@ async def _record_if_new(track: dict, play_clock: dict | None = None,
         spawn_run_art(play_id, album, art_url, bool(reconciled))
 
 
-# --- The Real Unix Domain Socket Listener ---
+# --- The Unix domain socket listener ---
 async def handle_uds_client(reader, writer):
-    """Reads real data from the Core engine via /tmp/spinsense.sock. Each line
-    is one live_status frame. New identifications get persisted to SQLite and
-    spawn a background art-download task."""
+    """Read the engine's frames from one connection to /tmp/spinsense.sock.
+
+    Each line is one frame: a `live_status` (recorded if it carries a new
+    track, then relayed to every WebSocket) or an `event` (filed for the
+    Diagnostics panel and not relayed). A line that is not JSON is skipped —
+    the engine opens a new connection per frame, so one bad line costs one
+    frame."""
     while True:
         data = await reader.readline()
         if not data:
