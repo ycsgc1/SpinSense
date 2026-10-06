@@ -1,6 +1,7 @@
 name: Tests
 
-# Runs the unit suites and static analysis on every push and PR.
+# Runs the unit suites and static analysis on every push and PR: Python in
+# `test`, the browser scripts in `lint-js`.
 #
 # The two process suites must run from inside their own directory: backend_main
 # mounts StaticFiles("static") and Jinja2Templates("templates") by relative
@@ -57,3 +58,22 @@ jobs:
 
       - name: Dead code
         run: vulture core/ gui/ spinsense/ --min-confidence 100
+
+  lint-js:
+    # The scripts under gui/static are served as written — nothing compiles
+    # them and no test loads them, so this is the only thing that reads them
+    # before a browser does. Rules and rationale are in eslint.config.mjs.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Lint the browser scripts (undefined names, unused code, correctness)
+        # No package.json and no install step: the config imports nothing, so
+        # the linter itself is all that is fetched. Pinned, like ruff.
+        run: npx --yes eslint@10.12.0 gui/static

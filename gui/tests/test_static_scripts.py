@@ -8,11 +8,13 @@ finish** and **Skip** both threw a ReferenceError before sending anything — an
 because every page redirects to /setup until the wizard has been saved, a fresh
 install could not get past it.
 
-There is no JavaScript runtime in this project's toolchain, so this is a
-lexical check, not an execution: the scripts keep their page-level handles in
-ALL_CAPS constants, and each one a script mentions has to be declared in that
-same script. It is deliberately narrow — it knows nothing about scope and does
-not look at camelCase names — but it is exact about the mistake that shipped.
+CI runs ESLint over these scripts (`lint-js` in .github/workflows/tests.yml),
+which catches this properly — any undefined name, in scope. This is the same
+check for wherever the Python suites run and Node does not: lexical, not an
+execution. The scripts keep their page-level handles in ALL_CAPS constants, and
+each one a script mentions has to be declared in that same script. It is
+deliberately narrow — it knows nothing about scope and does not look at
+camelCase names — but it is exact about the mistake that shipped.
 """
 import os
 import re

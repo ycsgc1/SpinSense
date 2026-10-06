@@ -4,8 +4,9 @@
 //
 // Every handle below is read somewhere further down, and a missing one is not
 // a load error — it throws at the point of use, which for buildPayload() means
-// the wizard can no longer be saved. gui/tests/test_static_scripts.py checks
-// that each one a script uses is still declared.
+// the wizard can no longer be saved. ESLint in CI (eslint.config.mjs) and
+// gui/tests/test_static_scripts.py both check that each one a script uses is
+// still declared.
 (function () {
   const STEPS = Array.from(document.querySelectorAll(".wizard-step"));
   const DOTS = Array.from(document.querySelectorAll(".wizard-dot"));
@@ -56,7 +57,6 @@
   // path slider on Screen 2D; "manual" = Screen 2E slider.
   let activeSlider = "result";
   let captures = { noise: null, music: null };
-  let currentSubstep = "choose";
   let captureAbortKey = 0; // bumped on cancel to invalidate in-flight polls
 
   let step = 0;
@@ -116,21 +116,6 @@
       cur = cur[parts[i]];
     }
     cur[parts[parts.length - 1]] = value;
-  }
-
-  function mergeDeep(target, source) {
-    for (const key of Object.keys(source)) {
-      const v = source[key];
-      if (v && typeof v === "object" && !Array.isArray(v)) {
-        if (target[key] == null || typeof target[key] !== "object") {
-          target[key] = {};
-        }
-        mergeDeep(target[key], v);
-      } else {
-        target[key] = v;
-      }
-    }
-    return target;
   }
 
   async function loadDevices() {
@@ -252,7 +237,6 @@
   }
 
   function showSubstep(name) {
-    currentSubstep = name;
     document.querySelectorAll(".wizard-substep").forEach((el) => {
       el.classList.toggle("hidden", el.dataset.substep !== name);
     });

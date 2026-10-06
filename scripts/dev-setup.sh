@@ -102,5 +102,6 @@ if [ "$ok" = 0 ]; then
   echo "Run the suites with:  for d in spinsense core gui; do (cd \$d && python3 -m pytest -q); done"
   echo "Lint with:            ruff check --select E4,E7,E9,F core/ gui/ spinsense/"
   echo "                      vulture core/ gui/ spinsense/ --min-confidence 100"
+  echo "                      npx --yes eslint@10.12.0 gui/static   (needs Node)"
 fi
 exit 0
