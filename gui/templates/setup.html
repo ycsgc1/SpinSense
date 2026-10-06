@@ -252,6 +252,25 @@
           </span>
           <input type="checkbox" id="wizard-mdns-enabled" class="form-checkbox h-5 w-5" checked>
         </label>
+
+        <div class="p-3 rounded-lg bg-surface-container-high">
+          <span class="text-body-md text-on-surface block">Get the integration</span>
+          <span class="text-body-sm text-on-surface-variant block">
+            Home Assistant needs the SpinSense integration, which installs through
+            <a href="{{ hacs_url }}" target="_blank" rel="noopener" class="text-primary hover:underline">HACS</a>.
+            This opens it in your own Home Assistant with the repository already filled in:
+          </span>
+          <a id="wizard-ha-install" href="{{ ha_install_url }}" target="_blank" rel="noopener"
+             class="inline-flex items-center gap-xs mt-sm bg-surface-container-highest border border-outline-variant/40 text-on-surface font-medium px-md py-2 rounded-full hover:opacity-90 transition-opacity">
+            <span class="material-symbols-outlined" style="font-size: 18px;">open_in_new</span>
+            Open in Home Assistant
+          </a>
+          <span class="text-label-sm text-on-surface-variant block mt-sm">
+            Now or later &mdash; it opens in a new tab and this setup stays where it is. Once the
+            integration is installed and Home Assistant restarted, SpinSense appears there under
+            Settings &rarr; Devices &amp; services.
+          </span>
+        </div>
       </div>
 
       <div class="flex justify-between items-center mt-lg">

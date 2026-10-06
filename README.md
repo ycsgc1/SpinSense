@@ -88,7 +88,7 @@ That's it — the prebuilt image means Dockge's **Update** button works too. (Bu
 
 Install the companion integration so Home Assistant can discover SpinSense:
 
-1. In **HACS → Custom repositories**, add `https://github.com/ycsgc1/homeassistant-spinsense` with category **Integration**, then install it and restart Home Assistant.
+1. **[Open the integration in your Home Assistant](https://my.home-assistant.io/redirect/hacs_repository/?owner=ycsgc1&repository=homeassistant-spinsense&category=integration)** — the link asks for your Home Assistant's address once, then opens [HACS](https://hacs.xyz/) there with the repository filled in. (By hand instead: in **HACS → Custom repositories**, add `https://github.com/ycsgc1/homeassistant-spinsense` with category **Integration**.) Install it and restart Home Assistant.
 2. With SpinSense running (host networking), it's auto-discovered under **Settings → Devices & Services → Discovered** — accept it to add the `media_player` entity. No IP or port to type in.
 
 
@@ -134,6 +134,7 @@ SpinSense advertises itself on your network, so there is nothing to type:
 ![Setup wizard — Home Assistant auto-discovery](docs/images/Connection_Selection.png)
 
 - **Home Assistant auto-discovery (mDNS)** *(on by default)* — zero-config; install the HACS integration and it finds SpinSense automatically. Leave it on unless you have a reason not to.
+- **Open in Home Assistant** — takes you to the integration in your own Home Assistant's HACS, ready to install. The same link is under **Settings → Home Assistant** if you'd rather do it later.
 
 ### 5. Finish
 

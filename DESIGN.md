@@ -400,7 +400,7 @@ Routing middleware (`backend_main.setup_wizard_gate`):
 1. **Welcome** — intro, "Get started" or "Skip setup".
 2. **Microphone** — dropdown populated from `/api/devices`.
 3. **Calibrate threshold** — chooser sub-flow (Auto vs Manual; see §7).
-4. **Home Assistant** — a single mDNS toggle, on by default. Zero-config with the companion HACS integration.
+4. **Home Assistant** — the mDNS toggle, on by default, and a link that opens the companion integration in the user's own HACS (a My Home Assistant redirect, resolved in their browser — SpinSense never knows where Home Assistant is). Zero-config once the integration is installed.
 5. **Done** — "Save and finish" writes everything to `config.json`. The engine's file watcher picks it up within ~2 s. No restart.
 
 **Three exits:**

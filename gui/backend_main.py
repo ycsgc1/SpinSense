@@ -224,6 +224,26 @@ def _asset_version() -> str:
 ASSET_VERSION = _asset_version()
 templates.env.globals["asset_v"] = ASSET_VERSION
 
+# Where the Home Assistant half is installed from.
+#
+# The first is a "My Home Assistant" link. It is resolved in the visitor's own
+# browser: my.home-assistant.io asks once for the address of their instance,
+# remembers it there, and opens HACS on that instance with this repository
+# filled in. SpinSense sends nothing and never learns the address — which is
+# what lets a box that has no idea where Home Assistant lives offer a button
+# that goes straight to it.
+HA_INTEGRATION_OWNER = "ycsgc1"
+HA_INTEGRATION_REPO = "homeassistant-spinsense"
+HA_INSTALL_URL = (
+    "https://my.home-assistant.io/redirect/hacs_repository/"
+    f"?owner={HA_INTEGRATION_OWNER}&repository={HA_INTEGRATION_REPO}"
+    "&category=integration"
+)
+# HACS itself, for anyone who does not have it yet: the link above needs it.
+HACS_URL = "https://hacs.xyz/"
+templates.env.globals["ha_install_url"] = HA_INSTALL_URL
+templates.env.globals["hacs_url"] = HACS_URL
+
 
 # --- Page routes ---
 
