@@ -1,6 +1,11 @@
 // setup.js — multi-step wizard. Owns step navigation, the mic + threshold +
 // Home Assistant discovery, skip/finish/close flow. Saves via
 // POST /api/config like Settings does.
+//
+// Every handle below is read somewhere further down, and a missing one is not
+// a load error — it throws at the point of use, which for buildPayload() means
+// the wizard can no longer be saved. gui/tests/test_static_scripts.py checks
+// that each one a script uses is still declared.
 (function () {
   const STEPS = Array.from(document.querySelectorAll(".wizard-step"));
   const DOTS = Array.from(document.querySelectorAll(".wizard-dot"));
@@ -39,6 +44,8 @@
   const RMS_BAR_MANUAL = document.getElementById("wizard-rms-bar-manual");
   const RMS_TICK_MANUAL = document.getElementById("wizard-rms-tick-manual");
 
+  // Step 3 — Home Assistant discovery toggle.
+  const MDNS_ENABLED = document.getElementById("wizard-mdns-enabled");
 
   const FINISH_BTN = document.getElementById("wizard-finish");
 
