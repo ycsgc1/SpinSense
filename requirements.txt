@@ -1,6 +1,6 @@
 # What SpinSense imports at run time — the versions chosen on purpose.
 #
-# These pull in some fifty more packages that are not listed here. Their
+# These pull in a few dozen more packages that are not listed here. Their
 # versions are fixed in constraints.txt, and every install must pass it:
 #
 #     pip install -r requirements.txt -c constraints.txt
@@ -8,12 +8,17 @@
 # Without it pip takes the newest of each, so two builds of the same commit can
 # differ. After changing a pin here, regenerate constraints.txt — the command is
 # at the top of that file (needs `pip install uv`; any Python version will do).
-aiohttp==3.9.5
+#
+# Three of these hold the rest back. shazamio 0.5.1 requires pydantic < 2,
+# anyio < 4 and numpy < 2, so FastAPI cannot go past 0.125 (the last release
+# that runs on pydantic 1) nor Starlette past 0.50. Moving on means moving
+# shazamio first — the recognizer, which wants a turntable to test against.
+aiohttp==3.14.4
 numpy==1.26.4
 sounddevice==0.4.6
 shazamio==0.5.1
-fastapi==0.111.0
+fastapi==0.125.0
 uvicorn[standard]==0.29.0
-zeroconf==0.131.0
-jinja2==3.1.4
-Pillow==10.3.0
+zeroconf==0.151.5
+jinja2==3.1.6
+Pillow==12.3.0

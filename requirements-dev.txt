@@ -6,6 +6,10 @@
 
 # Test runner (used by core/tests and gui/tests)
 pytest==7.4.4
+# FastAPI's TestClient is built on it. It used to arrive with FastAPI itself;
+# since 0.112 it is only in the `fastapi[standard]` extra, which the image has
+# no use for.
+httpx==0.28.1
 
 # Static analysis used for the backend audit:
 #   ruff check core/ gui/          — unused imports/vars + correctness lints
