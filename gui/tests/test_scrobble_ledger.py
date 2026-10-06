@@ -212,6 +212,25 @@ class ScrobbleCandidatesTest(_TempDb):
         self.assertFalse(row["eligible"])
         self.assertEqual(row["listened_secs"], 10)
 
+    def test_the_ledger_view_still_stops_at_its_limit(self):
+        for i in range(5):
+            self._play(f"t{i}", 1000 + i, 200, 213)
+        rows = play_history.scrobble_candidates(limit=3, db_path=self.db_path)
+        self.assertEqual([r["title"] for r in rows], ["t0", "t1", "t2"])
+
+    def test_eligible_only_applies_the_limit_after_the_rule(self):
+        # The scrobbler's view. A skipped play stays closed and unsent for
+        # good, so if it counted against the limit, enough of them would fill
+        # every batch and the plays behind them would never be reached.
+        for i in range(4):
+            self._play(f"skipped {i}", 1000 + i, 10, 213)
+        self._play("heard", 2000, 200, 213)
+        self._play("heard too", 3000, 200, 213)
+        rows = play_history.scrobble_candidates(
+            limit=2, eligible_only=True, db_path=self.db_path)
+        self.assertEqual([r["title"] for r in rows], ["heard", "heard too"])
+        self.assertTrue(all(r["eligible"] for r in rows))
+
 
 if __name__ == "__main__":
     unittest.main()

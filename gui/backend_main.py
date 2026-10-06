@@ -1,3 +1,23 @@
+"""The SpinSense web backend: the FastAPI app, its routes and its lifespan.
+
+The second of the container's two processes. The engine (`core/`) listens to
+the turntable and reports what it hears; this one owns everything a person or
+Home Assistant touches — the pages, the JSON API, the live WebSocket — and
+everything that is kept: the play history, the artwork, the config file, the
+Last.fm queue.
+
+It is thin on purpose. Routes validate, hand off to the module that owns the
+behaviour (`play_history`, `reconcile`, `stats`, `lastfm`, `ipc_manager`), and
+shape the answer. Anything that blocks goes through `asyncio.to_thread()`, so
+the event loop stays free for the once-a-second status frames.
+
+Run from inside `gui/`: the static and template directories are mounted by
+relative path, which is how `docker/entrypoint.sh` starts it and why the test
+suite is run from this directory too.
+
+Nothing here is authenticated. SpinSense assumes a trusted home network; put a
+reverse proxy with a login in front of it before exposing it any further.
+"""
 import asyncio
 import hashlib
 import json
@@ -51,6 +71,11 @@ async def _send_cmd(payload: dict, timeout: float = 2.0) -> dict:
 
 
 async def start_uds_listener():
+    """Serve the status socket the engine writes its frames to, forever.
+
+    A socket file left by a previous run is removed first; binding over one
+    fails, and nothing else could be listening on it.
+    """
     socket_path = '/tmp/spinsense.sock'
     if os.path.exists(socket_path):
         os.remove(socket_path)
@@ -74,6 +99,10 @@ async def _purge_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Start-up and shutdown: migrate the database, then start the three
+    background loops (engine frames, the deleted-play sweep, the Last.fm
+    flush) and the mDNS advertisement. An advertiser that cannot bind is
+    logged and skipped — the web UI is worth serving without it."""
     play_history.init_db()
     os.makedirs(ART_DIR, exist_ok=True)
     try:
@@ -240,7 +269,17 @@ def get_config():
 
 @app.post("/api/config")
 async def update_config(request: Request):
+    """Validate and save the whole config, as Settings and the wizard post it.
+
+    The engine picks the change up from the file within a couple of seconds;
+    the mDNS advertisement, which lives in this process, is reconciled here.
+    """
     new_config = await request.json()
+    if not isinstance(new_config, dict):
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "detail": "Expected a JSON object"},
+        )
     try:
         SpinSenseConfig(**new_config)
     except ValidationError as e:
@@ -252,6 +291,9 @@ async def update_config(request: Request):
             status_code=400,
             content={"status": "error", "detail": f"{loc}: {msg}" if loc else msg},
         )
+    # The page posts back everything it loaded, but the Last.fm connection is
+    # not the page's to set — see lastfm.keep_connection().
+    new_config = lastfm.keep_connection(new_config)
     if not save_config(new_config):
         return JSONResponse(
             status_code=500,
@@ -266,6 +308,9 @@ async def update_config(request: Request):
 
 @app.get("/api/devices")
 def get_audio_devices():
+    """Input devices the container can see, by name, for the microphone
+    pickers. An empty list rather than an error when the query fails: the
+    pickers still offer "System default"."""
     try:
         devices = sd.query_devices()
         mics = [{"name": d['name']} for d in devices if d['max_input_channels'] > 0]
@@ -281,6 +326,10 @@ def get_setup_state():
     cfg = load_config()
     return {"state": cfg.get("System", {}).get("Setup_Wizard_State", "pending")}
 
+
+# The three calibration routes and /api/rescan are thin forwards to the
+# engine's command socket. All of them answer 503 when the engine cannot be
+# reached, which the wizard reports as "audio engine not running".
 
 @app.post("/api/calibrate/start")
 async def calibrate_start(request: Request):
@@ -337,6 +386,9 @@ async def rescan():
     return reply
 
 
+# `limit` on the two listing routes below is clamped to 1–100 where it is
+# used, in play_history.recent_plays().
+
 @app.get("/api/recent")
 async def get_recent(limit: int = 10):
     rows = await asyncio.to_thread(play_history.recent_plays, limit)
@@ -352,6 +404,10 @@ async def get_plays(limit: int = 50, offset: int = 0):
 
 @app.delete("/api/plays/{play_id}")
 async def delete_play_route(play_id: int):
+    """Hide a play. A soft delete: History's Undo restores it, and the sweep
+    in `_purge_loop` removes it for good once the grace period has passed. A
+    deleted play also leaves the Last.fm queue, which is the point of the
+    review window."""
     ok = await asyncio.to_thread(play_history.delete_play, play_id)
     if not ok:
         return JSONResponse(status_code=404, content={"detail": "not found"})
@@ -387,6 +443,11 @@ async def album_candidates(play_id: int):
 
 @app.post("/api/plays/{play_id}/album")
 async def set_album_route(play_id: int, request: Request):
+    """Set a play's album by hand, for that play or for its whole run.
+
+    A hand-set album is locked, so automatic reconciliation never rewrites it.
+    Answers with the rows it changed so History can redraw them in place.
+    """
     body = await request.json()
     album = str(body.get("album") or "").strip()
     art_url = body.get("art_url") or None
@@ -506,7 +567,7 @@ async def lastfm_auth_start(request: Request):
 
 
 @app.get("/api/lastfm/callback")
-async def lastfm_callback(token: str = "", request: Request = None):
+async def lastfm_callback(token: str = ""):
     """Where Last.fm returns the user after they approve the redirect flow.
 
     Redirects back to Settings either way, with the outcome in the query string
@@ -596,6 +657,8 @@ def get_status():
 
 @app.websocket("/ws/live-status")
 async def websocket_endpoint(websocket: WebSocket):
+    """The live channel: every engine frame, pushed as it arrives. Push-only —
+    the receive loop exists to notice the client going away."""
     await manager.connect(websocket)
     try:
         while True:

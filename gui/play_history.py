@@ -1,10 +1,18 @@
-"""SQLite-backed play history for the dashboard's Recent Plays and the future
-History page. Synchronous on purpose — callers wrap individual calls in
-asyncio.to_thread() to keep the broadcast loop unblocked.
+"""SQLite-backed play history: the one table everything else reads.
+
+The dashboard's Recent Plays, the History page, the Stats aggregates, album
+reconciliation and the Last.fm queue are all views of `plays`. Synchronous on
+purpose — callers wrap individual calls in asyncio.to_thread() to keep the
+broadcast loop unblocked.
+
+Every function takes an optional `db_path` so tests can point it at a temp
+file; production passes none and gets DB_PATH.
 """
 import os
 import sqlite3
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 DATA_DIR = os.environ.get(
     "SPINSENSE_DATA_DIR",
@@ -13,12 +21,25 @@ DATA_DIR = os.environ.get(
 DB_PATH = os.path.join(DATA_DIR, "spinsense.db")
 
 
-def _connect(db_path: str | None = None) -> sqlite3.Connection:
+@contextmanager
+def _connect(db_path: str | None = None) -> Iterator[sqlite3.Connection]:
+    """A connection for one unit of work: committed if the block finishes,
+    rolled back if it raises, and closed either way.
+
+    `sqlite3.Connection` is a context manager too, but only for the
+    transaction — `with sqlite3.connect(...)` commits and then leaves the
+    connection open, to be closed whenever the garbage collector reaches it.
+    Every call here used to leave one behind that way.
+    """
     path = db_path or DB_PATH
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 _ENRICHMENT_COLUMNS = {
@@ -50,6 +71,12 @@ _ENRICHMENT_COLUMNS = {
 
 
 def init_db(db_path: str | None = None) -> None:
+    """Create the table if it is missing and add any column it lacks.
+
+    Migrations are additive only: a column is added, never altered or dropped,
+    and old rows read NULL for it. That is what lets an install move to a newer
+    build and back again on the same database.
+    """
     with _connect(db_path) as conn:
         conn.executescript(
             """
@@ -97,6 +124,11 @@ def record_play(
     join_offset_secs: int | None = None,
     album_exclusive: bool | None = None,
 ) -> int:
+    """File one identification and return its row id.
+
+    `played_at` is stamped here, at the moment of filing — "when we identified
+    it". When the track actually began is `started_at`, from the play clock.
+    """
     with _connect(db_path) as conn:
         cur = conn.execute(
             "INSERT INTO plays "
@@ -111,6 +143,7 @@ def record_play(
 
 
 def set_art_path(play_id: int, art_path: str, db_path: str | None = None) -> None:
+    """Point a play at its stored artwork (a path relative to the data dir)."""
     with _connect(db_path) as conn:
         conn.execute(
             "UPDATE plays SET art_path = ? WHERE id = ?",
@@ -175,6 +208,8 @@ def recent_plays(
     offset: int = 0,
     db_path: str | None = None,
 ) -> list[dict]:
+    """Live plays, newest first. `limit` is clamped to 1–100, so a caller
+    passing a query-string value through cannot ask for the whole table."""
     limit = max(1, min(int(limit), 100))
     offset = max(0, int(offset))
     with _connect(db_path) as conn:
@@ -249,6 +284,7 @@ def mark_scrobbled(play_ids, scrobbled_at: int, db_path: str | None = None) -> i
 
 
 def count_plays(db_path: str | None = None) -> int:
+    """How many live (non-deleted) plays there are."""
     with _connect(db_path) as conn:
         (n,) = conn.execute("SELECT COUNT(*) FROM plays WHERE deleted_at IS NULL").fetchone()
         return int(n)
@@ -354,6 +390,7 @@ def scrobble_candidates(
     db_path: str | None = None,
     *,
     pending_only: bool = False,
+    eligible_only: bool = False,
 ) -> list[dict]:
     """Closed plays since `since`, oldest first, with the scrobble maths applied.
 
@@ -364,23 +401,36 @@ def scrobble_candidates(
 
     `pending_only` narrows to rows not yet submitted — what the scrobbler drains.
     Without it this is the general ledger view, useful for inspecting history.
+
+    `eligible_only` drops the rows Last.fm would not take, and — the part that
+    matters — counts `limit` *after* dropping them. A play that was skipped, or
+    whose length was never found, is closed, unsent and permanently ineligible,
+    so it never leaves the unsent set. Limiting first let those collect at the
+    old end of the queue: once fifty had built up, the first fifty unsent rows
+    were all of them, and nothing was ever submitted again.
     """
     limit = max(1, min(int(limit), 1000))
     unsent = " AND scrobbled_at IS NULL" if pending_only else ""
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            "SELECT id, title, artist, album, played_at, ended_at, duration_secs, "
-            "started_at, join_offset_secs, scrobbled_at "
-            "FROM plays WHERE deleted_at IS NULL AND ended_at IS NOT NULL "
-            f"AND played_at >= ?{unsent} ORDER BY played_at ASC, id ASC LIMIT ?",
-            (int(since), limit),
-        ).fetchall()
+    sql = ("SELECT id, title, artist, album, played_at, ended_at, duration_secs, "
+           "started_at, join_offset_secs, scrobbled_at "
+           "FROM plays WHERE deleted_at IS NULL AND ended_at IS NOT NULL "
+           f"AND played_at >= ?{unsent} ORDER BY played_at ASC, id ASC")
+    params: tuple = (int(since),)
+    if not eligible_only:
+        # Every row counts, so the database can stop at the limit itself.
+        sql += " LIMIT ?"
+        params += (limit,)
 
     out = []
-    for r in rows:
-        row = dict(r)
-        row["timestamp"] = row["started_at"] or row["played_at"]
-        row["listened_secs"] = scrobble_listened_secs(row)
-        row["eligible"] = scrobble_eligible(row)
-        out.append(row)
+    with _connect(db_path) as conn:
+        for r in conn.execute(sql, params):
+            row = dict(r)
+            row["timestamp"] = row["started_at"] or row["played_at"]
+            row["listened_secs"] = scrobble_listened_secs(row)
+            row["eligible"] = scrobble_eligible(row)
+            if eligible_only and not row["eligible"]:
+                continue
+            out.append(row)
+            if len(out) >= limit:
+                break
     return out

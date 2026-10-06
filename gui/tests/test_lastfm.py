@@ -244,6 +244,7 @@ class _LastFmHarness(unittest.TestCase):
         self.calls = []
         self.responses = []
         self._orig_post = lastfm._api_post
+        lastfm._set_problem("")
 
         async def fake_post(params):
             self.calls.append(params)
@@ -361,6 +362,30 @@ class PendingQueueTest(_LastFmHarness):
         titles = [p["title"] for p in lastfm.pending(db_path=self.db_path)]
         self.assertEqual(titles, ["after"])
 
+    def test_plays_that_can_never_qualify_do_not_block_the_queue(self):
+        # A skipped track, or one whose length was never found, is closed,
+        # unsent and permanently ineligible — so it never leaves the unsent
+        # set. Counting those against the batch limit meant that once fifty
+        # had built up, every sweep looked at nothing else: scrobbling stopped
+        # without a word while Settings went on reporting plays ready to send.
+        self.connected()
+        base = int(time.time()) - 6 * 3600
+        for i in range(lastfm.MAX_BATCH + 10):
+            self.add_play(f"skipped {i}", played_at=base + i * 10, listened=5)
+        self.add_play("no length", played_at=base + 900, duration=None)
+        self.add_play("heard in full", played_at=base + 3600, listened=200)
+        titles = [p["title"] for p in lastfm.pending(db_path=self.db_path)]
+        self.assertEqual(titles, ["heard in full"])
+
+    def test_the_limit_counts_what_can_be_sent(self):
+        self.connected()
+        base = int(time.time()) - 6 * 3600
+        for i in range(6):
+            self.add_play(f"skipped {i}", played_at=base + i * 10, listened=5)
+            self.add_play(f"good {i}", played_at=base + i * 10 + 5, listened=200)
+        titles = [p["title"] for p in lastfm.pending(limit=4, db_path=self.db_path)]
+        self.assertEqual(titles, ["good 0", "good 1", "good 2", "good 3"])
+
 
 class FlushTest(_LastFmHarness):
     def test_disconnected_never_calls_out(self):
@@ -440,6 +465,111 @@ class FlushTest(_LastFmHarness):
         asyncio.run(lastfm.flush(db_path=self.db_path))
         submitted = [k for k in self.calls[0] if k.startswith("track[")]
         self.assertEqual(len(submitted), lastfm.MAX_BATCH)
+
+    def test_a_backlog_of_unscrobblable_plays_does_not_stop_the_sweep(self):
+        self.connected()
+        base = int(time.time()) - 6 * 3600
+        for i in range(lastfm.MAX_BATCH + 10):
+            self.add_play(f"skipped {i}", played_at=base + i * 10, listened=5)
+        good = self.add_play("heard in full", played_at=base + 3600, listened=200)
+        self.responses = [({"scrobbles": {"@attr": {"accepted": "1", "ignored": "0"}}}, None)]
+        result = asyncio.run(lastfm.flush(db_path=self.db_path))
+        self.assertEqual(result["submitted"], 1)
+        self.assertEqual(self.scrobbled_ids(), [good])
+
+    def test_a_rejected_application_key_keeps_the_queue(self):
+        # The shared key being revoked or suspended is nobody's play being
+        # wrong. Retiring the batch, as for any other permanent error, would
+        # discard fifty plays a sweep for as long as the key stayed dead — and
+        # this is the one failure bring-your-own exists to recover from.
+        for code, message in ((10, "Invalid API key"), (26, "Suspended API key"),
+                              (4, "Authentication Failed")):
+            with self.subTest(code=code):
+                self.connected()
+                self.add_play(f"played before error {code}")
+                self.responses = [({"error": code, "message": message}, None)]
+                result = asyncio.run(lastfm.flush(db_path=self.db_path))
+                self.assertFalse(result["ok"])
+                self.assertTrue(result["needs_reauth"])
+                self.assertFalse(lastfm.settings()["Enabled"])   # stops asking
+                self.assertEqual(self.scrobbled_ids(), [])       # nothing lost
+
+    def test_settings_is_told_why_scrobbling_switched_itself_off(self):
+        # Connected-but-off otherwise looks like a healthy connection whose
+        # queue simply never moves.
+        self.connected()
+        self.add_play()
+        self.responses = [({"error": 26, "message": "Suspended API key"}, None)]
+        asyncio.run(lastfm.flush(db_path=self.db_path))
+        st = lastfm.status(db_path=self.db_path)
+        self.assertTrue(st["connected"])
+        self.assertFalse(st["enabled"])
+        self.assertIn("Suspended API key", st["problem"])
+        self.assertEqual(st["pending"], 1)           # still there for later
+
+    def test_a_revoked_session_is_explained_too(self):
+        self.connected()
+        self.add_play()
+        self.responses = [({"error": 9, "message": "Invalid session key"}, None)]
+        asyncio.run(lastfm.flush(db_path=self.db_path))
+        self.assertIn("Connect again", lastfm.status(db_path=self.db_path)["problem"])
+
+    def test_the_explanation_does_not_outlive_the_problem(self):
+        self.connected()
+        self.add_play()
+        self.responses = [({"error": 9, "message": "Invalid session key"}, None),
+                          ({"session": {"key": "NEW", "name": "u"}}, None)]
+        asyncio.run(lastfm.flush(db_path=self.db_path))
+        asyncio.run(lastfm.complete_auth("K", "S", "approved-token"))
+        st = lastfm.status(db_path=self.db_path)
+        self.assertTrue(st["enabled"])
+        self.assertEqual(st["problem"], "")
+
+    def test_signing_the_same_account_back_in_sends_what_was_waiting(self):
+        # The whole reason the queue is kept when Last.fm revokes a session.
+        # Restarting the cutoff at the moment of reconnecting put every waiting
+        # play behind it: preserved in the database, and never sent.
+        self.connected(Scrobble_Since=5000)
+        kept = self.add_play("played while the session was dead")
+        self.responses = [
+            ({"error": 9, "message": "Invalid session key"}, None),
+            ({"session": {"key": "NEW", "name": "u"}}, None),
+            ({"scrobbles": {"@attr": {"accepted": "1", "ignored": "0"}}}, None),
+        ]
+        asyncio.run(lastfm.flush(db_path=self.db_path))
+        asyncio.run(lastfm.complete_auth("K", "S", "approved-token"))
+        self.assertEqual(lastfm.settings()["Scrobble_Since"], 5000)
+        result = asyncio.run(lastfm.flush(db_path=self.db_path))
+        self.assertEqual(result["submitted"], 1)
+        self.assertEqual(self.scrobbled_ids(), [kept])
+
+    def test_a_different_account_does_not_inherit_the_queue(self):
+        # Someone else's listening must not be sent to a new profile.
+        self.connected(Scrobble_Since=5000)
+        self.add_play("played under the first account")
+        self.responses = [({"session": {"key": "NEW", "name": "someone-else"}}, None)]
+        asyncio.run(lastfm.complete_auth("K", "S", "approved-token"))
+        self.assertGreater(lastfm.settings()["Scrobble_Since"], 5000)
+        self.assertEqual(lastfm.pending(db_path=self.db_path), [])
+
+    def test_disconnecting_first_starts_the_queue_over(self):
+        # A deliberate disconnect ends the connection; the next is a new one.
+        self.connected(Scrobble_Since=5000)
+        self.add_play("played before disconnecting")
+        lastfm.disconnect()
+        self.responses = [({"session": {"key": "NEW", "name": "u"}}, None)]
+        asyncio.run(lastfm.complete_auth("K", "S", "approved-token"))
+        self.assertGreater(lastfm.settings()["Scrobble_Since"], 5000)
+        self.assertEqual(lastfm.pending(db_path=self.db_path), [])
+
+    def test_a_switch_the_listener_turned_off_is_not_reported_as_a_fault(self):
+        self.connected(Enabled=False)
+        self.add_play()
+        self.assertEqual(lastfm.status(db_path=self.db_path)["problem"], "")
+        result = asyncio.run(lastfm.flush(db_path=self.db_path))
+        self.assertEqual(self.calls, [])
+        # Not "not connected": the page above this says "Connected as …".
+        self.assertEqual(result["detail"], "scrobbling is switched off")
 
     def test_the_request_is_signed_and_carries_the_session(self):
         self.connected()
@@ -594,6 +724,19 @@ class ReviewWindowTest(_LastFmHarness):
         self.assertEqual(lastfm.pending(db_path=self.db_path), [])
         self.assertEqual(
             len(lastfm.pending(db_path=self.db_path, include_held=True)), 2)
+
+    def test_held_plays_do_not_crowd_out_ones_that_are_ready(self):
+        # A record played this morning and put back on just now holds its
+        # morning plays until the replay ends. They are older than everything
+        # played in between, so a batch cut before the hold was applied could
+        # be filled entirely by plays that were never going to be sent.
+        self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")
+        morning = [f"m{i}" for i in range(lastfm.MAX_BATCH + 5)]
+        self.side(morning, album="Played Twice", ends_ago=3 * 3600)
+        self.side(["in between"], album="Another Record", ends_ago=3600)
+        self.side(["again"], album="Played Twice", ends_ago=60)
+        titles = [p["title"] for p in lastfm.pending(db_path=self.db_path)]
+        self.assertEqual(titles, ["in between"])
 
     def test_the_sweep_leaves_held_plays_alone(self):
         self.connected(Submit_Delay_Mins=30, Submit_Trigger="album")

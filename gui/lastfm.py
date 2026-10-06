@@ -44,7 +44,7 @@ import time
 import urllib.parse
 
 import play_history
-from config_manager import load_config, save_config
+from config_manager import load_config, read_config, save_config
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +86,25 @@ ERROR_INVALID_SESSION = 9
 ERROR_RATE_LIMIT = 29
 # Transient service problems — keep the rows pending and try again later.
 RETRYABLE_ERRORS = {8, 11, 16, ERROR_RATE_LIMIT}
+# The *application* was refused rather than the user: authentication failed,
+# the API key is invalid, or the key has been suspended. This is the shared
+# built-in key being revoked or rate-limited into suspension — the case the
+# bring-your-own path exists for.
+APPLICATION_REJECTED_ERRORS = {4, 10, 26}
+# Either way nothing queued is at fault and nothing will go through until a
+# person acts, so the queue is kept and scrobbling stops asking. Retiring the
+# batch here, as for any other permanent error, would throw away fifty plays
+# every two minutes for as long as the key stayed dead.
+NEEDS_USER_ERRORS = {ERROR_INVALID_SESSION} | APPLICATION_REJECTED_ERRORS
+
+# How far down the unsent queue one sweep will look for something submittable.
+# Matches the ceiling play_history.scrobble_candidates() enforces.
+QUEUE_SCAN_LIMIT = 1000
+
+# Why scrobbling last switched itself off, for the Settings page. In memory on
+# purpose: it describes this run, and a restart leaves the switch off with the
+# generic explanation rather than a stale specific one.
+_problem: str = ""
 
 
 # --- 1. Pure protocol ------------------------------------------------------
@@ -205,6 +224,8 @@ def is_too_old(play: dict, now: int | None = None) -> bool:
 # --- 2. Configuration ------------------------------------------------------
 
 def settings() -> dict:
+    """The LastFM section of config.json, read fresh. Every helper below takes
+    it as an optional argument so one read can serve a whole operation."""
     return (load_config() or {}).get("LastFM", {}) or {}
 
 
@@ -240,12 +261,16 @@ def uses_own_credentials(cfg: dict | None = None) -> bool:
 
 
 def is_connected(cfg: dict | None = None) -> bool:
+    """Whether an account is linked: usable credentials and a session key."""
     cfg = cfg if cfg is not None else settings()
     api_key, api_secret = credentials(cfg)
     return bool(api_key and api_secret and cfg.get("Session_Key"))
 
 
 def is_active(cfg: dict | None = None) -> bool:
+    """Whether anything should be sent: linked, and the switch is on. The two
+    come apart when the listener turns scrobbling off, or it turns itself off
+    because Last.fm stopped accepting the connection."""
     cfg = cfg if cfg is not None else settings()
     return bool(cfg.get("Enabled")) and is_connected(cfg)
 
@@ -255,6 +280,37 @@ def _store(**fields) -> bool:
     cfg = load_config()
     cfg.setdefault("LastFM", {}).update(fields)
     return save_config(cfg)
+
+
+# The connection itself: who is signed in, with which application, and since
+# when. Written by the auth flow below and by nothing else.
+CONNECTION_FIELDS = ("API_Key", "API_Secret", "Session_Key", "Username",
+                     "Scrobble_Since")
+
+
+def keep_connection(new_config: dict) -> dict:
+    """`new_config` with the saved connection put back over whatever it carried.
+
+    The Settings page and the wizard both save by posting back the whole config
+    they loaded, connection included — and a page is a snapshot. One loaded
+    before the account was connected (the manual approval flow, a second tab, a
+    phone left on Settings) saved an empty session over the real one, silently
+    disconnecting Last.fm; one loaded before a Disconnect did the opposite and
+    signed the account back in. No form edits these fields, so a form never
+    gets to say what they are.
+
+    Left alone when the saved config can't be read: then there is nothing
+    trustworthy to restore, and blanks would be worse than what was posted.
+    """
+    saved = read_config()
+    if saved is None:
+        return new_config
+    merged = dict(new_config)
+    section = dict(merged.get("LastFM") or {})
+    for field in CONNECTION_FIELDS:
+        section[field] = saved["LastFM"][field]
+    merged["LastFM"] = section
+    return merged
 
 
 # --- 3. HTTP ---------------------------------------------------------------
@@ -284,6 +340,9 @@ async def _api_post(params: dict) -> tuple[dict | None, str | None]:
 
 
 def _error_of(body) -> tuple[int | None, str]:
+    """(error code, message) from a response body, or (None, "") if it is not
+    an error. Last.fm reports failures as a code in the body, and that code is
+    what every caller branches on."""
     if isinstance(body, dict) and "error" in body:
         try:
             code = int(body["error"])
@@ -317,6 +376,14 @@ async def complete_auth(api_key: str, api_secret: str, token: str) -> tuple[str,
 
     On success the key and username are persisted, and `Scrobble_Since` is
     stamped at now — see `pending()` for why. Returns (username, error).
+
+    Unless this is the account already linked, signing back in. That happens
+    for one reason: Last.fm stopped accepting the connection (a revoked
+    session, a refused application key) and scrobbling switched itself off
+    with plays still waiting. Those were kept precisely so they could go out
+    after this — and moving the cutoff to now would put every one of them
+    behind it, which is how "the queue is preserved" came to mean preserved
+    in the database and never sent.
     """
     if not token:
         return "", "No pending authorisation — start again"
@@ -332,17 +399,33 @@ async def complete_auth(api_key: str, api_secret: str, token: str) -> tuple[str,
     key, username = session.get("key"), session.get("name") or ""
     if not key:
         return "", "Last.fm returned no session key"
+    linked = settings()
+    resuming = bool(username and linked.get("Username") == username
+                    and linked.get("Scrobble_Since"))
+    since = int(linked["Scrobble_Since"]) if resuming else int(time.time())
     if not _store(Session_Key=key, Username=username,
-                  Scrobble_Since=int(time.time()), Enabled=True):
+                  Scrobble_Since=since, Enabled=True):
         return "", "Authorised, but writing config.json failed"
+    _set_problem("")
     return username, ""
 
 
 def disconnect() -> bool:
     """Forget the session. The API key and secret stay — they're the user's
     application registration, not a login, and re-connecting shouldn't mean
-    re-typing them."""
+    re-typing them.
+
+    It also ends the queue: with no username left to recognise, the next
+    connection is a new one and starts from the moment it is made. That is
+    right for a deliberate disconnect and wrong as a way to repair a broken
+    connection, which is why Settings offers Connect again without it."""
+    _set_problem("")
     return _store(Session_Key="", Username="", Enabled=False)
+
+
+def _set_problem(text: str) -> None:
+    global _problem
+    _problem = text
 
 
 # --- 5. Submission ---------------------------------------------------------
@@ -450,18 +533,22 @@ def pending(limit: int = MAX_BATCH, db_path: str | None = None,
     Plays inside the review window are withheld unless `include_held`, which is
     what the "Send now" button passes: an explicit release by someone who has
     just looked at them.
+
+    `limit` is applied last, to what is actually submittable. Plays that can
+    never qualify and plays still being held both sit in the unsent set ahead
+    of newer ones, so cutting the list before filtering them out would let
+    either kind crowd everything behind it out of the batch.
     """
     cfg = settings()
     since = int(cfg.get("Scrobble_Since") or 0)
     rows = play_history.scrobble_candidates(
-        since=since, limit=limit, pending_only=True, db_path=db_path)
-    eligible = [r for r in rows if r["eligible"]]
-    if include_held:
-        return eligible
-    now = int(time.time())
-    delay, trigger = submit_delay_secs(cfg), submit_trigger(cfg)
-    return [r for r in eligible
-            if not is_held(r, now, delay, trigger, db_path)]
+        since=since, limit=QUEUE_SCAN_LIMIT, pending_only=True,
+        eligible_only=True, db_path=db_path)
+    if not include_held:
+        now = int(time.time())
+        delay, trigger = submit_delay_secs(cfg), submit_trigger(cfg)
+        rows = [r for r in rows if not is_held(r, now, delay, trigger, db_path)]
+    return rows[:max(1, int(limit))]
 
 
 async def flush(db_path: str | None = None, release_held: bool = False) -> dict:
@@ -476,7 +563,10 @@ async def flush(db_path: str | None = None, release_held: bool = False) -> dict:
     """
     cfg = settings()
     if not is_active(cfg):
-        return {"ok": True, "submitted": 0, "detail": "not connected"}
+        # Two different states that both mean "nothing to do": say which, since
+        # "not connected" under a "Connected as …" heading reads as a fault.
+        detail = "scrobbling is switched off" if is_connected(cfg) else "not connected"
+        return {"ok": True, "submitted": 0, "detail": detail}
     api_key, api_secret = credentials(cfg)
 
     batch = pending(db_path=db_path, include_held=release_held)
@@ -510,10 +600,21 @@ async def flush(db_path: str | None = None, release_held: bool = False) -> dict:
         return {"ok": False, "submitted": 0, "detail": err}
 
     code, message = _error_of(body)
-    if code == ERROR_INVALID_SESSION:
-        # The user has to act; stop trying until they do.
+    if code in NEEDS_USER_ERRORS:
+        # The user has to act; stop trying until they do, and keep every row
+        # for when they have.
         _store(Enabled=False)
-        log.error("last.fm session rejected — scrobbling disabled until reconnected")
+        if code == ERROR_INVALID_SESSION:
+            _set_problem("Last.fm no longer accepts this connection, so scrobbling "
+                         "switched itself off. Connect again below to resume — no need "
+                         "to disconnect first, and everything waiting will be sent.")
+        else:
+            _set_problem(f"Last.fm refused SpinSense's application key ({message}), so "
+                         "scrobbling switched itself off. Add your own under “Use your "
+                         "own Last.fm API key” below and connect again — no need to "
+                         "disconnect first, and everything waiting will be sent.")
+        log.error("last.fm error %s (%s) — scrobbling disabled until reconnected",
+                  code, message)
         return {"ok": False, "submitted": 0, "needs_reauth": True, "detail": message}
     if code is not None:
         retryable = code in RETRYABLE_ERRORS
@@ -528,6 +629,7 @@ async def flush(db_path: str | None = None, release_held: bool = False) -> dict:
     accepted, ignored = read_scrobble_result(body)
     await asyncio.to_thread(
         play_history.mark_scrobbled, [p["id"] for p in fresh], now, db_path)
+    _set_problem("")   # it works, whatever stopped it before
     if ignored:
         log.info("last.fm accepted %d, ignored %d", accepted, ignored)
     return {"ok": True, "submitted": accepted, "ignored": ignored,
@@ -548,19 +650,28 @@ def status(db_path: str | None = None) -> dict:
     """What the Settings page shows about the connection."""
     cfg = settings()
     api_key, api_secret = credentials(cfg)
+    connected, enabled = is_connected(cfg), bool(cfg.get("Enabled"))
+    ready = waiting = 0
+    if connected:
+        ready = len(pending(limit=QUEUE_SCAN_LIMIT, db_path=db_path))
+        waiting = len(pending(limit=QUEUE_SCAN_LIMIT, db_path=db_path,
+                              include_held=True))
     return {
-        "connected": is_connected(cfg),
-        "enabled": bool(cfg.get("Enabled")),
+        "connected": connected,
+        "enabled": enabled,
         "username": cfg.get("Username") or "",
         # Whether one-click is possible at all: false only on a build with no
         # built-in key where the user hasn't supplied one, which is the single
         # case the UI must demand the fields up front.
         "can_connect": bool(api_key and api_secret),
         "using_own_key": uses_own_credentials(cfg),
-        "pending": len(pending(limit=1000, db_path=db_path)) if is_connected(cfg) else 0,
+        "pending": ready,
         # Finished but still inside the review window — releasable by hand.
-        "held": (len(pending(limit=1000, db_path=db_path, include_held=True))
-                 - len(pending(limit=1000, db_path=db_path))) if is_connected(cfg) else 0,
+        "held": waiting - ready,
         "delay_mins": submit_delay_secs(cfg) // 60,
         "trigger": submit_trigger(cfg),
+        # Why scrobbling turned itself off, when it did. Only meaningful while
+        # connected-but-off, which is the state that otherwise looks like a
+        # working connection with a queue that never moves.
+        "problem": _problem if connected and not enabled else "",
     }

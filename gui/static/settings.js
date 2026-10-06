@@ -270,13 +270,25 @@
 
   // The server flips LastFM.Enabled during connect/disconnect, so the form is
   // stale afterwards. Repopulating it would discard any unsaved edits elsewhere
-  // on the page, so when the form is dirty we say so instead of stomping it.
-  async function reloadConfigIfClean(warning) {
-    if (dirty) {
-      lfToast(warning, "ok");
+  // on the page, so when the form is dirty only that one switch is brought up
+  // to date — it is the only field here the server changes on its own. Leaving
+  // it stale meant the next Save posted the old value back: connect with an
+  // unsaved edit on the page, save, and scrobbling was off again.
+  async function reloadConfigIfClean() {
+    if (!dirty) {
+      await loadConfig();
       return;
     }
-    await loadConfig();
+    try {
+      const res = await fetch("/api/config");
+      const enabled = Boolean(getNested(await res.json(), "LastFM.Enabled"));
+      setNested(initialConfig, "LastFM.Enabled", enabled);
+      const toggle = FORM.querySelector('[name="LastFM.Enabled"]');
+      if (toggle) toggle.checked = enabled;
+    } catch (e) {
+      // The switch is corrected on the next load; the connection itself is
+      // safe either way, since the server never takes it from a form.
+    }
   }
 
   function lfToast(text, kind) {
@@ -298,12 +310,21 @@
         parts.push(`${held} held until ${status.delay_mins || 0} min after ${after} ends`);
       }
       const queued = parts.length ? parts.join(", ") + "." : "Nothing waiting to be sent.";
+      // Connected but switched off looks exactly like a working connection
+      // whose queue never moves, so say which it is — and why, when the server
+      // knows (it turns scrobbling off itself if Last.fm rejects the session
+      // or the application key).
+      const off = status.enabled === false
+        ? `<p class="text-body-sm text-warning mt-1">${escapeHtml(status.problem ||
+            "Scrobbling is switched off — turn on “Scrobble plays” below and save to resume.")}</p>`
+        : "";
       LF_STATE.innerHTML = `
         <div class="flex items-center justify-between gap-md flex-wrap">
           <div>
             <p class="text-body-md text-on-surface">Connected as
               <strong>${escapeHtml(status.username || "?")}</strong></p>
             <p class="text-body-sm text-on-surface-variant">${queued}</p>
+            ${off}
           </div>
           <div class="flex gap-2">
             <button type="button" id="lastfm-flush"
@@ -316,7 +337,11 @@
             </button>
           </div>
         </div>`;
-      LF_SETUP.classList.add("hidden");
+      // When Last.fm has stopped accepting the connection the way back is to
+      // connect again, and it has to be reachable from here: Disconnect ends
+      // the connection, and what was waiting under it does not carry over to
+      // the next one. Signing the same account back in keeps the queue.
+      LF_SETUP.classList.toggle("hidden", !status.problem);
       document.getElementById("lastfm-flush").addEventListener("click", flushLastFm);
       document.getElementById("lastfm-disconnect").addEventListener("click", disconnectLastFm);
     } else {
@@ -421,7 +446,7 @@
       LF_SECRET.value = "";
       lfToast(`Connected as ${body.username}.`, "ok");
       await refreshLastFm();
-      await reloadConfigIfClean("Connected — reload the page to see the scrobbling toggles update.");
+      await reloadConfigIfClean();
     } catch (e) {
       lfToast("Network error: " + e.message, "error");
     } finally {
@@ -435,7 +460,7 @@
       await fetch("/api/lastfm/disconnect", { method: "POST" });
       lfToast("Disconnected.", "ok");
       await refreshLastFm();
-      await reloadConfigIfClean("Disconnected — reload the page to see the scrobbling toggles update.");
+      await reloadConfigIfClean();
     } catch (e) {
       lfToast("Network error: " + e.message, "error");
     }

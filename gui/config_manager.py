@@ -1,3 +1,17 @@
+"""config.json: its schema, and the code that changes it.
+
+One file under SPINSENSE_DATA_DIR holds every setting. This process validates
+and writes it; the engine reads it — writing it only to create one that is
+missing — and notices a change by the file's modification time (see
+`config_watch_loop` in core/core_engine.py), which is all the coordination two
+processes sharing one file need.
+
+The models below are the schema. A field added here with a default is all a
+migration takes: an older file simply lacks the key and reads as the default.
+Anything the engine also reads must be given the same default in
+`core_engine.DEFAULT_CONFIG`; `tests/test_config_round_trip.py` checks the two
+agree.
+"""
 import json
 import os
 from typing import Literal
@@ -9,13 +23,20 @@ CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 
 # --- Pydantic Models for Strict Type Validation ---
 class SystemConfig(BaseModel):
+    """App-level state. `Setup_Wizard_State` is what the page gate reads:
+    "pending" sends every page to /setup until the wizard is saved or skipped.
+    `Auto_Start` is carried in the file but read by nothing."""
     Auto_Start: bool = False
     Setup_Wizard_State: Literal["pending", "skipped", "completed"] = "pending"
 
 class HardwareConfig(BaseModel):
+    """The capture device, by PortAudio name. "default" is the system input."""
     Mic_Device: str = "default"
 
 class AudioConfig(BaseModel):
+    """Detection and recognition tuning. Every field is read by the engine and
+    hot-reloaded; intervals are in seconds, Volume_Threshold is linear RMS
+    (the UI shows it in dB)."""
     # Defaults must match core/core_engine.py DEFAULT_CONFIG["Audio"].
     Volume_Threshold: float = 0.01
     Song_Sample_Length: float = 5.0
@@ -40,13 +61,20 @@ class AudioConfig(BaseModel):
     AudD_API_Token: str = ""
 
 class LastFMConfig(BaseModel):
-    """Scrobbling credentials. The user registers their own API application at
-    last.fm/api/account/create, so the rate limit and the terms are theirs.
+    """Scrobbling: the connection, and how plays are released to it.
 
-    Session_Key is obtained by the two-step auth flow in gui/lastfm.py and is
-    permanent until revoked. Like the AudD token it is
-    stored in plaintext — fine for a self-hosted LAN box, worth knowing before
-    committing config.json anywhere.
+    API_Key / API_Secret are empty unless the user overrides the application
+    SpinSense ships with (see `lastfm.credentials()`); the built-in pair is
+    resolved at run time and never written here.
+
+    Session_Key is obtained by the auth flow in gui/lastfm.py and is permanent
+    until revoked. Like the AudD token it is stored in plaintext — fine for a
+    self-hosted LAN box, worth knowing before committing config.json anywhere.
+
+    The key, secret, session, username and Scrobble_Since are written only by
+    that flow. POST /api/config ignores whatever a page sends for them, since
+    a page saves a snapshot that may predate the connection — see
+    `lastfm.keep_connection()`.
 
     Scrobble_Since is stamped when the account is connected: only plays after
     that moment are ever submitted, so connecting an account doesn't dump months
@@ -71,13 +99,17 @@ class LastFMConfig(BaseModel):
 
 
 class MDNSConfig(BaseModel):
+    """Whether to advertise on the LAN for Home Assistant, and under what name."""
     Enabled: bool = True
     Service_Name: str = ""  # empty => derive from hostname at runtime
 
 class DiscoveryConfig(BaseModel):
+    """How SpinSense makes itself findable. mDNS is the only way today."""
     mDNS: MDNSConfig = MDNSConfig()
 
 class SpinSenseConfig(BaseModel):
+    """The whole of config.json. Every section has defaults, so a partial or
+    empty file validates and reads as a fresh install."""
     System: SystemConfig = SystemConfig()
     Hardware: HardwareConfig = HardwareConfig()
     Audio: AudioConfig = AudioConfig()
@@ -88,6 +120,23 @@ class SpinSenseConfig(BaseModel):
 def get_default_config() -> dict:
     """Returns the default configuration as a dictionary."""
     return SpinSenseConfig().dict()
+
+def read_config() -> dict | None:
+    """What is saved in config.json, validated — or None if it can't be read.
+
+    For the callers that must tell "the file says this" from "we fell back to
+    defaults": merging a default over a saved value is how settings get lost.
+    Never creates or rewrites the file.
+    """
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            data = json.load(f)
+            # Passing data to SpinSenseConfig validates the types automatically
+            return SpinSenseConfig(**data).dict()
+    except Exception as e:
+        print(f"⚠️ Error loading config — file left untouched: {e}")
+        return None
+
 
 def load_config() -> dict:
     """Loads config.json, creating it with defaults only if it does not exist.
@@ -103,15 +152,8 @@ def load_config() -> dict:
     if not os.path.exists(CONFIG_PATH):
         save_config(get_default_config())
 
-    try:
-        with open(CONFIG_PATH, 'r') as f:
-            data = json.load(f)
-            # Passing data to SpinSenseConfig validates the types automatically
-            validated = SpinSenseConfig(**data)
-            return validated.dict()
-    except Exception as e:
-        print(f"⚠️ Error loading config — serving defaults, file left untouched: {e}")
-        return get_default_config()
+    saved = read_config()
+    return saved if saved is not None else get_default_config()
 
 def save_config(data: dict) -> bool:
     """Validates and saves a dictionary to config.json."""
