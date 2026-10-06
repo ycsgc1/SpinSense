@@ -32,8 +32,8 @@ SpinSense bridges an analogue turntable and a digital smart home. It listens to 
 │  │  Engine process       │──┼─────────┼─▶│ media_player entity│  │
 │  │  core/core_engine.py  │  │  HTTP   │  └────────────────────┘  │
 │  │                       │  │  WS     │                          │
-│  │  ┌─audio loop         │  │         │   (or, optional)         │
-│  │  ├─Shazam recognition │  │         │   ┌──────────────────┐   │
+│  │  ┌─audio loop         │  │         │                          │
+│  │  ├─Shazam recognition │  │         │                          │
 │  │  ├─iTunes metadata    │  │         │                          │
 │  │  ├─track-end clock    │  │         │                          │
 │  │  └─config watcher     │  │         │                          │
@@ -72,7 +72,9 @@ They communicate over **two named UDS sockets** under `/tmp` (see §3). This spl
 | `/tmp/spinsense.sock` | engine → backend | Live status frames (RMS, current track, engine status) | Backend listens (`gui/ipc_manager.py`); engine writes (`core_engine.py` audio loop) |
 | `/tmp/spinsense-cmd.sock` | backend → engine | Command channel: `start_calibration`, `get_calibration`, `clear_calibration`, `rescan` | Engine listens (`command_listener_loop()` in `core_engine.py`); backend writes (`_send_cmd` in `backend_main.py`) |
 
-Both use **JSON-per-line**, short-lived connections. The status socket has a long-lived listener with reconnects on either side; the command socket is one connection per command.
+Both use **JSON-per-line** over short-lived connections: the engine opens one per status frame (roughly one a second) and the backend one per command. Neither side holds a connection open, so either process can restart without the other noticing more than a missed frame.
+
+Because each frame is its own connection it is also its own task in the backend. Recording a play is therefore serialized (`ipc_manager._record_locks`): the dedupe is a check followed by awaited database writes, and two frames for one track overlapping a slow write would otherwise both pass it.
 
 The status frame schema is the single source of truth for what the GUI and the HA integration both render:
 
@@ -106,15 +108,24 @@ The backend caches the most recent payload (`ipc_manager.last_status`) and serve
 
 ## 4. Configuration Model
 
-A single `config.json` under `SPINSENSE_DATA_DIR` (default `/app/data`). Validated by pydantic on every read and write (`gui/config_manager.py`). Schema (live as of 1.0):
+A single `config.json` under `SPINSENSE_DATA_DIR` (default `/app/data`). Validated by pydantic on every read and write (`gui/config_manager.py`) — pydantic **1.x**, which shazamio requires; see §11. Schema:
 
 ```python
 class SpinSenseConfig(BaseModel):
-    System: SystemConfig         # Auto_Start, Engine_Status, Setup_Wizard_State
+    System: SystemConfig         # Auto_Start, Setup_Wizard_State
     Hardware: HardwareConfig     # Mic_Device
-    Audio: AudioConfig           # Volume_Threshold, Song_Sample_Length, *_Silence_Interval
+    Audio: AudioConfig           # Volume_Threshold, sampling, the silence intervals,
+                                 #   track-end detection, normalisation, the needle-drop
+                                 #   guard, the backup recognizer
+    LastFM: LastFMConfig         # the connection, and how plays are released to it (§11.1)
     Discovery: DiscoveryConfig   # mDNS{Enabled, Service_Name}
 ```
+
+**One part of it is not the page's to write.** Settings and the wizard save by posting back the whole config they loaded, and a page is a snapshot. The Last.fm connection — key, secret, session, username, `Scrobble_Since` — is written by the auth flow while that page sits open, so `POST /api/config` restores those five fields from disk over whatever arrived (`lastfm.keep_connection()`). Without that, a page loaded before connecting saved the session away again, and one loaded before a Disconnect signed the account back in.
+
+**Credentials are kept, not shown.** `GET /api/config` replaces the AudD token, the Last.fm secret and the Last.fm session key with a placeholder (`config_manager.without_secrets()`), and `POST /api/config` turns a placeholder that comes back into whatever is saved (`with_saved_secrets()`). A page can therefore tell "set" from "not set", replace a value by typing over it and clear it by emptying the field, without the value ever having been sent to it. The placeholder never reaches the file: with nothing readable on disk to restore from, the field is saved empty. This is not access control — there is none (§14) — it only stops the one endpoint that returned everything from returning the parts that are worth something elsewhere.
+
+**The file is replaced, never rewritten.** Both writers — `save_config()`, and the engine creating a file that is missing — go through `spinsense.files.write_atomically()`: the text is written to a temporary file beside `config.json` and renamed over it. A reader in the other process gets the old file or the new one, and a save cut short leaves the old one intact. Two cases cannot rename and rewrite in place instead: a `config.json` bind-mounted on its own (a mount point; `rename(2)` answers `EBUSY`) and a directory the process may not create files in. Any other failure is raised, because falling back on a full disk would empty the file it was trying to protect.
 
 **Defaults that matter:**
 - `Volume_Threshold = 0.01` (linear RMS, = −40 dBFS). Internal storage stays linear; the UI converts to dB.
@@ -137,7 +148,7 @@ class SpinSenseConfig(BaseModel):
 
 Two stores, both under `SPINSENSE_DATA_DIR`:
 
-**`history.db`** — SQLite (`gui/play_history.py`). One table:
+**`spinsense.db`** — SQLite (`gui/play_history.py`). One table:
 
 ```
 plays(
@@ -155,7 +166,7 @@ Later columns (`ended_at`, `duration_secs`, `album_locked`, `started_at`, `join_
 
 The three nullable columns (`isrc`, `genre`, `release_year`) were added in 1.0 with an idempotent `ALTER TABLE` migration. They're populated best-effort from the recognition result; old rows stay valid as NULLs. They exist now so a future "listening Wrapped"-style feature has real data to mine — you cannot retroactively backfill listening history.
 
-**`art_cache/`** — downloaded album art, served under `/art/...`. The dashboard and history pages reference these via local URLs; the HA integration sees the **remote** `art_url` from the recognition pipeline (so it works without going through the SpinSense host as a proxy).
+**`art/`** — downloaded album art as 64×64 thumbnails under content-addressed names (`{play id}-{hash}.jpg`), served under `/art/...`. The dashboard and history pages reference these via local URLs; the HA integration sees the **remote** `art_url` from the recognition pipeline (so it works without going through the SpinSense host as a proxy).
 
 ---
 
@@ -424,9 +435,10 @@ The HA integration depends on this surface. Breaking changes here ripple to a se
 | `GET /` | Dashboard HTML |
 | `GET /history` | History page HTML |
 | `GET /settings` | Settings page HTML |
+| `GET /stats` | Stats page HTML |
 | `GET /setup` | Setup wizard HTML (always renders regardless of state) |
-| `GET /api/config` | Current config (linear-RMS values stored, dB-display done client-side) |
-| `POST /api/config` | Pydantic-validated config write; 400 on validation failure with `{"detail": "..."}` |
+| `GET /api/config` | Current config (linear-RMS values stored, dB-display done client-side). Credentials are returned as a placeholder, never as themselves (§4) |
+| `POST /api/config` | Pydantic-validated config write; 400 on validation failure with `{"detail": "..."}`. The Last.fm connection fields are kept from disk, never taken from the body, and a credential posted as the placeholder keeps its saved value (§4) |
 | `GET /api/devices` | Audio input devices visible to the container |
 | `GET /api/setup-state` | `{"state": "pending\|skipped\|completed"}` |
 | `POST /api/calibrate/start` body `{phase}` | Forwarded to engine; 503 if engine unreachable |
@@ -434,6 +446,12 @@ The HA integration depends on this surface. Breaking changes here ripple to a se
 | `POST /api/calibrate/clear` | Forwarded to engine |
 | `GET /api/recent?limit=N` | Recent plays for dashboard |
 | `GET /api/plays?limit=N&offset=M` | Paginated history; capped at 100 |
+| `DELETE /api/plays/{id}` · `POST /api/plays/{id}/restore` | Soft-delete a play, and undo it within the grace period |
+| `GET /api/plays/{id}/album-candidates` | Albums iTunes offers for that play's track, for the manual picker |
+| `POST /api/plays/{id}/album` body `{album, art_url, apply_to_run}` | Set a play's album by hand (locks it), optionally for its whole run |
+| `POST /api/rescan` | Forwarded to engine: identify what is playing now |
+| `GET /api/stats?period=month\|year\|all&year=&month=` | Aggregates for the Stats page |
+| `GET /api/events?limit=N` | Recent engine diagnostics, newest first (in memory) |
 | `GET /api/lastfm/status` | Connection state, username, pending queue depth |
 | `POST /api/lastfm/auth/start` body `{api_key, api_secret, origin}` | Validates credentials; returns the redirect URL (built from `origin`) and a manual fallback URL |
 | `GET /api/lastfm/callback?token=` | Where Last.fm returns the user; 303s to `/settings` with the outcome |
@@ -443,7 +461,7 @@ The HA integration depends on this surface. Breaking changes here ripple to a se
 | **`GET /api/status`** | Last cached engine status frame; the HA integration's poll endpoint |
 | **`WS /ws/live-status`** | Push-only stream of status frames |
 
-**Cache policy.** HTML and `/static/*` are served `Cache-Control: no-cache` so a rebuild can never leave a browser executing stale JS against fresh markup. `/art/*` and `/api/*` stay cacheable.
+**Cache policy.** HTML, `/static/*` and `/art/*` are served `Cache-Control: no-cache` so a rebuild can never leave a browser executing stale JS against fresh markup. For artwork that is belt and braces — its filenames are content-addressed, so changed art is already a changed URL. `/api/*` is left alone; its responses are generated fresh.
 
 ---
 
@@ -465,28 +483,35 @@ The HA integration depends on this surface. Breaking changes here ripple to a se
 services:
   spinsense:
     image: ghcr.io/ycsgc1/spinsense:latest
-    container_name: spinsense_engine
+    container_name: spinsense
     restart: unless-stopped
-    devices:
-      - "/dev/snd:/dev/snd"
-    group_add: ["29"]
-    ipc: host
     network_mode: host
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
     environment:
       - SPINSENSE_DATA_DIR=/app/data
       - SPINSENSE_PORT=3313
     volumes:
       - ./data:/app/data
-      - /tmp:/tmp
 ```
+
+It is the same service the README tells users to paste, and the two are meant to stay identical. Nothing of the host's is shared beyond the sound devices and the data directory: both sockets (§3) live in the container's own `/tmp`, used only by the two processes inside it.
 
 **Critical knobs:**
 - `/dev/snd` passthrough — without it the container has no audio devices.
-- `group_add: ["29"]` (or `audio`) — owns the right ALSA permissions.
+- `group_add: audio` — owns the right ALSA permissions. The name is looked up in the image, where it is gid 29.
 - `network_mode: host` — required for mDNS to reach the LAN.
-- `volumes: ./data:/app/data` — persistence for `config.json`, `history.db`, and `art_cache/`. Without it, every rebuild starts from an empty database. **This is the single most-easily-missed config item.**
+- `volumes: ./data:/app/data` — persistence for `config.json`, `spinsense.db`, and `art/`. Without it, every rebuild starts from an empty database. **This is the single most-easily-missed config item.**
 
-**Image build (`docker/Dockerfile`):** Python 3.11-slim base; installs `portaudio19-dev`, `alsa-utils`, `libsndfile1`, `ffmpeg`; pip-installs `requirements.txt`; copies the source; runs `docker/entrypoint.sh` (starts engine in background, uvicorn in foreground). Exposes 3313 documentationally — under host networking the EXPOSE is informational only.
+**Image build (`docker/Dockerfile`):** Python 3.11-slim base; installs `portaudio19-dev`, `alsa-utils`, `libsndfile1`, `ffmpeg`; pip-installs `requirements.txt` under `constraints.txt`; copies the source; runs `docker/entrypoint.sh` (starts engine in background, uvicorn in foreground). Exposes 3313 documentationally — under host networking the EXPOSE is informational only.
+
+**Dependencies are pinned twice.** `requirements.txt` names the nine packages SpinSense imports, each at a version chosen on purpose. `constraints.txt` fixes everything those pull in — about fifty more — and is generated, not edited (`uv pip compile`; the command is at the top of the file). The image and CI both install with `-c constraints.txt`, so a commit builds the same image whenever it is built and CI tests the versions that ship. It is resolved for Python 3.11 on Linux, the image's base; x86-64 and arm64 resolve to the same set.
+
+One pin in it shapes the code: **pydantic is 1.x**, because `shazamio==0.5.1` requires `<2`. A machine set up without the constraints — any Python too new for the pinned numpy and Pillow to have wheels — gets pydantic 2, on which `.dict()` merely warns and `.model_dump()` exists. Code written against that passes there and fails in the image. CI is the authority; `scripts/dev-setup.sh` says so when it has had to relax the pins.
+
+`.dockerignore` keeps the build context to what the image runs. Without it `COPY . .` took the whole checkout, including a `./data` that had been used — history, and a `config.json` with credentials in it — into an image layer.
 
 ---
 
@@ -518,11 +543,16 @@ The manual desktop flow is kept as a fallback for when the redirect cannot retur
 | Retryable service error (8, 11, 16, 29) | **no** | Last.fm asked us to come back later |
 | Other API error | yes | resubmitting would fail the same way |
 | Session revoked (error 9) | **no** | the user can fix this; keep the queue for when they do, and disable scrobbling so we stop asking |
+| Application key refused (4, 10, 26) | **no** | the shared key was revoked or suspended — nobody's play is at fault, and this is the failure bring-your-own exists for. Same handling as a revoked session; retiring the batch would discard fifty plays a sweep for as long as the key stayed dead |
 | Older than 14 days | yes, unsent | Last.fm refuses these outright — never offered to the API at all |
+
+Whenever scrobbling switches itself off, `status()` carries the reason as `problem` and Settings shows it — with the Connect button beside it — since connected-but-off otherwise looks exactly like a working connection whose queue never moves.
+
+**Keeping the queue only matters if reconnecting can reach it.** `Scrobble_Since` is restamped on every new connection, which is what stops a new account inheriting old plays. But re-authorising the *same* account is the recovery from both rows above, and restamping there put every kept play behind the new cutoff — preserved in the database and never sent. So `complete_auth()` leaves `Scrobble_Since` alone when the username it gets back is the one already linked. `disconnect()` clears the username, so a deliberate disconnect still starts over.
 
 Two further bounds: `Scrobble_Since` is stamped at connect time and nothing before it is ever submitted (connecting an account must not upload months of back catalogue), and batches are capped at Last.fm's 50.
 
-`play_history.scrobble_candidates(since, limit, pending_only)` is the read side — closed plays oldest-first (the order `track.scrobble` batches want) with the maths applied:
+`play_history.scrobble_candidates(since, limit, pending_only, eligible_only)` is the read side — closed plays oldest-first (the order `track.scrobble` batches want) with the maths applied:
 
 ```
 timestamp     = started_at or played_at         # true track start where known
@@ -531,6 +561,8 @@ eligible      = duration > 30s AND listened >= min(duration/2, 240s)
 ```
 
 That last line is Last.fm's published rule verbatim. Ineligible rows come back **flagged, not dropped** — the ledger reports, the caller decides.
+
+**The batch limit is applied last.** A skipped track, or one whose length was never found, is closed, unsent and permanently ineligible, so it never leaves the unsent set. The scrobbler therefore asks with `eligible_only`, which counts `limit` after the rule rather than before it, and `pending()` cuts to the batch size only after the review-window hold as well. Limiting first let the unsendable rows collect at the old end of the queue until the first fifty were all of them — at which point nothing was submitted again, while Settings went on reporting plays ready to send.
 
 `track.updateNowPlaying` is fired from `ipc_manager` as each play is recorded, as a detached task: it is decorative, and it must never delay or fail the act of recording a play.
 
@@ -926,7 +958,8 @@ the process that actually asks iTunes which album a track belongs to; that is
 what let "SOUR (Video Version)" be treated as an edition of *SOUR*. Separately,
 each side had grown its own iTunes client against the same endpoint.
 
-`spinsense/` holds what both need: the album vocabulary and one search client.
+`spinsense/` holds what both need: the album vocabulary, one search client, and
+the one way either process writes a file the other reads (`files.py`, §4).
 Everything in it is pure or purely-network, with no framework dependency, so
 either process can import it and it is testable on its own.
 
@@ -946,6 +979,10 @@ buys the same thing with less to maintain.
 - **Track-end checks are budgeted, not throttled.** The cap is per *track*, not per unit time, and it resets only when the track changes or real silence clears it. This is deliberate: a rate limit would still let one badly-tagged record scan all afternoon, where a budget cannot.
 - **Detection suppression during calibration.** While a 5 s capture is `"running"`, the engine's audio loop skips the threshold-comparison branch entirely (samples still accumulate; the live meter still publishes). This prevents recognition firing on the calibration audio itself.
 - **mDNS advertiser reconcile.** Lives in the GUI process. Stopping requires un-registering the `ServiceInfo`; starting binds a fresh one. Bind failures log and continue serving HTTP.
+- **The engine is supervised twice.** `core_engine.supervise()` puts the monitor loop back 5 s after any unhandled exception — its state is module-level, so a track in progress survives — and `docker/entrypoint.sh` restarts the engine *process* 5 s after it exits. Both exist because the failure they cover happened: the engine died at startup, the container stayed up, and the web UI looked healthy for 38 hours.
+- **A missing capture device is a pause, not a failure.** `_try_open_input_stream()` reports it once and retries every 5 s. A device ALSA has renumbered is still found, by its name without the card coordinates (`resolve_device()`); it never falls back to the default input, since confidently recording the wrong microphone is worse than an obvious stop.
+- **Input-stall watchdog.** No audio callbacks for 5 s, or 30 s of bit-exact zero RMS, reopens the stream (at most once every 30 s) and sets `input_ok: false` on the frame so the dashboard says so.
+- **Status goes stale.** `GET /api/status` falls back to the idle default once no frame has arrived for 45 s (`STATUS_STALE_SECS`), so a dead engine is never reported as still playing.
 
 ---
 
@@ -955,7 +992,9 @@ buys the same thing with less to maintain.
 spinsense/                 # domain logic shared by BOTH processes
   albums.py                # album-title vocabulary, edition vs rendition,
                            #   choose_edition() and pick_winner()
-  itunes.py                # the one iTunes Search client
+  itunes.py                # the one iTunes Search client, and the title/artist
+                           #   keys everything is matched on
+  files.py                 # write_atomically(): how config.json is replaced
   tests/
 core/
   core_engine.py           # the engine process: audio + recognition + enrichment
@@ -968,18 +1007,25 @@ gui/
   discovery.py             # mDNS advertiser
   lastfm.py                # Last.fm auth handshake, scrobble queue, now-playing
   play_history.py          # SQLite history + migrations + the scrobble ledger
-  audio_utils.py           # device enumeration for /api/devices
-  templates/               # Jinja2: _layout, dashboard, history, settings, setup
+  reconcile.py             # the SQLite half of album reconciliation: find a run, rewrite it
+  stats.py                 # aggregation queries behind /api/stats
+  templates/               # Jinja2: _layout, dashboard, history, stats, settings, setup
   static/                  # JS, CSS, db_utils.js (the shared dB conversion)
-  tests/                   # unittest; covers config round-trip, db_utils,
-                           # play_history, calibrate API (with fake UDS listener)
+  tests/                   # unittest; one file per behaviour, named for it
 docker/
   Dockerfile, entrypoint.sh
+scripts/
+  dev-setup.sh             # prepare a fresh machine to run the suites
 docs/
   superpowers/specs/       # per-feature design docs (one per phase)
   images/                  # README screenshots
-docker-compose.yml         # the reference compose (image-based)
-VERSION                    # 1.0.0.0
+docker-compose.yml         # the reference compose (image-based); same as the README's
+.dockerignore              # what `COPY . .` must not take: ./data above all
+requirements.txt           # the packages SpinSense imports, pinned by hand
+requirements-dev.txt       #   ...plus pytest, ruff, vulture
+constraints.txt            # every package those pull in, pinned (generated)
+eslint.config.mjs          # lint rules for gui/static, run in CI
+VERSION                    # the release number; also stamps static asset URLs
 CHANGELOG.md               # Keep-a-Changelog format
 README.md                  # install + setup + usage walkthrough
 ROADMAP.md                 # post-1.0 backlog
@@ -990,8 +1036,8 @@ DESIGN.md                  # ← you are here
 
 ## 14. What's Deliberately Not Here
 
-- **Listening analytics / "Wrapped".** The history schema has the nullable columns ready (`isrc`, `genre`, `release_year`) but no surface yet. Deferred post-1.0.
+- **Wrapped story mode.** The Stats page and `/api/stats` exist; the swipeable year-in-review on top of them does not. Tracked in `ROADMAP.md`.
 - **Clean DB export/import** for device migration. Backup is "copy the `data/` volume." Tracked in `ROADMAP.md`.
 - **Schema normalization** (separate `artists` / `tracks` tables). Same data, different shape — punt until analytics actually need joins.
-- **A JS test runner.** The frontend is hand-verified against the manual test plan in the spec. The Python mirror of `db_utils.js` is the closest thing to a unit test the JS gets.
-- **Engine restart on failure.** If hot-reload fails mid-flight, the engine logs and continues with the old value rather than crashing. No supervisor, no auto-restart loop inside the container — Docker's `restart: unless-stopped` is the only safety net, and it should rarely need to fire.
+- **A JS test runner.** The frontend is hand-verified against the manual test plan in the spec. What the JS gets instead is a linter and a mirror: ESLint in CI (`eslint.config.mjs` — undefined names, unused code, outright errors) and the Python mirror of `db_utils.js`. The linter came after a removed `const` left the setup wizard unable to save, which no test could see; `gui/tests/test_static_scripts.py` is a narrower lexical version of the same check for machines that run the Python suites but have no Node. Neither one executes a script, so behaviour is still unchecked.
+- **Authentication.** Every route is open to anyone who can reach the port, on the assumption of a trusted home network: they can read the history and the settings, change either, and link a Last.fm account of their own. What they cannot do is read the saved credentials back — `GET /api/config` returns a placeholder for those (§4). Put a reverse proxy with its own login in front of it before exposing it any further than the LAN.

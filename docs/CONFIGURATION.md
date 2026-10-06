@@ -1,8 +1,8 @@
 # ⚙️ Configuration reference
 
-Every setting below lives on the **Settings** page of the SpinSense web UI (`http://<your-host-ip>:3313` → **Settings**). Changes are **saved live** — the running engine hot-reloads them, no restart needed.
+Unless a section says otherwise, every setting below lives on the **Settings** page of the SpinSense web UI (`http://<your-host-ip>:3313` → **Settings**). Changes are **saved live** — the running engine hot-reloads them, no restart needed.
 
-Settings are persisted to `config.json` under your data directory (`SPINSENSE_DATA_DIR`, e.g. `./data/config.json`). You can edit that file directly if you prefer, but the UI is the recommended way. Secrets (the AudD token, your Last.fm session) are stored in plaintext — fine for a self-hosted LAN box; just don't commit `config.json` anywhere public.
+Settings are persisted to `config.json` under your data directory (`SPINSENSE_DATA_DIR`, e.g. `./data/config.json`). You can edit that file directly if you prefer, but the UI is the recommended way. Secrets (the AudD token, your Last.fm session) are stored in plaintext — fine for a self-hosted LAN box; just don't commit `config.json` anywhere public. The web UI never sends them back out: a saved secret shows as a row of dots that stands for "saved", not for the value.
 
 ---
 
@@ -17,13 +17,14 @@ How SpinSense tells music from silence, how it samples for recognition, and whic
 | **Rescan wait interval** | When a track can't be identified, SpinSense waits this many seconds before trying again, recording a longer sample each time (1×, then 2×, then 3× the sample length). Longer waits sample more of the song; shorter retries faster. | 5 s | 0 … 60 s |
 | **New-song silence interval** | How long a quiet gap must last before SpinSense treats the next audio as a **new song** rather than a continuation — roughly the gap between tracks on a record. Also how long a failed/unidentifiable track stays "backed off" before a fresh gap re-arms scanning. | 3 s | 1 … 600 s |
 | **Stopped silence interval** | How long silence must persist before SpinSense marks the record **stopped** and clears "now playing". Longer tolerates quiet passages within a song; shorter marks "stopped" sooner after the needle lifts. Keep this ≥ the new-song interval. | 5 s | 1 … 600 s |
+| **Ignore the needle drop** | Lowering the needle makes a thump loud enough to start a scan, but the lead-in groove after it is silent — so the recording is mostly nothing, and whatever the recognizer makes of it is usually wrong. With this on, SpinSense measures how much of a recording actually had sound in it and discards the ones that didn't, waiting for the music instead. Only applies before a song has been identified, stands aside after three rejections in a row, and never blocks a manual rescan. | On | toggle |
 | **Detect the end of a track** | Uses the track's known length as a second way to spot a transition. Once a song should be over and no gap was heard, SpinSense re-identifies once to see what's actually playing. Catches the transitions that silence detection misses on records with very short or very quiet inter-track gaps. Only applies to tracks whose length was found (iTunes / AudD); strictly limited to 3 extra checks per song. | On | toggle |
 | **Track-end grace (seconds)** | How long past a song's expected end SpinSense waits before re-identifying. It uses whichever is longer, this or 10 % of the track's length (capped at 60 s), so long tracks get proportionally more slack. Raise it if you see needless re-identifications; lower it to catch missed transitions sooner. | 20 s | 0 … 300 s |
 | **Re-announce each track to Home Assistant** | When on, each new song briefly drops Home Assistant to idle before playing again, so automations that trigger on "started playing" re-fire on every track. Off keeps playback smooth, with no idle blip. | Off | toggle |
 | **Boost quiet samples** | Raises the level of each recording before it goes to the recognizer, so quiet pressings and quiet songs sit in the same range as loud ones. Never makes a loud sample louder, never amplifies by more than 30 dB, and never clips. Quiet tracks are where identification fails most; this is the cheapest thing that helps. | On | toggle |
 | **Boost target (dBFS)** | How loud a boosted sample should end up. 0 dBFS is the digital maximum; &minus;3 leaves headroom. Only used when the boost is on. | &minus;3 dBFS | &minus;30 … 0 |
 | **Backup recognizer** | A second recognizer to try when the primary (Shazam) can't identify a track on its first attempt. See [Backup recognizers](#backup-recognizers) below. | None | None / AudD / AcoustID |
-| **AudD API token** | Your API token from [audd.io](https://dashboard.audd.io/) — only needed when **Backup recognizer** is set to AudD. | *(empty)* | string |
+| **AudD API token** | Your API token from [audd.io](https://dashboard.audd.io/) — only needed when **Backup recognizer** is set to AudD. Once saved it shows as dots: leave them to keep the token, type or paste over them to replace it, empty the field to remove it. | *(empty)* | string |
 
 > **Why not just lower the silence intervals?** On records whose gaps are very short, no silence setting distinguishes the gap between songs from a quiet passage inside one — you trade missed transitions for a flood of needless re-identifications. **Detect the end of a track** sidesteps that trade entirely: it spends recognition calls only where a transition was actually missed, and never more than a few per song.
 
@@ -73,7 +74,9 @@ Nothing inbound is ever exposed, and the session key survives restarts.
 
 **What gets sent, and when.** Plays queue in the database and go out in batches every couple of minutes, after clearing the hold above; **Send now** releases everything immediately, review window included. Only plays from the moment you connected are ever submitted — connecting an account does not upload your back catalogue. Last.fm refuses scrobbles older than 14 days, so anything that ages out in a long outage is quietly retired rather than retried forever.
 
-**If it stops working.** A revoked session (password change, app removed from your Last.fm settings) turns scrobbling off and says so on the Settings page; reconnecting fixes it, and the queue is preserved while you do. Plays already sent are marked, so nothing is ever scrobbled twice.
+**If it stops working.** A revoked session (password change, app removed from your Last.fm settings) turns scrobbling off and says so on the Settings page, with **Connect to Last.fm** offered again right there. Use it — signing the same account back in keeps the queue, and everything that was waiting goes out. The same happens if Last.fm ever refuses SpinSense's shared application key: scrobbling switches off, Settings says why, and nothing waiting is discarded — add [your own key](#using-your-own-api-key), connect again, and the queue goes out. Plays already sent are marked, so nothing is ever scrobbled twice.
+
+Don't **Disconnect** first to repair a connection. Disconnecting ends it, and the next connection — like any new one — sends only what is played from then on.
 
 ### Using your own API key
 
@@ -107,10 +110,12 @@ It's held in memory and clears on restart — it's there to answer "what just ha
 
 Advertises SpinSense on the LAN so the [companion HACS integration](https://github.com/ycsgc1/homeassistant-spinsense) auto-discovers it — nothing to type, no broker in between.
 
-| Setting | What it does | Default |
-|---|---|---|
-| **mDNS discovery** | Advertise the `_spinsense._tcp` service for Home Assistant auto-discovery. Requires `network_mode: host` (multicast doesn't cross Docker's bridge network). | On |
-| **Service name** | The name shown during discovery. Empty derives one from the host's hostname. | *(hostname)* |
+These two are not on the Settings page. The toggle is the Home Assistant step of the setup wizard (**Settings → Re-run the setup wizard**); the service name has no UI and is set in `config.json`.
+
+| Setting | Where | What it does | Default |
+|---|---|---|---|
+| **mDNS discovery** | Setup wizard · `Discovery.mDNS.Enabled` | Advertise the `_spinsense._tcp` service for Home Assistant auto-discovery. Requires `network_mode: host` (multicast doesn't cross Docker's bridge network). | On |
+| **Service name** | `Discovery.mDNS.Service_Name` in `config.json` | The name shown during discovery. Empty derives one from the host's hostname. | *(hostname)* |
 
 
 ---
@@ -124,6 +129,7 @@ Set in your `docker compose` file (the `environment:` block). These are host/dep
 | `SPINSENSE_PORT` | Web UI / API port the app binds (a nod to 33⅓ RPM). Under `network_mode: host` the app binds this directly on the host. | `3313` |
 | `SPINSENSE_DATA_DIR` | Where `config.json`, the SQLite history database, and the album-art cache live. Mount a volume here to persist data across rebuilds. | `/app/data` |
 | `SPINSENSE_ACOUSTID_KEY` | *(Advanced)* Override the bundled AcoustID application key with your own (from [acoustid.org/new-application](https://acoustid.org/new-application)). Most users never need this. | *(bundled key)* |
+| `SPINSENSE_LASTFM_KEY` / `SPINSENSE_LASTFM_SECRET` | *(Advanced)* Use your own Last.fm application without putting it in `config.json`. Set both or neither; a pair saved through Settings takes precedence. | *(bundled key)* |
 
 ---
 

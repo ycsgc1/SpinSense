@@ -10,7 +10,7 @@ Integrate your analogue record player into your digital life. SpinSense listens 
 
 - **Automatic track ID** — a Shazam-compatible recognizer identifies whatever's on the platter, with an optional **free AcoustID** (or AudD) backup for the tracks Shazam can't get.
 - **Zero-config Home Assistant discovery** — auto-appears as a `media_player` via **mDNS**. No broker, no IP, nothing to type.
-- **Last.fm scrobbling** — finished plays land on your Last.fm profile, with a live "now playing" indicator. Uses your own API key, so the rate limit is yours.
+- **Last.fm scrobbling** — finished plays land on your Last.fm profile, with a live "now playing" indicator. One click to connect, and plays are held for a review window first, so a wrong identification can be fixed before it is sent.
 - **Listening stats** — a Wrapped-style Stats page: top artists and tracks, plays over time, genres and decades, filterable by month / year / all-time.
 - **Runs where your deck is** — Docker-first; works on a Raspberry Pi (ARM) next to the turntable or on your x64 NAS.
 - **Guided onboarding** — a built-in web wizard walks you through mic selection and "silence vs. music" calibration.
@@ -129,11 +129,11 @@ Or **set it manually**: drag the slider (shown in dB) while watching the live me
 
 ### 4. Connect to Home Assistant
 
-Two independent toggles — run one, both, or neither:
+SpinSense advertises itself on your network, so there is nothing to type:
 
 ![Setup wizard — Home Assistant auto-discovery](docs/images/Connection_Selection.png)
 
-- **Home Assistant auto-discovery (mDNS)** *(on by default)* — zero-config; install the HACS integration and it finds SpinSense automatically. Recommended.
+- **Home Assistant auto-discovery (mDNS)** *(on by default)* — zero-config; install the HACS integration and it finds SpinSense automatically. Leave it on unless you have a reason not to.
 
 ### 5. Finish
 
@@ -153,7 +153,7 @@ When nothing's playing, the dashboard waits for a record and shows your live inp
 
 ![Dashboard — idle, waiting for a record](docs/images/Blank_Dashboard.png)
 
-Drop the needle and it lights up with the current track — album art, title, artist — alongside system health and your recent plays:
+Drop the needle and it lights up with the current track — album art, title, artist — alongside the live input level and your recent plays:
 
 ![Dashboard — a record now playing](docs/images/Dashboard_with_history_and_now_playing.png)
 
@@ -183,8 +183,12 @@ SpinSense doesn't guess — it watches the RMS volume of your input device:
 Modular and Docker-first:
 
 - **`/core`** — the Python recognition engine (audio capture, identification, track-end prediction).
-- **`/gui`** — a FastAPI web interface for the dashboard, history, settings, wizard, and the `/api` + WebSocket the Home Assistant integration consumes.
+- **`/gui`** — a FastAPI web interface for the dashboard, history, stats, settings, wizard, Last.fm scrobbling, and the `/api` + WebSocket the Home Assistant integration consumes.
+- **`/spinsense`** — domain logic both of those share: the album-title vocabulary and the iTunes client.
 - **`/docker`** — build files for Pi and NAS.
+- **`/scripts`** — `dev-setup.sh`, which prepares a fresh machine to run the tests.
+
+The architecture and the reasoning behind it are in **[DESIGN.md](DESIGN.md)**.
 
 ## 🏠 Related
 
