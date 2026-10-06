@@ -1,6 +1,7 @@
 # Development + CI tooling. NOT installed into the production Docker image —
 # docker/Dockerfile only installs requirements.txt (runtime deps). Install the
-# full dev environment with:  pip install -r requirements-dev.txt
+# full dev environment with:
+#     pip install -r requirements-dev.txt -c constraints.txt
 -r requirements.txt
 
 # Test runner (used by core/tests and gui/tests)

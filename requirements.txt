@@ -1,3 +1,13 @@
+# What SpinSense imports at run time — the versions chosen on purpose.
+#
+# These pull in some fifty more packages that are not listed here. Their
+# versions are fixed in constraints.txt, and every install must pass it:
+#
+#     pip install -r requirements.txt -c constraints.txt
+#
+# Without it pip takes the newest of each, so two builds of the same commit can
+# differ. After changing a pin here, regenerate constraints.txt — the command is
+# at the top of that file (needs `pip install uv`; any Python version will do).
 aiohttp==3.9.5
 numpy==1.26.4
 sounddevice==0.4.6

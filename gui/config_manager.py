@@ -121,6 +121,11 @@ class SpinSenseConfig(BaseModel):
     Discovery: DiscoveryConfig = DiscoveryConfig()
 
 # --- Core Functions ---
+#
+# `.dict()` and not `.model_dump()`: the image runs pydantic 1.x, because
+# shazamio 0.5.1 requires it (see constraints.txt). A machine set up without
+# the pins gets pydantic 2, where `.dict()` still works and only warns; the
+# other spelling does not exist on what actually ships.
 def get_default_config() -> dict:
     """Returns the default configuration as a dictionary."""
     return SpinSenseConfig().dict()

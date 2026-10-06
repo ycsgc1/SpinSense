@@ -25,6 +25,9 @@ jobs:
         with:
           python-version: "3.11"   # matches docker/Dockerfile's base image
           cache: pip
+          cache-dependency-path: |
+            requirements*.txt
+            constraints.txt
 
       - name: Install system audio libraries
         # sounddevice loads PortAudio at import time; core_engine and
@@ -34,7 +37,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends libportaudio2
 
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        # The same constraints the image is built with, so what is tested is
+        # what ships — down to the packages nothing here names directly.
+        run: pip install -r requirements-dev.txt -c constraints.txt
 
       - name: Shared domain tests
         run: python -m pytest -q spinsense

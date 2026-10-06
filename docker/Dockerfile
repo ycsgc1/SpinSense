@@ -17,9 +17,10 @@ RUN apt-get update && apt-get install -y \
     libchromaprint-tools \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements from the main folder
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy requirements from the main folder. constraints.txt fixes the version of
+# everything they pull in, so the same commit always builds the same image.
+COPY requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 # Copy everything from the main project folder
 COPY . .

@@ -27,8 +27,12 @@ fi
 # kind of box rarely has — so relax those rather than fail. Acceptable because
 # the suite is pure logic; CI still checks the real pins.
 $PIP --upgrade pip
-if ! $PIP -r requirements-dev.txt; then
+if ! $PIP -r requirements-dev.txt -c constraints.txt; then
   echo "note: pinned install failed (Python newer than 3.11?) — relaxing versions"
+  # Relaxed means *different*, not just newer: the image runs pydantic 1.x
+  # (shazamio requires it) and this path installs 2.x. Code written against
+  # what is installed here can pass every test and still not run in the image.
+  echo "note: this is NOT what ships — pydantic 2.x here, 1.x in the image; CI decides"
   $PIP numpy Pillow aiohttp fastapi "uvicorn[standard]" jinja2 zeroconf \
        httpx pytest ruff vulture
   $PIP sounddevice shazamio || echo "note: audio libraries unavailable — stubbing"
