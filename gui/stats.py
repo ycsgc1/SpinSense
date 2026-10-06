@@ -6,6 +6,7 @@ estimation for pre-feature plays — by design)."""
 import datetime
 
 from play_history import _connect
+from spinsense.albums import UNKNOWN_ALBUM
 
 LISTEN_CAP_SECS = 2400  # 40 min: guards clock skew / missed stop frames
 
@@ -94,17 +95,16 @@ def _top_tracks(conn, start, end) -> list[dict]:
 
 def _top_albums(conn, start, end, total) -> dict:
     art = _latest_art_subquery("p2.album = p.album AND p2.artist = p.artist")
-    where_album = "p.album IS NOT NULL AND p.album != 'Unknown Album'"
     rows = conn.execute(
         f"SELECT p.album, p.artist, COUNT(*) AS plays, {art} AS art_path"
-        f" FROM plays p WHERE {_WHERE} AND {where_album}"
+        f" FROM plays p WHERE {_WHERE} AND p.album IS NOT NULL AND p.album != ?"
         " GROUP BY p.album, p.artist"
         " ORDER BY plays DESC, p.album ASC, p.artist ASC LIMIT ?",
-        (start, end, start, end, TOP_N)).fetchall()
+        (start, end, start, end, UNKNOWN_ALBUM, TOP_N)).fetchall()
     (covered,) = conn.execute(
         f"SELECT COUNT(*) FROM plays WHERE {_WHERE}"
-        " AND album IS NOT NULL AND album != 'Unknown Album'",
-        (start, end)).fetchone()
+        " AND album IS NOT NULL AND album != ?",
+        (start, end, UNKNOWN_ALBUM)).fetchone()
     return {"covered": covered, "total": total, "top": [dict(r) for r in rows]}
 
 

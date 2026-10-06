@@ -45,6 +45,7 @@ import urllib.parse
 
 import play_history
 from config_manager import load_config, read_config, save_config
+from spinsense.albums import UNKNOWN_ALBUM
 
 log = logging.getLogger(__name__)
 
@@ -180,7 +181,7 @@ def build_scrobble_params(plays: list[dict]) -> dict:
         params[f"track[{i}]"] = play["title"]
         params[f"timestamp[{i}]"] = str(int(play["timestamp"]))
         album = play.get("album")
-        if album and album != "Unknown Album":
+        if album and album != UNKNOWN_ALBUM:
             params[f"album[{i}]"] = album
         duration = play.get("duration_secs")
         if duration:
@@ -447,7 +448,7 @@ async def update_now_playing(track: dict) -> None:
     if not params["artist"] or not params["track"]:
         return
     album = track.get("album")
-    if album and album != "Unknown Album":
+    if album and album != UNKNOWN_ALBUM:
         params["album"] = album
     duration = track.get("duration_secs")
     if duration:

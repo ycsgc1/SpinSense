@@ -112,7 +112,7 @@ A single `config.json` under `SPINSENSE_DATA_DIR` (default `/app/data`). Validat
 
 ```python
 class SpinSenseConfig(BaseModel):
-    System: SystemConfig         # Auto_Start, Setup_Wizard_State
+    System: SystemConfig         # Setup_Wizard_State
     Hardware: HardwareConfig     # Mic_Device
     Audio: AudioConfig           # Volume_Threshold, sampling, the silence intervals,
                                  #   track-end detection, normalisation, the needle-drop

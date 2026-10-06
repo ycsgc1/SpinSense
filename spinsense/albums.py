@@ -12,6 +12,13 @@ album a track belongs to, and a second copy of these regexes is precisely how
 """
 import re
 
+# What a play is filed under when no album could be found for it. The engine
+# writes it, the history stores it, and stats, reconciliation and scrobbling
+# each have to read it as "no album" rather than as a record called that. It
+# is in every database written so far, so this exact string is the format:
+# changing it would turn every such row into an album named "Unknown Album".
+UNKNOWN_ALBUM = "Unknown Album"
+
 
 # ---------------------------------------------------------------------------
 # The qualifier vocabulary.

@@ -10,6 +10,7 @@ play_history.py's contract.
 """
 from play_history import _connect
 from spinsense.albums import (
+    UNKNOWN_ALBUM,
     base_title,
     normalized,
     pick_winner,
@@ -73,9 +74,6 @@ def find_run(play_id: int, db_path: str | None = None) -> list[dict]:
     SESSION_GAP_SECS), ordered by played_at. Empty if the play is missing."""
     with _connect(db_path) as conn:
         return _run_rows(conn, play_id)
-
-
-UNKNOWN_ALBUM = "Unknown Album"
 
 
 def _is_unknown(album: str | None) -> bool:

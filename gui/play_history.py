@@ -14,6 +14,8 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from spinsense.albums import UNKNOWN_ALBUM
+
 DATA_DIR = os.environ.get(
     "SPINSENSE_DATA_DIR",
     os.path.join(os.path.dirname(__file__), ".."),
@@ -352,9 +354,6 @@ def album_last_ended(artist: str, album: str | None, near_played_at: int,
              int(near_played_at) + _ALBUM_SESSION_WINDOW_SECS),
         ).fetchone()
         return int(row[0]) if row and row[0] is not None else None
-
-
-UNKNOWN_ALBUM = "Unknown Album"
 
 
 def album_for_track(artist: str, title: str,

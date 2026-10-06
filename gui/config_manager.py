@@ -28,9 +28,7 @@ CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 # --- Pydantic Models for Strict Type Validation ---
 class SystemConfig(BaseModel):
     """App-level state. `Setup_Wizard_State` is what the page gate reads:
-    "pending" sends every page to /setup until the wizard is saved or skipped.
-    `Auto_Start` is carried in the file but read by nothing."""
-    Auto_Start: bool = False
+    "pending" sends every page to /setup until the wizard is saved or skipped."""
     Setup_Wizard_State: Literal["pending", "skipped", "completed"] = "pending"
 
 class HardwareConfig(BaseModel):

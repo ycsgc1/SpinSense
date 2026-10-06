@@ -50,7 +50,7 @@ from shazamio import Shazam
 
 import track_clock
 from spinsense import itunes
-from spinsense.albums import base_title, choose_edition, is_base_form
+from spinsense.albums import UNKNOWN_ALBUM, base_title, choose_edition, is_base_form
 from spinsense.files import write_atomically
 
 # --- Paths + config bootstrap ---
@@ -59,7 +59,6 @@ CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 
 DEFAULT_CONFIG = {
     "System": {
-        "Auto_Start": False,
         "Setup_Wizard_State": "pending",
     },
     "Hardware": {
@@ -1293,7 +1292,7 @@ async def _handle_match(track: dict, reason: str = "onset") -> None:
     if not art_url:
         art_url = track.get('art_url') or ''   # backend-supplied fallback art
     if not album:
-        album = track.get('album') or "Unknown Album"
+        album = track.get('album') or UNKNOWN_ALBUM
     if not duration_secs:
         duration_secs = track.get('duration_secs')
 

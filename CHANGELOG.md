@@ -31,6 +31,7 @@ All notable changes to SpinSense are recorded here. The format follows [Keep a C
 
 ### Removed
 - **MQTT support, entirely.** *(Breaking, for anyone using it.)* SpinSense integrates with Home Assistant through the [HACS integration](https://github.com/ycsgc1/homeassistant-spinsense) over mDNS, which needs no broker, no topics and no configuration — and that path has carried every feature added since. Maintaining a second, less capable one meant the broker fields, the connection test, the wizard step, the base64 artwork encoding that existed only to fill an MQTT payload, and a `paho-mqtt` dependency, all for a path that never received `play_clock`, track-end state or edition evidence. **If you publish to a broker today, that stops on upgrade** — install the HACS integration instead. Your `config.json` keeps its now-unused `MQTT` block harmlessly until the next save.
+- **`System.Auto_Start`**, a setting written into every `config.json` since 1.0 and never read by anything. A file that still has it loads exactly as before; the key simply disappears the next time settings are saved.
 
 ### Changed
 - **Shared domain logic moved into a `spinsense/` package** that both processes import. The engine and the backend were separate import roots, so anything both needed was written twice and the copies drifted — album-title vocabulary lived only in the GUI, invisible to the engine that does the metadata lookup, which is how the *SOUR* mislabelling became possible. Two separate iTunes clients are now one.

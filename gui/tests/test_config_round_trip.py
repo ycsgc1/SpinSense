@@ -241,6 +241,58 @@ class TestTrackEndConfig(unittest.TestCase):
         self.assertEqual(out["Audio"]["Track_End_Grace_Secs"], 45.0)
 
 
+class TestRetiredSettings(unittest.TestCase):
+    """A setting can be removed from the schema without a migration, because a
+    file that still carries it must go on loading. `System.Auto_Start` was the
+    first to go: it had been in every config.json since 1.0 and nothing ever
+    read it."""
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        self._orig_path = config_manager.CONFIG_PATH
+        config_manager.CONFIG_PATH = self.path
+
+    def tearDown(self):
+        config_manager.CONFIG_PATH = self._orig_path
+        try:
+            os.remove(self.path)
+        except OSError:
+            pass
+
+    def test_a_file_carrying_a_retired_setting_still_loads(self):
+        with open(self.path, "w") as f:
+            json.dump({"System": {"Auto_Start": True,
+                                  "Setup_Wizard_State": "completed"},
+                       "Audio": {"Song_Sample_Length": 7.0}}, f)
+        loaded = config_manager.load_config()
+        self.assertEqual(loaded["System"]["Setup_Wizard_State"], "completed")
+        self.assertEqual(loaded["Audio"]["Song_Sample_Length"], 7.0)
+        self.assertNotIn("Auto_Start", loaded["System"])
+
+    def test_the_retired_setting_is_gone_after_the_next_save(self):
+        with open(self.path, "w") as f:
+            json.dump({"System": {"Auto_Start": True}}, f)
+        self.assertTrue(config_manager.save_config(config_manager.load_config()))
+        with open(self.path) as f:
+            self.assertNotIn("Auto_Start", json.load(f)["System"])
+
+    def test_the_engine_and_the_schema_agree_on_every_section_they_share(self):
+        # The Audio check above, for the rest: whichever process creates
+        # config.json first decides what a fresh install starts with, so a key
+        # dropped from one side and not the other is a setting that exists
+        # only on some installs.
+        core_dir = os.path.join(os.path.dirname(GUI_DIR), "core")
+        if core_dir not in sys.path:
+            sys.path.insert(0, core_dir)
+        import core_engine  # noqa: PLC0415
+
+        schema = config_manager.get_default_config()
+        for section, engine_values in core_engine.DEFAULT_CONFIG.items():
+            with self.subTest(section=section):
+                self.assertEqual(engine_values, schema[section])
+
+
 class TestDiscoveryConfig(unittest.TestCase):
     def test_defaults_include_discovery(self):
         from config_manager import SpinSenseConfig
