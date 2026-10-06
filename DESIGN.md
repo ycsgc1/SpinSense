@@ -1,6 +1,6 @@
 # SpinSense — Design Source of Truth
 
-**Version:** 1.0.0.0 (2026-06-01)
+**Version:** 2.0.0.0-beta (2026-10-06)
 **Status:** Live. This document describes what SpinSense **is today**, not what we want it to be next. Per-feature design specs live under `docs/superpowers/specs/`; the post-1.0 backlog lives in `ROADMAP.md`. Update this file when an architectural decision changes.
 
 ---

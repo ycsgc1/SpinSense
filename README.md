@@ -66,7 +66,7 @@ Bring it up, then open the web UI at **`http://<your-host-ip>:3313`**.
 | `:latest` | every published release | normal use — this is the one you want |
 | `:beta` | every push to the `beta` branch | you want to try unreleased work on real hardware |
 | `:main` | every push to `main` | you want the bleeding edge |
-| `:1.7.0.0` | that exact release | you want to pin |
+| `:2.0.0.0` | that exact release | you want to pin |
 
 Or swap `image:` for a `build:` block to build from source.
 
