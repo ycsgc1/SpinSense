@@ -9,6 +9,10 @@ Disconnect signed the account back in the next time anything was saved.
 
 Reachable without doing anything unusual: approve through the manual flow with
 an unsaved edit on the page, or leave Settings open on a second device.
+
+The same endpoint is also where credentials used to leave the box: GET returned
+the whole file to anyone who asked. The second half of this file covers what a
+page is sent instead, and what posting that back does.
 """
 import json
 import os
@@ -151,6 +155,87 @@ class ConfigApiTest(unittest.TestCase):
             f.write('{"LastFM": {"Session_')
         self.save(config)
         self.assertEqual(self.saved()["LastFM"]["Session_Key"], "FROM-THE-PAGE")
+
+    # --- credentials are not shown to a page ---
+    #
+    # GET /api/config answers anyone who can reach the port, and used to hand
+    # over the AudD token and the Last.fm session with everything else. A page
+    # is now sent a placeholder for each, and posting the placeholder back
+    # means "leave it as it is".
+
+    def set_token(self, token="AUDD-TOKEN"):
+        config = config_manager.load_config()
+        config["Audio"]["AudD_API_Token"] = token
+        self.assertTrue(config_manager.save_config(config))
+
+    def test_a_page_is_not_sent_the_credentials(self):
+        self.connect()
+        lastfm._store(API_Key="OWN-KEY", API_Secret="OWN-SECRET")
+        self.set_token()
+        body = self.client.get("/api/config").text
+        for secret in ("AUDD-TOKEN", "REAL-SESSION", "OWN-SECRET"):
+            with self.subTest(secret=secret):
+                self.assertNotIn(secret, body)
+
+    def test_a_page_can_still_tell_a_saved_token_from_none(self):
+        self.assertEqual(self.page_loads()["Audio"]["AudD_API_Token"], "")
+        self.set_token()
+        self.assertEqual(self.page_loads()["Audio"]["AudD_API_Token"],
+                         config_manager.SECRET_PLACEHOLDER)
+
+    def test_reading_the_config_changes_nothing_on_disk(self):
+        self.connect()
+        self.set_token()
+        before = self.saved()
+        self.page_loads()
+        self.assertEqual(self.saved(), before)
+        self.assertEqual(before["Audio"]["AudD_API_Token"], "AUDD-TOKEN")
+
+    def test_saving_a_page_as_it_loaded_keeps_the_token(self):
+        # Every save from Settings and from the wizard, unless the token field
+        # itself was edited.
+        self.set_token()
+        config = self.page_loads()
+        config["Audio"]["Song_Sample_Length"] = 6.0
+        self.assertEqual(self.save(config).status_code, 200)
+        self.assertEqual(self.saved()["Audio"]["AudD_API_Token"], "AUDD-TOKEN")
+        self.assertEqual(self.saved()["Audio"]["Song_Sample_Length"], 6.0)
+
+    def test_a_token_typed_on_the_page_replaces_the_saved_one(self):
+        self.set_token()
+        config = self.page_loads()
+        config["Audio"]["AudD_API_Token"] = "A-NEW-TOKEN"
+        self.save(config)
+        self.assertEqual(self.saved()["Audio"]["AudD_API_Token"], "A-NEW-TOKEN")
+
+    def test_emptying_the_field_clears_the_token(self):
+        self.set_token()
+        config = self.page_loads()
+        config["Audio"]["AudD_API_Token"] = ""
+        self.save(config)
+        self.assertEqual(self.saved()["Audio"]["AudD_API_Token"], "")
+
+    def test_a_page_that_loaded_before_the_token_was_cleared_cannot_bring_it_back(self):
+        self.set_token()
+        stale = self.page_loads()
+        self.set_token("")
+        self.save(stale)
+        self.assertEqual(self.saved()["Audio"]["AudD_API_Token"], "")
+
+    def test_the_placeholder_is_never_what_gets_saved(self):
+        # With nothing readable to restore from, the field is saved empty: a
+        # row of asterisks sent to AudD or Last.fm as a credential would fail
+        # in a way nobody could trace back to here.
+        self.connect()
+        self.set_token()
+        config = self.page_loads()
+        with open(self.cfg_path, "w") as f:
+            f.write('{"Audio": {"AudD_')
+        self.assertEqual(self.save(config).status_code, 200)
+        saved = self.saved()
+        self.assertEqual(saved["Audio"]["AudD_API_Token"], "")
+        self.assertEqual(saved["LastFM"]["Session_Key"], "")
+        self.assertNotIn(config_manager.SECRET_PLACEHOLDER, json.dumps(saved))
 
     # --- validation ---
 

@@ -35,7 +35,9 @@ import lastfm
 import play_history
 import stats
 import reconcile
-from config_manager import SpinSenseConfig, load_config, save_config
+from config_manager import (
+    SpinSenseConfig, load_config, save_config, with_saved_secrets, without_secrets,
+)
 from ipc_manager import ART_DIR, events, manager, handle_uds_client, unify_art
 from discovery import advertiser
 from spinsense import itunes
@@ -264,7 +266,9 @@ async def setup(request: Request):
 
 @app.get("/api/config")
 def get_config():
-    return load_config()
+    """The saved config, with each credential replaced by a placeholder —
+    see `config_manager.without_secrets`."""
+    return without_secrets(load_config())
 
 
 @app.post("/api/config")
@@ -291,9 +295,10 @@ async def update_config(request: Request):
             status_code=400,
             content={"status": "error", "detail": f"{loc}: {msg}" if loc else msg},
         )
-    # The page posts back everything it loaded, but the Last.fm connection is
-    # not the page's to set — see lastfm.keep_connection().
-    new_config = lastfm.keep_connection(new_config)
+    # The page posts back everything it loaded. Its credentials came as
+    # placeholders, which stand for whatever is saved; and the Last.fm
+    # connection is not the page's to set — see lastfm.keep_connection().
+    new_config = lastfm.keep_connection(with_saved_secrets(new_config))
     if not save_config(new_config):
         return JSONResponse(
             status_code=500,

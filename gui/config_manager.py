@@ -13,6 +13,7 @@ Anything the engine also reads must be given the same default in
 `core_engine.DEFAULT_CONFIG`; `tests/test_config_round_trip.py` checks the two
 agree.
 """
+import copy
 import json
 import os
 from typing import Literal
@@ -173,3 +174,56 @@ def save_config(data: dict) -> bool:
     except Exception as e:
         print(f"❌ Error saving config (Validation failed): {e}")
         return False
+
+
+# --- What a browser is shown ---
+#
+# Nothing here asks who is calling: every route is open to whoever can reach
+# the port. Settings can be read back by anyone on the network, and that is
+# accepted. Credentials are different — they are worth something away from
+# this box, and no page needs to read one in order to keep it.
+
+# Stands in for a saved secret in what GET /api/config returns. A page that
+# posts it back unchanged means "leave that as it is".
+SECRET_PLACEHOLDER = "********"
+
+# (section, field) of every value that is a credential.
+SECRET_FIELDS = (
+    ("Audio", "AudD_API_Token"),
+    ("LastFM", "API_Secret"),
+    ("LastFM", "Session_Key"),
+)
+
+
+def without_secrets(config: dict) -> dict:
+    """A copy of `config` fit to send to a browser.
+
+    Each saved secret becomes the placeholder; an empty one stays empty, so a
+    page can still tell "set" from "not set".
+    """
+    shown = copy.deepcopy(config)
+    for section, field in SECRET_FIELDS:
+        part = shown.get(section)
+        if isinstance(part, dict) and part.get(field):
+            part[field] = SECRET_PLACEHOLDER
+    return shown
+
+
+def with_saved_secrets(new_config: dict) -> dict:
+    """`new_config` with each placeholder turned back into what is saved.
+
+    The other half of `without_secrets`, for a config a page posts back. A
+    value the page changed — a new token, or an emptied field — is kept as
+    sent. The placeholder itself never reaches the file: with nothing readable
+    on disk to restore, the field is saved empty.
+    """
+    merged = copy.deepcopy(new_config)
+    saved = None
+    for section, field in SECRET_FIELDS:
+        part = merged.get(section)
+        if not isinstance(part, dict) or part.get(field) != SECRET_PLACEHOLDER:
+            continue
+        if saved is None:
+            saved = read_config() or get_default_config()
+        part[field] = saved[section][field]
+    return merged

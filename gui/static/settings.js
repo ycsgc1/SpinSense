@@ -535,6 +535,14 @@
 
   FORM.addEventListener("submit", onSubmit);
 
+  // A saved token arrives as a row of placeholder characters, never as the
+  // token itself, and posting them back unchanged keeps whatever is saved (see
+  // without_secrets in gui/config_manager.py). Select them on focus, so that
+  // typing or pasting a new token replaces the placeholder rather than being
+  // added to the end of it.
+  const AUDD_TOKEN = FORM.querySelector('[name="Audio.AudD_API_Token"]');
+  if (AUDD_TOKEN) AUDD_TOKEN.addEventListener("focus", () => AUDD_TOKEN.select());
+
   window.addEventListener("beforeunload", (e) => {
     if (dirty) {
       e.preventDefault();
