@@ -10,6 +10,7 @@ Network calls are isolated in `search_songs()` so everything above it is
 testable without touching the network.
 """
 import re
+import unicodedata
 import urllib.parse
 
 from .albums import same_recording
@@ -50,7 +51,39 @@ async def search_songs(artist: str, title: str, limit: int = EDITION_LOOKUP_LIMI
 
 
 _TRAILING_QUALIFIER_RE = re.compile(r"\s*[(\[][^()\[\]]*[)\]]\s*$|\s+[-\u2013\u2014]\s+.*$")
-_NON_ALNUM_RE = re.compile(r"[^0-9a-z]+")
+
+# Accents in the Latin style: the combining-diacritics block that "é" and "ü"
+# decompose into. Dropped, so "Beyoncé" and "Beyonce" compare equal. Marks from
+# other scripts — kana voicing, Indic vowel signs — are spelling, and stay.
+_LATIN_ACCENT_FIRST, _LATIN_ACCENT_LAST = "\u0300", "\u036f"
+
+
+def _fold(text: str) -> str:
+    """Letters and digits only, in any script, ignoring case and accents.
+
+    "Letters" has to mean more than a to z. Reducing a title to ASCII left
+    nothing at all of one written in Japanese, Cyrillic or Hebrew, and an empty
+    key matches nothing — so every such track lost its album, its artwork and
+    its length, however exactly iTunes had it.
+    """
+    out = []
+    for ch in unicodedata.normalize("NFKD", text.casefold()):
+        if _LATIN_ACCENT_FIRST <= ch <= _LATIN_ACCENT_LAST:
+            continue
+        if ch.isalnum() or unicodedata.category(ch).startswith("M"):
+            out.append(ch)
+    return "".join(out)
+
+
+def _without_trailing_qualifier(text: str) -> str:
+    """`text` less one trailing qualifier — unless that is all there is.
+
+    "(Nice Dream)" and "[Untitled]" are names, not annotations on a name.
+    Stripping them left an empty key, which is how a track could be on the
+    record in front of us and still never be found on it.
+    """
+    stripped = _TRAILING_QUALIFIER_RE.sub("", text)
+    return stripped if _fold(stripped) else text
 
 
 def track_key(title: str | None) -> str:
@@ -62,8 +95,7 @@ def track_key(title: str | None) -> str:
     trailing qualifier comes off, then everything but letters and digits.
     """
     text = " ".join((title or "").split())
-    text = _TRAILING_QUALIFIER_RE.sub("", text)
-    return _NON_ALNUM_RE.sub("", text.casefold())
+    return _fold(_without_trailing_qualifier(text))
 
 
 _FEAT_RE = re.compile(r"\s+(feat\.?|ft\.?|featuring|with)\s+.*$", re.IGNORECASE)
@@ -72,9 +104,9 @@ _FEAT_RE = re.compile(r"\s+(feat\.?|ft\.?|featuring|with)\s+.*$", re.IGNORECASE)
 def artist_key(name: str | None) -> str:
     """A comparison key for artist names, tolerant of featured-credit noise."""
     text = " ".join((name or "").split())
-    text = _TRAILING_QUALIFIER_RE.sub("", text)
+    text = _without_trailing_qualifier(text)
     text = _FEAT_RE.sub("", text)
-    return _NON_ALNUM_RE.sub("", text.casefold())
+    return _fold(text)
 
 
 def results_for_track(results: list[dict], title: str,

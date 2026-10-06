@@ -190,6 +190,48 @@ class TrackMatchingTest(unittest.TestCase):
         for junk in (None, "", "   ", "!!!"):
             self.assertEqual(itunes.results_for_track([{"trackName": "x"}], junk), [])
 
+    def test_a_title_that_is_all_bracket_keeps_its_name(self):
+        # "(Nice Dream)" is what the song is called, not a note on it. Taking
+        # the "qualifier" off left nothing to compare, and nothing matches
+        # nothing — so it could not be found on The Bends by search or by
+        # tracklist, even with iTunes holding it under that exact title.
+        self.assertEqual(self.key("(Nice Dream)"), self.key("Nice Dream"))
+        self.assertNotEqual(self.key("(Nice Dream)"), self.key("(Interlude)"))
+        self.assertTrue(self.key("[Untitled]"))
+        row = {"trackName": "(Nice Dream)", "artistName": "Radiohead",
+               "collectionName": "The Bends"}
+        self.assertEqual(
+            itunes.results_for_track([row], "(Nice Dream)", "Radiohead"), [row])
+        self.assertIs(itunes.find_track([row], "(Nice Dream)", "Radiohead"), row)
+
+    def test_a_bracket_after_a_name_still_comes_off(self):
+        # The exemption is for a title with nothing else in it, and only that.
+        self.assertEqual(self.key("Creep (Acoustic)"), self.key("Creep"))
+
+    def test_titles_in_other_scripts_are_still_titles(self):
+        # Keeping only a-z and 0-9 reduced every one of these to an empty key,
+        # so the track lost its album, artwork and length — and with no length,
+        # its place in the scrobble queue too.
+        for title in ("夜に駆ける", "Кукушка", "ירושלים של זהב", "봄날"):
+            with self.subTest(title=title):
+                self.assertTrue(self.key(title))
+                row = {"trackName": title, "collectionName": "An Album"}
+                self.assertEqual(itunes.results_for_track([row], title), [row])
+                self.assertIs(itunes.find_track([row], title), row)
+
+    def test_other_scripts_tell_their_songs_apart(self):
+        results = [{"trackName": "夜に駆ける", "collectionName": "THE BOOK"},
+                   {"trackName": "群青", "collectionName": "THE BOOK"}]
+        got = itunes.results_for_track(results, "群青")
+        self.assertEqual([r["trackName"] for r in got], ["群青"])
+        # Voicing marks are spelling in kana, not decoration.
+        self.assertNotEqual(self.key("かき"), self.key("がき"))
+
+    def test_an_accent_is_not_a_different_song(self):
+        # The two catalogues do not always agree on whether to keep them.
+        self.assertEqual(self.key("Déjà Vu"), self.key("Deja Vu"))
+        self.assertEqual(self.key("Señorita"), self.key("Senorita"))
+
     def test_only_the_real_track_survives(self):
         results = [
             {"trackName": "Yes I'm A Mess", "collectionName": "The Maybe Man"},
@@ -263,6 +305,21 @@ class ArtistMatchingTest(unittest.TestCase):
     def test_different_artists_never_collide(self):
         self.assertNotEqual(itunes.artist_key("M83"), itunes.artist_key("M"))
         self.assertNotEqual(itunes.artist_key("AJR"), itunes.artist_key("AJR Project"))
+
+    def test_artists_in_other_scripts_are_told_apart(self):
+        # Both used to reduce to the same empty key, which made the performer
+        # check — the one that keeps cover records out — a check on nothing.
+        self.assertNotEqual(itunes.artist_key("Кино"), itunes.artist_key("Алиса"))
+        results = [
+            {"trackName": "Кукушка", "artistName": "Кино", "collectionName": "Чёрный альбом"},
+            {"trackName": "Кукушка", "artistName": "Полина Гагарина", "collectionName": "Кукушка - Single"},
+        ]
+        got = itunes.results_for_track(results, "Кукушка", "Кино")
+        self.assertEqual([r["artistName"] for r in got], ["Кино"])
+
+    def test_an_accent_is_not_a_different_artist(self):
+        self.assertEqual(itunes.artist_key("Beyoncé"), itunes.artist_key("Beyonce"))
+        self.assertEqual(itunes.artist_key("Sigur Rós"), itunes.artist_key("Sigur Ros"))
 
     def test_omitting_the_artist_keeps_the_old_behaviour(self):
         # The filter is opt-in per caller; title-only still works.
