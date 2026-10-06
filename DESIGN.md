@@ -414,7 +414,7 @@ Re-entry is always available via **Settings → Re-run setup wizard**.
 
 ## 9. Discovery & Integrations
 
-One integration path, toggleable in §8 step 4.
+One integration path, toggleable in §8 step 4 and under Settings → Home Assistant.
 
 ### 9.1 mDNS
 

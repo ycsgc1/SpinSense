@@ -110,12 +110,12 @@ It's held in memory and clears on restart — it's there to answer "what just ha
 
 Advertises SpinSense on the LAN so the [companion HACS integration](https://github.com/ycsgc1/homeassistant-spinsense) auto-discovers it — nothing to type, no broker in between.
 
-These two are not on the Settings page. The toggle is the Home Assistant step of the setup wizard (**Settings → Re-run the setup wizard**); the service name has no UI and is set in `config.json`.
+The toggle is under **Settings → Home Assistant**, and is also the Home Assistant step of the setup wizard. The service name has no UI and is set in `config.json`.
 
 | Setting | Where | What it does | Default |
 |---|---|---|---|
-| **mDNS discovery** | Setup wizard · `Discovery.mDNS.Enabled` | Advertise the `_spinsense._tcp` service for Home Assistant auto-discovery. Requires `network_mode: host` (multicast doesn't cross Docker's bridge network). | On |
-| **Service name** | `Discovery.mDNS.Service_Name` in `config.json` | The name shown during discovery. Empty derives one from the host's hostname. | *(hostname)* |
+| **Auto-discovery (mDNS)** | Settings → Home Assistant · setup wizard · `Discovery.mDNS.Enabled` | Advertise the `_spinsense._tcp` service for Home Assistant auto-discovery. Applies as soon as you save. Requires `network_mode: host` (multicast doesn't cross Docker's bridge network). | On |
+| **Service name** | `Discovery.mDNS.Service_Name` in `config.json` | The name shown during discovery. Empty derives one from the host's hostname. A change is picked up the next time the advertisement starts — at a restart, or by switching discovery off and on. | *(hostname)* |
 
 
 ---

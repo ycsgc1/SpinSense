@@ -140,6 +140,16 @@ class ConfigApiTest(unittest.TestCase):
         self.assertEqual(saved["Hardware"]["Mic_Device"], "USB Audio CODEC")
         self.assertEqual(saved["System"]["Setup_Wizard_State"], "completed")
 
+    def test_switching_discovery_from_settings_reaches_the_advertiser(self):
+        # The advertisement lives in this process, so saving has to hand it
+        # the new config; the engine's file watcher has nothing to do with it.
+        config = self.page_loads()
+        self.assertTrue(config["Discovery"]["mDNS"]["Enabled"])
+        config["Discovery"]["mDNS"]["Enabled"] = False
+        self.assertEqual(self.save(config).status_code, 200)
+        self.assertFalse(self.saved()["Discovery"]["mDNS"]["Enabled"])
+        self.assertFalse(backend_main.advertiser.last["Discovery"]["mDNS"]["Enabled"])
+
     def test_a_config_with_no_last_fm_section_keeps_the_connection(self):
         # The wizard builds its payload from whatever it managed to load, and
         # if that fetch failed it posts only the fields it sets itself.
