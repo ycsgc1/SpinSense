@@ -51,6 +51,7 @@ from shazamio import Shazam
 import track_clock
 from spinsense import itunes
 from spinsense.albums import base_title, choose_edition, is_base_form
+from spinsense.files import write_atomically
 
 # --- Paths + config bootstrap ---
 DATA_DIR = os.environ.get('SPINSENSE_DATA_DIR', os.path.join(os.path.dirname(__file__), '..'))
@@ -87,8 +88,9 @@ def _load_config():
     """Read config.json, or write defaults if missing. Returns the dict."""
     if not os.path.exists(CONFIG_PATH):
         os.makedirs(DATA_DIR, exist_ok=True)
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(DEFAULT_CONFIG, f, indent=2)
+        # The backend starts alongside and may be reading or creating the same
+        # file, so it is put in place whole rather than written where it stands.
+        write_atomically(CONFIG_PATH, json.dumps(DEFAULT_CONFIG, indent=2))
         return json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy
     with open(CONFIG_PATH, 'r') as f:
         return json.load(f)

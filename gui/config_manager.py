@@ -3,8 +3,9 @@
 One file under SPINSENSE_DATA_DIR holds every setting. This process validates
 and writes it; the engine reads it — writing it only to create one that is
 missing — and notices a change by the file's modification time (see
-`config_watch_loop` in core/core_engine.py), which is all the coordination two
-processes sharing one file need.
+`config_watch_loop` in core/core_engine.py). That, and replacing the file
+whole on every save (`spinsense.files.write_atomically`), is all the
+coordination two processes sharing one file need.
 
 The models below are the schema. A field added here with a default is all a
 migration takes: an older file simply lacks the key and reads as the default.
@@ -16,6 +17,8 @@ import json
 import os
 from typing import Literal
 from pydantic import BaseModel
+
+from spinsense.files import write_atomically
 
 # Resolve config folder dynamically using the environment variable SPINSENSE_DATA_DIR
 DATA_DIR = os.environ.get('SPINSENSE_DATA_DIR', os.path.join(os.path.dirname(__file__), '..'))
@@ -156,12 +159,16 @@ def load_config() -> dict:
     return saved if saved is not None else get_default_config()
 
 def save_config(data: dict) -> bool:
-    """Validates and saves a dictionary to config.json."""
+    """Validates and saves a dictionary to config.json.
+
+    The file is replaced whole, never rewritten where it stands: the engine
+    reads it from another process, and a save cut short — a crash, the power
+    going — must not leave half a file where the settings were.
+    """
     try:
         validated = SpinSenseConfig(**data)
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(validated.dict(), f, indent=2)
+        write_atomically(CONFIG_PATH, json.dumps(validated.dict(), indent=2))
         return True
     except Exception as e:
         print(f"❌ Error saving config (Validation failed): {e}")
