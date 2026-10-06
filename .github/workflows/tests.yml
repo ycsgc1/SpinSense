@@ -1,7 +1,11 @@
 name: Tests
 
-# Runs the unit suites and static analysis on every push and PR: Python in
-# `test`, the browser scripts in `lint-js`.
+# The unit suites and static analysis: Python in `test`, the browser scripts in
+# `lint-js`.
+#
+# Runs on every pull request, and — called from docker-publish.yml — before
+# every image that is published. A push to main or beta therefore runs it once,
+# as the first stage of the publish, not a second time on its own.
 #
 # The two process suites must run from inside their own directory: backend_main
 # mounts StaticFiles("static") and Jinja2Templates("templates") by relative
@@ -9,10 +13,9 @@ name: Tests
 # `spinsense` package has no such constraint and runs from the root.
 
 on:
-  push:
-    branches: [main, beta]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   test:

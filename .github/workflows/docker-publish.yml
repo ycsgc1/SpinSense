@@ -5,6 +5,12 @@ name: Publish Docker image
 # - push to beta      -> ghcr.io/ycsgc1/spinsense:beta      (rolling, for testing
 #                        unreleased work on real hardware — point Dockge at it)
 # - published release -> ghcr.io/ycsgc1/spinsense:<tag> + :latest
+#
+# Nothing is published that has not passed: the `tests` job runs the whole of
+# tests.yml on the same commit first, and the build waits for it. The two used
+# to be separate workflows started by the same push, so an image went out
+# whether or not its tests passed.
+#
 # GHCR auth uses the built-in GITHUB_TOKEN; no secrets to configure.
 # NOTE: after the first push, make the package public once in
 #   GitHub -> your profile -> Packages -> spinsense -> Package settings.
@@ -21,7 +27,13 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+
   build-and-push:
+    needs: tests
     runs-on: ubuntu-latest
     permissions:
       contents: read
