@@ -1,13 +1,48 @@
+"""The SpinSense engine: listen to the turntable, work out what is playing.
+
+One of two processes in the container (the other is the web backend in `gui/`).
+This one owns the sound card. Once a second it reads the input level, decides
+whether that is music, silence or the gap between two songs, and when a new
+song has started it records a sample, has it identified, and looks up which
+record it belongs to. What it concludes goes to the backend as one JSON line
+per second over a Unix socket; the backend does everything else — the
+database, the web UI, Last.fm.
+
+Reading order, which is also the order of the file:
+
+- **Config** — `config.json` mirrored into `runtime`, re-read when the file
+  changes so no setting needs a restart.
+- **Calibration and the command socket** — the wizard's 5-second level captures
+  and the Rescan button, both arriving from the backend.
+- **Signal helpers** — sample normalisation, needle-drop rejection, the
+  input-stall watchdog.
+- **Album context** — the record believed to be on the platter, and how a
+  track is resolved against it before iTunes' search is asked.
+- **Recognition** — capture, Shazam, the optional backup recognizer, and what
+  happens on a match, a miss, and a track that should have ended by now.
+- **The monitor loop** — `audio_monitor_loop()`, where all of it is driven
+  from, and `supervise()`, which keeps it running.
+
+Two conventions hold throughout. Anything that decides something is a pure
+function taking its inputs as arguments (`_scan_decision`, `_silence_step`,
+`detect_input_stall`, everything in `track_clock`), so it is tested without a
+sound card or a clock. And nothing that touches the network or the device is
+allowed to end the process: a failure is reported as an event and retried,
+because an engine that has exited looks, from the web UI, exactly like a quiet
+room.
+"""
 import asyncio
+import io
 import json
 import os
 import re
 import subprocess
-import time
 import tempfile
-import io
+import time
+import traceback
 import wave
 from collections import deque
+
 import aiohttp
 import numpy as np
 import sounddevice as sd
@@ -17,7 +52,7 @@ import track_clock
 from spinsense import itunes
 from spinsense.albums import base_title, choose_edition, is_base_form
 
-# --- 1. Paths + config bootstrap ---
+# --- Paths + config bootstrap ---
 DATA_DIR = os.environ.get('SPINSENSE_DATA_DIR', os.path.join(os.path.dirname(__file__), '..'))
 CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 
@@ -104,6 +139,8 @@ def resolve_device(configured, devices):
 
 
 def _normalize_mic(cfg):
+    """The configured capture device, with every spelling of "use the system
+    default" reduced to None — which is what sounddevice takes it to mean."""
     v = cfg.get('Hardware', {}).get('Mic_Device', None)
     if v in ("", "default", None):
         return None
@@ -133,6 +170,12 @@ runtime = {
 
 
 def _populate_runtime(cfg):
+    """Copy what the engine reads out of a config dict into `runtime`.
+
+    Each `.get()` carries the same default as DEFAULT_CONFIG, so a config.json
+    written by an older build — which lacks the newer keys — behaves as if it
+    had them, rather than failing on the first one missing.
+    """
     runtime["threshold"]        = cfg.get('Audio', {}).get('Volume_Threshold', 0.01)
     runtime["sample_len"]       = cfg.get('Audio', {}).get('Song_Sample_Length', 5.0)
     runtime["new_song_silence"] = cfg.get('Audio', {}).get('New_Song_Silence_Interval', 3.0)
@@ -159,6 +202,8 @@ except OSError:
 # Cross-task signal: the config watcher sets this when the mic device changes
 # so the audio loop tears down + rebuilds the InputStream on its next pass.
 mic_change_event = asyncio.Event()
+
+# --- Calibration + the command socket ---
 
 # Active calibration session, or None. The audio callback appends per-buffer
 # RMS to ["samples"] when status == "running"; a one-shot timer task flips
@@ -234,7 +279,7 @@ async def _handle_command(payload: dict) -> dict:
         session = {
             "phase": phase,
             "samples": deque(maxlen=500),
-            "started_at": asyncio.get_event_loop().time(),
+            "started_at": asyncio.get_running_loop().time(),
             "duration": 5.0,
             "status": "running",
             "stats": None,
@@ -321,7 +366,7 @@ def _spawn_bg(coro) -> None:
     task.add_done_callback(_bg_tasks.discard)
 
 
-# --- 3. Shazam, iTunes, & Audio Logic ---
+# --- Engine state + signal helpers ---
 shazam = Shazam()
 RECOGNIZE_ATTEMPTS = 3  # 1 initial + 2 auto-retries
 _MAX_SAMPLE_SECONDS = 60.0  # ceiling for the escalating rescan ladder
@@ -561,6 +606,8 @@ async def _publish_idle_blip() -> None:
     payload = build_status_payload("listening", state.get("current_rms", 0.0), {"in_song": False})
     await _write_uds(json.dumps(payload) + "\n")
 
+
+# --- Album context: which record is on the platter ---
 
 # The record we believe is on the platter, and its tracklist. A side is one
 # album, so once any track resolves we know what the rest of them are — which
@@ -806,6 +853,7 @@ def _known_artist_id(artist: str) -> int | None:
 
 
 def _context_is_live(now_mono: float) -> bool:
+    """Whether a record is assumed and was confirmed recently enough to trust."""
     return (album_context is not None
             and now_mono - album_context["at"] < ALBUM_CONTEXT_TTL_SECS)
 
@@ -920,6 +968,8 @@ async def fetch_itunes_metadata(artist, title):
         album_context = {"id": collection_id, "name": album, "at": now_mono}
     return album, art_url, duration_secs, exclusive
 
+
+# --- Recognition: capture, identify, enrich ---
 
 def _extract_enrichment(track: dict) -> dict:
     """Best-effort pull of stable-id/genre/year from a Shazam track object.
@@ -1557,6 +1607,8 @@ async def recognize_audio(preserve_on_miss: bool = False, reason: str = "onset")
     state["silence_counter"] = 0
 
 
+# --- The monitor loop ---
+
 def _open_input_stream(callback):
     """Open and start a sounddevice InputStream against the current mic. Pulled
     out of audio_monitor_loop() so the same code handles fresh startup, the
@@ -1704,6 +1756,29 @@ def _reset_stall_watch() -> None:
 
 
 async def audio_monitor_loop():
+    """The engine's main loop: one pass a second, for as long as it runs.
+
+    Each pass does the same things in the same order, and the order is the
+    design:
+
+    1. **Have a device.** With no capture stream, publish a status frame, wait,
+       try to open one, and go round again. Nothing below runs deaf.
+    2. **Honour a changed microphone** by rebuilding the stream.
+    3. **Check the input is alive** — before anything is decided from the
+       level, because a dead input is indistinguishable from a silent record.
+    4. **Publish** the level and the current track.
+    5. **Stand aside for calibration**, which wants the meter and nothing else.
+    6. **Act**, on the first of these that applies: a rescan the listener asked
+       for; a track that should have ended with no gap heard; a fresh onset or
+       a qualifying gap (`_scan_decision`); the back-off gate; silence.
+
+    Every recognition closes the level-meter stream first and reopens it
+    afterwards, because the sample is recorded through a stream of its own
+    (`sd.rec`). That is also why the watchdog is re-armed each time
+    (`_reset_stall_watch`): the meter going quiet there is our own doing.
+
+    Never returns. `supervise()` restarts it if it raises.
+    """
     global _config_task, _command_task
     # Hold strong references to these long-lived tasks: the event loop only
     # keeps a weak ref, so an unreferenced create_task() can be garbage-collected
@@ -1861,7 +1936,7 @@ async def audio_monitor_loop():
         await asyncio.sleep(1)
 
 
-# --- 4. Live config reload ---
+# --- Live config reload ---
 async def config_watch_loop():
     """Poll CONFIG_PATH mtime every 2s. When it changes, re-read the file and
     dispatch handlers based on which categories actually differ."""
@@ -1915,8 +1990,6 @@ async def supervise() -> None:
     background job so the container stayed up, and SpinSense served a
     healthy-looking web UI attached to nothing for 38 hours.
     """
-    import traceback
-
     while True:
         try:
             await audio_monitor_loop()

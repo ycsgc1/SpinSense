@@ -1,6 +1,6 @@
 // dashboard.js — page-specific. Subscribes to shell.js for live frames,
-// drives the vinyl, track metadata, input meter, system-health input level,
-// and refreshes Recent Plays whenever a new identification arrives.
+// drives the vinyl, track metadata and input meter, and refreshes Recent
+// Plays whenever a new identification arrives.
 (function () {
   const $ = (id) => document.getElementById(id);
 

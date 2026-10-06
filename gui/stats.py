@@ -185,6 +185,12 @@ def _decades(conn, start, end, total) -> dict:
 
 def compute_stats(period: str, year: int | None = None, month: int | None = None,
                   db_path: str | None = None, now: int | None = None) -> dict:
+    """Everything the Stats page shows for one period, in one blob.
+
+    `period` is "month", "year" or "all"; `year` and `month` default to the
+    current ones. Raises ValueError for anything else, which the route turns
+    into a 400. `now` exists so tests can fix the clock.
+    """
     now_secs = now if now is not None else int(datetime.datetime.now().timestamp())
     start, end = _period_bounds(period, year, month, now=now_secs)
     now_dt = datetime.datetime.fromtimestamp(now_secs)

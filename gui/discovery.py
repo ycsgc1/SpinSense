@@ -67,6 +67,7 @@ def _instance_name(service_name: str) -> str:
 
 
 def build_service_info(port: int, service_name: str, version: str) -> ServiceInfo:
+    """The record to advertise, carrying the LAN address when one can be found."""
     addresses = []
     ip = _local_ip()
     if ip:

@@ -9,8 +9,8 @@
     border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* Vinyl rotation. dashboard.js toggles `.spin-slow` based on whether a track
-   title is currently identified. */
+/* Vinyl rotation. dashboard.js toggles `.spin-slow` while a track is playing
+   or being identified (its SPIN_PHASES). */
 .spin-slow {
     animation: spin 8s linear infinite;
 }
@@ -19,8 +19,9 @@
     to   { transform: rotate(360deg); }
 }
 
-/* Engine-status pill. shell.js sets data-state to one of:
-   idle | listening | playing | disconnected. */
+/* Engine-status pill. shell.js sets data-state to the engine's phase:
+   idle | listening | playing | disconnected here, and scanning | identifying |
+   retrying | no_match further down. */
 .engine-pill            { transition: color 0.2s ease, background-color 0.2s ease; }
 .engine-pill .engine-pill-dot { transition: background-color 0.2s ease, box-shadow 0.2s ease; }
 

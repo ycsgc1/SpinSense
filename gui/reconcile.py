@@ -9,7 +9,7 @@ Synchronous SQLite (callers wrap in asyncio.to_thread), mirroring
 play_history.py's contract.
 """
 from play_history import _connect
-from spinsense.albums import (  # noqa: F401
+from spinsense.albums import (
     base_title,
     normalized,
     pick_winner,
@@ -36,6 +36,9 @@ _RUN_WINDOW_SECS = 86400
 
 
 def _run_rows(conn, play_id: int) -> list[dict]:
+    """The run containing `play_id`, on an open connection: the plays either
+    side of it by the same artist, for as long as each follows the last within
+    SESSION_GAP_SECS. See `find_run` for the public form."""
     anchor = conn.execute(
         "SELECT id, artist, played_at FROM plays "
         "WHERE id = ? AND deleted_at IS NULL", (play_id,)).fetchone()
