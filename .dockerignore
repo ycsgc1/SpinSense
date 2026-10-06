@@ -1,0 +1,35 @@
+# Keep the build context to what the image runs.
+#
+# `COPY . .` in docker/Dockerfile takes everything not listed here. Building
+# from source in a checkout that has been *run* would otherwise bake ./data —
+# the play history, and a config.json holding the AudD token and the Last.fm
+# session — into an image layer.
+
+# Runtime data and local config
+data/
+config.json
+*.db
+*.db-journal
+
+# Version control and CI
+.git
+.github/
+
+# Local tooling and caches
+.venv/
+venv/
+.claude/
+.gstack/
+.superpowers/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.pyc
+
+# Development only — nothing at run time imports or reads these
+**/tests/
+docs/
+scripts/
+requirements-dev.txt
+eslint.config.mjs
+tronbyt/

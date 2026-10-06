@@ -7,28 +7,26 @@ services:
     # build:
     #   context: .
     #   dockerfile: docker/Dockerfile
-    container_name: spinsense_engine
+    container_name: spinsense
     restart: unless-stopped
-    
-    # --- COMMENTED OUT FOR MAC TESTING ---
-    devices:
-     - "/dev/snd:/dev/snd"
-    group_add:
-      - "29"
-    ipc: host
 
+    # REQUIRED for mDNS Home Assistant discovery — multicast does not cross
+    # Docker bridge networking. Under host mode the app binds SPINSENSE_PORT
+    # directly on the host, so there is no ports: mapping. If you switch to
+    # bridge networking (no HA auto-discovery), expose it with:
+    #   ports:
+    #     - "3313:3313"
     network_mode: host
+
+    # Audio hardware. Comment these two out to run without a sound card
+    # (e.g. on a Mac, where /dev/snd does not exist).
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
 
     environment:
       - SPINSENSE_DATA_DIR=/app/data
       - SPINSENSE_PORT=3313        # app binds host :3313 (a nod to 33⅓ RPM)
     volumes:
-      - ./data:/app/data
-      - /tmp:/tmp
-
-    # network_mode: host (above) is REQUIRED for mDNS Home Assistant discovery —
-    # multicast does not cross Docker bridge networking. Under host mode the app
-    # binds SPINSENSE_PORT directly on the host, so there is no ports: mapping.
-    # If you switch to bridge networking (no HA auto-discovery), expose it with:
-    #   ports:
-    #     - "3313:3313"
+      - ./data:/app/data           # history, artwork and config.json — keep this
