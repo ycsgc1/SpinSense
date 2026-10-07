@@ -2,7 +2,7 @@
 
 All notable changes to SpinSense are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project uses a 4-digit `MAJOR.MINOR.PATCH.MICRO` version scheme.
 
-## [Unreleased]
+## [2.0.0.0] - 2026-10-07
 
 ### Added
 - **Live albums and compilations are recognised as one record.** A side whose every track belongs to a *different* album broke the assumption everything else rests on. Playing AJR's *Live from the Hollywood Bowl* produced four albums for one side — OK ORCHESTRA, then Neotheater, then The Click, then nothing — with studio track lengths driving the play clock and one song never identified at all. SpinSense now asks the question the other way round: not "which album is this track from?" but **"which single release holds all the tracks I've heard?"** That release held 4 of 4 where every studio album held 1. It settles on the right record by the second track, and everything after resolves from its tracklist with the correct live durations — including tracks iTunes' search cannot place at all. It costs nothing in the ordinary case: the first stage reuses search results already fetched and discarded, and the second narrows by track count before making a single request. It requires a unique answer, and a stop between records keeps two albums by one artist from being pooled into one.
