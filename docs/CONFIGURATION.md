@@ -10,6 +10,8 @@ Settings are persisted to `config.json` under your data directory (`SPINSENSE_DA
 
 How SpinSense tells music from silence, how it samples for recognition, and which recognizers it uses.
 
+<img src="images/Settings_Audio.png" alt="Settings — Audio" width="640" />
+
 | Setting | What it does | Default | Range |
 |---|---|---|---|
 | **Volume threshold** | The loudness above which SpinSense decides music is playing and starts identifying. Set it just above the noise floor of a silent spinning record — too low and silence triggers scans, too high and quiet passages look like silence. Edited in **dB** in the UI; stored as linear RMS (`Audio.Volume_Threshold`) in `config.json`. | ≈ −40 dB (`0.01`) | −120 … 0 dB |
@@ -31,6 +33,8 @@ How SpinSense tells music from silence, how it samples for recognition, and whic
 > **Tip — tuning the silence intervals.** If a track with quiet passages keeps getting re-identified mid-song, raise **New-song silence interval**. If the player lingers on "now playing" too long after a side ends, lower **Stopped silence interval**. The recommended ordering is `New-song ≤ Stopped`.
 
 ### Backup recognizers
+
+<img src="images/Settings_Backup_Recognizer.png" alt="Settings — backup recognizer and AudD token" width="640" />
 
 Shazam is always the **primary** recognizer (free, on by default — nothing to configure). The **Backup recognizer** dropdown adds a fallback for the small fraction of tracks Shazam can't get on the first try:
 
@@ -54,6 +58,8 @@ Either way, album art is always fetched high-res from iTunes by artist + title, 
 ---
 
 ## Last.fm
+
+<img src="images/Settings_LastFM.png" alt="Settings — Last.fm, connected" width="640" />
 
 Just click **Connect to Last.fm** in Settings → Last.fm. SpinSense connects using its own registered Last.fm application, so there is nothing to set up first.
 
@@ -90,6 +96,8 @@ There's also `SPINSENSE_LASTFM_KEY` / `SPINSENSE_LASTFM_SECRET` as environment v
 
 ## Diagnostics
 
+<img src="images/Settings_Diagnostics.png" alt="Settings — Diagnostics" width="640" />
+
 Settings → **Diagnostics** shows what the recognition engine has been up to: audio input stalls, tracks it gave up identifying, track-end checks firing. Newest first.
 
 It's held in memory and clears on restart — it's there to answer "what just happened", not to be an audit trail. The engine also prints everything to its container log (`docker logs spinsense`), which survives longer but needs shell access on the host.
@@ -100,6 +108,8 @@ It's held in memory and clears on restart — it's there to answer "what just ha
 
 ## Hardware
 
+<img src="images/Settings_Hardware.png" alt="Settings — Hardware" width="640" />
+
 | Setting | What it does | Default |
 |---|---|---|
 | **Microphone** | The audio input device receiving your turntable's signal (e.g. a USB audio interface). The list comes from devices the container can see; **System default** works if you only have one. The setup wizard helps you pick and calibrate it. | System default |
@@ -107,6 +117,8 @@ It's held in memory and clears on restart — it's there to answer "what just ha
 ---
 
 ## Home Assistant discovery
+
+<img src="images/Settings_Home_Assistant.png" alt="Settings — Home Assistant" width="640" />
 
 Advertises SpinSense on the LAN so the [companion HACS integration](https://github.com/ycsgc1/homeassistant-spinsense) auto-discovers it — nothing to type, no broker in between.
 

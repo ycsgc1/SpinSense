@@ -100,13 +100,13 @@ The first time you open the web UI, SpinSense walks you through a short setup wi
 
 ### 1. Welcome
 
-![Setup wizard — welcome](docs/images/Setup_Wizard.png)
+<img src="docs/images/Setup_Wizard.png" alt="Setup wizard — welcome" width="640" />
 
 A quick intro. **Get started** to begin, or **Skip setup** to configure things manually later.
 
 ### 2. Pick your microphone
 
-![Setup wizard — microphone selection](docs/images/Audi_Device_Selection.png)
+<img src="docs/images/Audio_Device_Selection.png" alt="Setup wizard — microphone selection" width="640" />
 
 Choose the input device receiving audio from your turntable (e.g. a USB audio interface). The list comes from the devices the container can see; "System default" works if you only have one.
 
@@ -114,7 +114,7 @@ Choose the input device receiving audio from your turntable (e.g. a USB audio in
 
 SpinSense tells "music" from "silence" using input volume, so it needs a threshold. There are two ways to set it:
 
-![Setup wizard — calibration method](docs/images/Calibration_Method_Selection.png)
+<img src="docs/images/Calibration_Method_Selection.png" alt="Setup wizard — calibration method" width="640" />
 
 **Auto-calibrate (recommended)** captures your setup in two quick passes and computes the threshold for you:
 
@@ -125,13 +125,13 @@ SpinSense tells "music" from "silence" using input volume, so it needs a thresho
 
 Or **set it manually**: drag the slider (shown in dB) while watching the live meter, and nudge it just above where the bar peaks during silence.
 
-![Setup wizard — manual threshold](docs/images/Manual_Threshold_Calibration.png)
+<img src="docs/images/Manual_Threshold_Calibration.png" alt="Setup wizard — manual threshold" width="640" />
 
 ### 4. Connect to Home Assistant
 
 SpinSense advertises itself on your network, so there is nothing to type:
 
-![Setup wizard — Home Assistant auto-discovery](docs/images/Connection_Selection.png)
+<img src="docs/images/Connection_Selection.png" alt="Setup wizard — Home Assistant auto-discovery and the link to the integration" width="640" />
 
 - **Home Assistant auto-discovery (mDNS)** *(on by default)* — zero-config; install the HACS integration and it finds SpinSense automatically. Leave it on unless you have a reason not to.
 - **Open in Home Assistant** — takes you to the integration in your own Home Assistant's HACS, ready to install. The same link is under **Settings → Home Assistant** if you'd rather do it later.
@@ -154,7 +154,7 @@ When nothing's playing, the dashboard waits for a record and shows your live inp
 
 ![Dashboard — idle, waiting for a record](docs/images/Blank_Dashboard.png)
 
-Drop the needle and it lights up with the current track — album art, title, artist — alongside the live input level and your recent plays:
+Drop the needle and it lights up with the current track — album art, title, artist, album — alongside the live input level and your recent plays. **Scan again** is there for the rare wrong guess:
 
 ![Dashboard — a record now playing](docs/images/Dashboard_with_history_and_now_playing.png)
 
@@ -162,11 +162,25 @@ Drop the needle and it lights up with the current track — album art, title, ar
 
 ![History page](docs/images/History_Page.png)
 
-Every identified track is logged with its art and timestamp, grouped by day — scroll back through everything you've spun.
+Every identified track is logged with its art, album and timestamp, grouped by day — scroll back through everything you've spun. Hover a row to correct its album or delete it.
+
+### Stats
+
+![Stats page](docs/images/Stats_Page.png)
+
+Your listening by the numbers: plays, artists, tracks and time spent, then top artists, albums and tracks, plays over time, genres and decades — for this month, this year or all time.
+
+### Last.fm
+
+<img src="docs/images/Settings_LastFM.png" alt="Settings — Last.fm, connected" width="640" />
+
+Connect once under **Settings → Last.fm** and finished plays are scrobbled to your profile, with a live "now playing" while the record spins. Plays are held for a review window first — by default until 30 minutes after the album finishes — so a wrong identification can be fixed or deleted in History before it is sent, because Last.fm has no way to take a scrobble back. **Send now** releases whatever is waiting. Details are in the [configuration reference](docs/CONFIGURATION.md#lastfm).
 
 ### In Home Assistant
 
-Once discovered, SpinSense appears as a `media_player` entity that reflects the current track in real time — ready for dashboards, automations (dim the lights when a record starts?), and voice queries.
+![The SpinSense integration in Home Assistant](docs/images/Home_Assistant_Integration.png)
+
+Once discovered, SpinSense appears as a device with a `media_player` entity that reflects the current track in real time — ready for dashboards, automations (dim the lights when a record starts?), and voice queries.
 
 ---
 
